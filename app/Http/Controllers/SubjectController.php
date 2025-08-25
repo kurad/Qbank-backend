@@ -39,7 +39,7 @@ class SubjectController extends Controller
         $request->validate([
             'grade_levels'       => 'required|array',
             'grade_levels.*'    => 'integer|exists:grade_levels,id',
-            'name'              => 'required|string|max:255',
+            'name'              => 'required|string|max:255|unique:subjects,name,',
         ]);
 
         $subject = Subject::create([
@@ -118,7 +118,7 @@ class SubjectController extends Controller
     {
         // Validate the incoming request
         $request->validate([
-            'name' => 'required|string|max:255',
+            'name' => 'required|string|max:255|unique:subjects,name,' . $id,
             'grade_levels' => 'required|array',
             'grade_levels.*' => 'integer|exists:grade_levels,id', // Each ID must exist
         ]);
