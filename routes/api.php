@@ -37,7 +37,9 @@ Route::post('/logout', [AuthController::class, 'logout']);
 Route::get('/subjects', [SubjectController::class, 'index']);
 Route::get('/subjects/details', [SubjectController::class, 'subjectsByGrade']);
 Route::get('/subjects/{id}/topics', [TopicController::class, 'topicsBySubject']);
+Route::get('/grade-subjects/{gradeId}/{subjectId}/topics', [TopicController::class, 'topicsByGradeAndSubject']);
 Route::get('/subjects/{subjectId}/grades/{gradeId}/topics', [TopicController::class, 'topicsBySubjectAndGrade']);
+Route::get('/subjects/{subjectId}/grades/{gradeId}/units', [TopicController::class, 'topicsBySubjectGrade']); // For Cascading selection
 Route::get('/topics/{topic}/questions', [QuestionController::class, 'byTopic']);
 // Route to get grade levels
 Route::get('/grade-levels', [GradeLevelController::class, 'index']);
@@ -52,11 +54,12 @@ Route::put('/questions/{id}', [QuestionController::class, 'update']);
 Route::post('/grade-subjects', [TopicController::class, 'createOrGet']);
 
 Route::get('/subjects/{subject}/grades', [SubjectController::class, 'gradesForSubject']);
-// Route::get('/subjects/{subject}/grades/{grade}/topics', [SubjectController::class, 'topicsForSubjectAndGrade']);
+Route::post('/subjects', [SubjectController::class, 'createSubject']);
+Route::put('/subjects/{id}', [SubjectController::class, 'update']);
 Route::get('/topics', [TopicController::class, 'index']);
 // Routes for teachers to create subjects, topics, and questions
 Route::middleware('auth:sanctum')->group(function () {
-    Route::post('/subjects', [SubjectController::class, 'store']);
+    // Route::post('/subjects', [SubjectController::class, 'store']);
     Route::post('/topics', [TopicController::class, 'store']);
     Route::post('/questions', [QuestionController::class, 'store']);
 });

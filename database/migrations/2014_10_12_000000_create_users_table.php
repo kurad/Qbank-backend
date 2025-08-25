@@ -19,6 +19,7 @@ return new class extends Migration
             $table->timestamp('email_verified_at')->nullable();
             $table->string('password');
             $table->foreignId('school_id')->nullable()->constrained('schools')->onDelete('set null');
+            // $table->foreignId('grade_level_id')->nullable()->constrained('grade_levels')->onDelete('set null');
             $table->rememberToken();
             $table->timestamps();
         });

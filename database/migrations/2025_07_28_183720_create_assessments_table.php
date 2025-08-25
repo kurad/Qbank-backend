@@ -18,10 +18,10 @@ return new class extends Migration
             $table->unsignedBigInteger('creator_id');
             $table->unsignedBigInteger('topic_id');
             $table->integer('question_count');
+            $table->enum('delivery_mode', ['online', 'offline'])->default('offline');
             $table->timestamp('due_date')->nullable();
             $table->boolean('is_timed')->default(false);
             $table->integer('time_limit')->nullable(); // in minutes
-            $table->enum('delivery_mode', ['online', 'offline'])->default('offline')->after('question_count')->comment('Mode of delivery for the assessment: online or offline');
             $table->timestamps();
 
              $table->foreign('creator_id')->references('id')->on('users')->onDelete('cascade');

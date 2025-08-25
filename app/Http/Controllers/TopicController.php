@@ -1,4 +1,5 @@
 <?php
+
 namespace App\Http\Controllers;
 
 use App\Models\Topic;
@@ -11,10 +12,10 @@ class TopicController extends Controller
     public function index()
     {
 
-         $topics = Topic::with(['gradeSubject.subject', 'gradeSubject.gradeLevel'])
+        $topics = Topic::with(['gradeSubject.subject', 'gradeSubject.gradeLevel'])
             ->orderBy('created_at', 'desc')
             ->get();
-    return response()->json($topics);
+        return response()->json($topics);
     }
     public function createOrGet(Request $request)
     {
@@ -37,7 +38,7 @@ class TopicController extends Controller
 
     public function store(Request $request)
     {
-       $validated = $request->validate([
+        $validated = $request->validate([
             'grade_level_id' => 'required|exists:grade_levels,id',
             'subject_id' => 'required|exists:subjects,id',
             'topic_name' => 'required|string|max:255',
@@ -50,14 +51,14 @@ class TopicController extends Controller
         ]);
 
 
-     
+
         // Create the topic associated with the grade_subject
 
         $topic =  Topic::create([
             'grade_subject_id' => $gradeSubject->id,
             'topic_name' => $validated['topic_name'],
         ]);
-       
+
 
         return response()->json([
             'message' => 'Topic created successfully',
@@ -66,26 +67,55 @@ class TopicController extends Controller
     }
     public function topicsBySubject($subjectId)
     {
-       $topics = Topic::whereHas('gradeSubject', function($query) use ($subjectId) {
+        $topics = Topic::whereHas('gradeSubject', function ($query) use ($subjectId) {
             $query->where('grade_subjects.subject_id', $subjectId);
         })
-        ->with(['gradeSubject.subject', 'gradeSubject.gradeLevel'])
-        ->orderBy('created_at', 'desc')
-        ->get();
+            ->with(['gradeSubject.subject', 'gradeSubject.gradeLevel'])
+            ->orderBy('created_at', 'asc')
+            ->get();
 
         return response()->json($topics);
     }
 
-    public function topicsBySubjectAndGrade($subjectId, $gradeId)
-{
-    $topics = Topic::whereHas('gradeSubject', function($query) use ($subjectId, $gradeId) {
-            $query->where('grade_subjects.subject_id', $subjectId)
-                  ->where('grade_subjects.grade_level_id', $gradeId);
-        })
-        ->with(['gradeSubject.subject', 'gradeSubject.gradeLevel'])
-        ->orderBy('created_at', 'desc')
-        ->get();
+    public function topicsByGradeAndSubject($subjectId, $gradeId)
+    {
+        $gradeSubject = GradeSubject::where('grade_level_id', $gradeId)
+            ->where('subject_id', $subjectId)
+            ->first();
 
-    return response()->json($topics);
-}
+        if (!$gradeSubject) return response()->json([]);
+
+        $topics = Topic::where('grade_subject_id', $gradeSubject->id)
+            ->orderBy('created_at', 'desc')
+            ->get();
+
+        return response()->json($topics);
+    }
+    public function topicsBySubjectAndGrade($subjectId, $gradeId)
+    {
+        $perPage = request()->input('limit', 5);
+        $page = request()->input('page', 1);
+
+        $topics = Topic::whereHas('gradeSubject', function ($query) use ($subjectId, $gradeId) {
+            $query->where('grade_subjects.subject_id', $subjectId)
+                ->where('grade_subjects.grade_level_id', $gradeId);
+        })
+            ->with(['gradeSubject.subject', 'gradeSubject.gradeLevel'])
+            ->orderBy('created_at', 'asc')
+            ->paginate($perPage, ['*'], 'page', $page);
+
+        return response()->json($topics);
+    }
+    public function topicsBySubjectGrade($subjectId, $gradeId)// For Cascading selection
+    {
+        $topics = Topic::whereHas('gradeSubject', function ($query) use ($subjectId, $gradeId) {
+            $query->where('grade_subjects.subject_id', $subjectId)
+                ->where('grade_subjects.grade_level_id', $gradeId);
+        })
+            ->with(['gradeSubject.subject', 'gradeSubject.gradeLevel'])
+            ->orderBy('created_at', 'asc')
+            ->get();
+
+        return response()->json($topics);
+    }
 }

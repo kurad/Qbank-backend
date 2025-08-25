@@ -13,29 +13,54 @@ class SubjectController extends Controller
 {
     public function index()
     {
-        $subjects = Subject::all();
+        $subjects = Subject::with('gradeLevels')->get();
         return response()->json($subjects);
     }
     public function subjectsByGrade($gradeId)
-{
-    $gradeSubjects = GradeSubject::with(['subject', 'gradeLevel', 'topics.questions'])
-        ->where('grade_level_id', $gradeId)
-        ->get();
+    {
+        $gradeSubjects = GradeSubject::with(['subject', 'gradeLevel', 'topics.questions'])
+            ->where('grade_level_id', $gradeId)
+            ->get();
 
-    return $gradeSubjects->map(function ($gs) {
-        return [
-            'id' => $gs->subject->id,
-            'name' => $gs->subject->name,
-            'grade_level' => $gs->gradeLevel->grade_name,
-            'topics_count' => $gs->topics->count(),
-            'questions_count' => $gs->topics->sum(fn($t) => $t->questions->count()),
-        ];
-    });
-}
+        return $gradeSubjects->map(function ($gs) {
+            return [
+                'id' => $gs->subject->id,
+                'name' => $gs->subject->name,
+                'grade_level' => $gs->gradeLevel->grade_name,
+                'topics_count' => $gs->topics->count(),
+                'questions_count' => $gs->topics->sum(fn($t) => $t->questions->count()),
+            ];
+        });
+    }
 
+    public function createSubject(Request $request)
+    {
+        // Validate the incoming request
+        $request->validate([
+            'grade_levels'       => 'required|array',
+            'grade_levels.*'    => 'integer|exists:grade_levels,id',
+            'name'              => 'required|string|max:255',
+        ]);
+
+        $subject = Subject::create([
+            'name' => $request['name'],
+        ]);
+
+        foreach ($request->grade_levels as $grade_level_id) {
+            GradeSubject::create([
+                'grade_level_id' => $grade_level_id,
+                'subject_id' => $subject->id,
+
+            ]);
+        }
+        // Return the grade_subject, either newly created or existing
+        return response()->json([
+            'data' => $subject
+        ], 201);
+    }
     public function subjectWithTopicsAndQuestions()
     {
-         $subjects = Subject::with(['gradeLevel', 'topics.questions'])
+        $subjects = Subject::with(['gradeLevel', 'topics.questions'])
             ->get()
             ->map(function ($subject) {
                 return [
@@ -48,7 +73,6 @@ class SubjectController extends Controller
             });
 
         return response()->json($subjects);
-    
     }
     public function store(Request $request)
     {
@@ -58,8 +82,9 @@ class SubjectController extends Controller
         $subject = Subject::create($validated);
         return response()->json($subject, 201);
     }
-    public function getSubjectsByGrade($gradeId) {
-        $subjects = Subject::whereHas('gradeLevels', function($query) use ($gradeId){
+    public function getSubjectsByGrade($gradeId)
+    {
+        $subjects = Subject::whereHas('gradeLevels', function ($query) use ($gradeId) {
             $query->where('grade_levels.id', $gradeId);
         })->get();
         return response()->json($subjects);
@@ -89,4 +114,28 @@ class SubjectController extends Controller
         $topics = Topic::whereIn('id', $topicIds)->get();
         return response()->json($topics);
     }
+    public function update(Request $request, $id)
+    {
+        // Validate the incoming request
+        $request->validate([
+            'name' => 'required|string|max:255',
+            'grade_levels' => 'required|array',
+            'grade_levels.*' => 'integer|exists:grade_levels,id', // Each ID must exist
+        ]);
+
+        // Find the subject
+        $subject = Subject::find($id);
+        if (!$subject) {
+            return response()->json(['error' => 'Subject not found'], 404);
+        }
+
+        // Update the subject name
+        $subject->name = $request->name;
+        $subject->save();
+
+        // Sync the grade levels
+        $subject->gradeLevels()->sync($request->grade_levels);
+
+        return response()->json(['data' => $subject], 200);
     }
+}
