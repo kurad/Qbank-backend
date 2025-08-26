@@ -19,7 +19,12 @@ return [
 
     'allowed_methods' => ['*'],
 
-    'allowed_origins' => ['http://localhost:8080','http://localhost:8000', 'http://localhost:8081', 'http://localhost:8082', 'http://localhost:8083'],
+    'allowed_origins' => [
+        'http://localhost:8080',
+        'http://localhost:8000', 
+        'http://localhost:8081', 
+        'http://localhost:8082', 
+        'http://localhost:8083','https://qbank.gashoragirls.com/api/public/api'],
 
     'allowed_origins_patterns' => [],
 

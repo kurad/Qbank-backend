@@ -61,6 +61,7 @@ Route::get('/topics', [TopicController::class, 'index']);
 Route::middleware('auth:sanctum')->group(function () {
     // Route::post('/subjects', [SubjectController::class, 'store']);
     Route::post('/topics', [TopicController::class, 'store']);
+    Route::put('/topics/{topic}', [TopicController::class, 'update']);
     Route::post('/questions', [QuestionController::class, 'store']);
 });
 

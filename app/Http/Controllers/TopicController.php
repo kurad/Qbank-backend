@@ -50,8 +50,6 @@ class TopicController extends Controller
             'subject_id' => $validated['subject_id'],
         ]);
 
-
-
         // Create the topic associated with the grade_subject
 
         $topic =  Topic::create([
@@ -59,12 +57,27 @@ class TopicController extends Controller
             'topic_name' => $validated['topic_name'],
         ]);
 
-
         return response()->json([
             'message' => 'Topic created successfully',
             'data' => $topic->load('gradeSubject.subject', 'gradeSubject.gradeLevel'),
         ], 201);
     }
+    public function update(Request $request, Topic $topic)
+    {
+        $validated = $request->validate([
+            'topic_name' => 'required|string|max:255',
+        ]);
+
+        $topic->update([
+            'topic_name' => $validated['topic_name'],
+        ]);
+
+        return response()->json([
+            'message' => 'Topic updated successfully',
+            'data' => $topic->load('gradeSubject.subject', 'gradeSubject.gradeLevel'),
+        ], 200);
+    }
+
     public function topicsBySubject($subjectId)
     {
         $topics = Topic::whereHas('gradeSubject', function ($query) use ($subjectId) {
@@ -106,7 +119,7 @@ class TopicController extends Controller
 
         return response()->json($topics);
     }
-    public function topicsBySubjectGrade($subjectId, $gradeId)// For Cascading selection
+    public function topicsBySubjectGrade($subjectId, $gradeId) // For Cascading selection
     {
         $topics = Topic::whereHas('gradeSubject', function ($query) use ($subjectId, $gradeId) {
             $query->where('grade_subjects.subject_id', $subjectId)
