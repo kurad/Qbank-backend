@@ -63,40 +63,8 @@ class QuestionController extends Controller
 
             // Check for duplicate options if MCQ
             if ($validated['question_type'] === 'mcq') {
-                $options = array_map('trim', $validated['options']);
-                $options = array_map('strtolower', $options);
-                
-                // Check for duplicate options (case-insensitive)
-                $uniqueOptions = array_unique($options);
-                if (count($options) !== count($uniqueOptions)) {
-                    $duplicates = array_diff_assoc($options, array_unique($options));
-                    $duplicateValues = array_unique(array_values($duplicates));
-                    
-                    return response()->json([
-                        'error' => 'Duplicate options detected in the question.',
-                        'duplicate_options' => $duplicateValues,
-                        'suggestion' => 'Please ensure all options are unique.'
-                    ], 422);
-                }
-                // Check for similar options using Levenshtein distance
-                foreach ($options as $i => $option1) {
-                    foreach (array_slice($options, $i + 1) as $option2) {
-                        $distance = levenshtein($option1, $option2);
-                        $maxLength = max(strlen($option1), strlen($option2));
-                        $similarityThreshold = $maxLength * 0.7; // 70% similarity threshold for options
-                        
-                        if ($distance > 0 && $distance <= $similarityThreshold) {
-                            return response()->json([
-                                'error' => 'Similar options detected that might be duplicates.',
-                                'option1' => $validated['options'][$i],
-                                'option2' => $validated['options'][array_search($option2, $options)],
-                                'suggestion' => 'Please ensure all options are distinct.'
-                            ], 422);
-                        }
-                    }
-                }
-                
-                $validated['options'] = array_map('trim', $validated['options']);
+                    // Only trim options, no duplicate or similarity checks
+                    $validated['options'] = array_map('trim', $validated['options']);
             }
 
             // Handle image upload
