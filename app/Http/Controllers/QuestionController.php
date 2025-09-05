@@ -100,7 +100,7 @@ class QuestionController extends Controller
             'question_type' => 'required|in:mcq,true_false,short_answer,matching',
             'options' => 'required|array|min:2',
             'correct_answer' => 'required|string',
-            'marks' => 'required|numeric|min:0',
+            'marks' => 'numeric|min:0',
             'difficulty_level' => 'required|in:remembering,understanding,applying,analyzing,evaluating,creating',
             'is_math' => 'required|boolean',
             'is_chemistry' => 'required|boolean',
