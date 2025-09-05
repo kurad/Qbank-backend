@@ -39,28 +39,6 @@ class QuestionController extends Controller
                 ], 422);
             }
 
-            // Check for similar questions using Levenshtein distance (fuzzy matching)
-            foreach ($existingQuestions as $existing) {
-                $distance = levenshtein(
-                    strtolower($existing),
-                    strtolower($questionText)
-                );
-                
-                // If the strings are very similar (length difference <= 20% of the longer string)
-                $maxLength = max(mb_strlen($existing), mb_strlen($questionText));
-                $similarityThreshold = $maxLength * 0.8; // 80% similarity
-                
-                if ($distance > 0 && $distance <= $similarityThreshold) {
-                    return response()->json([
-                        'error' => 'A similar question already exists in this topic.',
-                        'existing_question' => $existing,
-                        'new_question' => $questionText,
-                        'similarity' => 'high',
-                        'suggestion' => 'Please review if this is a duplicate or rephrase your question.'
-                    ], 422);
-                }
-            }
-
             // Check for duplicate options if MCQ
             if ($validated['question_type'] === 'mcq') {
                     // Only trim options, no duplicate or similarity checks
