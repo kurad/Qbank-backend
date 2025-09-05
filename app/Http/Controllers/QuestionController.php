@@ -50,6 +50,17 @@ class QuestionController extends Controller
                 $validated['question_image'] = $this->handleQuestionImage($request);
             }
 
+            // Set marks based on difficulty level if not explicitly provided
+            if (!isset($validated['marks']) || $validated['marks'] === 0) {
+                $validated['marks'] = match($validated['difficulty_level']) {
+                    'remembering', 'understanding' => 1,
+                    'analyzing' => 2,
+                    'applying', 'evaluating' => 3,
+                    'creating' => 4,
+                    default => 1, // fallback to 1 mark
+                };
+            }
+
             // Set creator
             $validated['created_by'] = auth()->id() ?? 1;
 
