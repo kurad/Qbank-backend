@@ -117,7 +117,7 @@ class QuestionController extends Controller
         }
 
         if ($request->question_type === 'true_false') {
-            $rules['correct_answer'] = 'required|boolean';
+            $rules['correct_answer'] = 'required|in:true,false,1,0';
         }
         if ($request->question_type === 'short_answer') {
             $rules['correct_answer'] = 'nullable|string';
@@ -142,8 +142,14 @@ class QuestionController extends Controller
                 }
             ];
         }
+        $validated = $request->validate($rules);
+        if ($validated['question_type'] === 'true_false') {
+            $validated['correct_answer'] = in_array($validated['correct_answer'], [true, 'true', 1, '1'], true)
+                ? 'true'
+                : 'false';
+        }
 
-        return $request->validate($rules);
+        return $validated;
     }
 
     private function handleQuestionImage(Request $request)
