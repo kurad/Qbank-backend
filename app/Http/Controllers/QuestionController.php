@@ -111,43 +111,38 @@ class QuestionController extends Controller
         ];
         // Additional rules based on question_type
 
-        if ($request->question_type === 'mcq') {
-            $rules['options'] = 'required|array|min:2';
-            $rules['correct_answer'] = 'required|string';
-        }
+        switch ($request->question_type) {
+            case 'mcq':
+                $rules['options'] = 'required|array|min:2';
+                $rules['correct_answer'] = 'required|string';
+                break;
+            case 'true_false':
+                $rules['correct_answer'] = 'required|in:true,false,True,False';
+                break;
+            case 'short_answer':
+                $rules['correct_answer'] = 'nullable|string';
+                break;
+            case 'matching':
+                $rules['correct_answer'] = [
+                    'required',
+                    function ($attribute, $value, $fail) {
+                        $decoded = json_decode($value, true);
 
-        if ($request->question_type === 'true_false') {
-            $rules['correct_answer'] = 'required|in:true,false,1,0';
-        }
-        if ($request->question_type === 'short_answer') {
-            $rules['correct_answer'] = 'nullable|string';
-        }
+                        if (!is_array($decoded)) {
+                            $fail('The correct_answer must be a valid JSON array.');
+                            return;
+                        }
 
-        if ($request->question_type === 'matching') {
-            $rules['correct_answer'] = [
-                'required',
-                function ($attribute, $value, $fail) {
-                    $decoded = json_decode($value, true);
-
-                    if (!is_array($decoded)) {
-                        $fail('The correct_answer must be a valid JSON array.');
-                        return;
-                    }
-
-                    foreach ($decoded as $pair) {
-                        if (!isset($pair['left']) || !isset($pair['right'])) {
-                            $fail('Each matching pair must have left and right values.');
+                        foreach ($decoded as $pair) {
+                            if (!isset($pair['left']) || !isset($pair['right'])) {
+                                return $fail('Each matching pair must have left and right values.');
+                            }
                         }
                     }
-                }
-            ];
+                ];
+                break;
         }
         $validated = $request->validate($rules);
-        if ($validated['question_type'] === 'true_false') {
-            $validated['correct_answer'] = in_array($validated['correct_answer'], [true, 'true', 1, '1'], true)
-                ? 'true'
-                : 'false';
-        }
 
         return $validated;
     }
