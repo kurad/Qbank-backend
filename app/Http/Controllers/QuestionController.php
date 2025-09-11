@@ -171,98 +171,94 @@ class QuestionController extends Controller
         ]);
     }
 
-    public function update(Request $request, $id)
-    {
-        Log::info('Updating question with ID: ' . $id);
+   public function update(Request $request, $id)
+{
+    Log::info('Updating question with ID: ' . $id);
 
-        try {
-            $question = Question::findOrFail($id);
-        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
-            return response()->json(['error' => 'Question not found'], 404);
-        }
+    // Find the question or return 404
+    $question = Question::findOrFail($id);
 
-        $validated = $request->validate([
-            'topic_id' => 'sometimes|required|exists:topics,id',
-            'question' => 'sometimes|required|string',
-            'question_type' => 'sometimes|required|in:mcq,true_false,short_answer',
-            'options' => 'sometimes|required|array|min:2',
-            'correct_answer' => 'sometimes|required|string',
-            'marks' => 'sometimes|required|numeric|min:0',
-            'difficulty_level' => 'sometimes|required|in:remembering,understanding,applying,analyzing,evaluating,creating',
-            'is_math' => 'sometimes|required|boolean',
-            'is_chemistry' => 'sometimes|required|boolean',
-            'multiple_answers' => 'sometimes|required|boolean',
-            'is_required' => 'sometimes|required|boolean',
-            'explanation' => 'nullable|string',
-            'question_image' => 'nullable|image|mimes:jpeg,png,jpg,gif,svg|max:4096',
-        ]);
+    // Base validation rules
+    $rules = [
+        'topic_id' => 'sometimes|required|exists:topics,id',
+        'question' => 'sometimes|required|string',
+        'question_type' => 'sometimes|required|in:mcq,true_false,short_answer,matching',
+        'options' => 'sometimes|required|array|min:2',
+        'correct_answer' => 'sometimes|required|string',
+        'marks' => 'sometimes|required|numeric|min:0',
+        'difficulty_level' => 'sometimes|required|in:remembering,understanding,applying,analyzing,evaluating,creating',
+        'is_math' => 'sometimes|required|boolean',
+        'is_chemistry' => 'sometimes|required|boolean',
+        'multiple_answers' => 'sometimes|required|boolean',
+        'is_required' => 'sometimes|required|boolean',
+        'explanation' => 'nullable|string',
+        'question_image' => 'nullable|image|mimes:jpeg,png,jpg,gif,svg|max:4096',
+    ];
 
-        // Handle image upload
-        if ($request->hasFile('question_image')) {
-            if ($question->question_image) {
-                Storage::disk('public')->delete($question->question_image);
-            }
-            $image = $request->file('question_image');
-            $path = $image->store('questions', 'public');
-            $validated['question_image'] = $path;
-        }
-
-        // Process question content for math formatting if needed
-        // We'll store KaTeX content in the options JSON for now
-        // until we can run the migration
-
-        // Update options if provided
-        if ($request->has('options') && $request->question_type === 'mcq') {
-            $options = [];
-            foreach ($request->options as $opt) {
-                $optionText = is_array($opt) ? implode(' ', $opt) : $opt;
-
-                $optionData = [
-                    'text' => $optionText,
-                    'image' => null,
-                    'katex_content' => null
-                ];
-
-                if ($request->is_math) {
-                    $optionData['katex_content'] = $optionText;
-                    $optionData['image'] = $this->renderLatexToImage($optionText);
-                } elseif ($request->is_chemistry) {
-                    $optionData['katex_content'] = '\\ce{' . $optionText . '}';
-                    $optionData['image'] = $this->renderLatexToImage('\\ce{' . $optionText . '}');
+    // Type-specific validation
+    switch ($request->question_type) {
+        case 'mcq':
+            $rules['options'] = 'sometimes|required|array|min:2';
+            $rules['correct_answer'] = 'sometimes|required|string';
+            break;
+        case 'true_false':
+            $rules['correct_answer'] = 'sometimes|required|in:true,false';
+            break;
+        case 'short_answer':
+            $rules['correct_answer'] = 'nullable|string';
+            break;
+        case 'matching':
+            $rules['correct_answer'] = [
+                'sometimes','required',
+                function ($attribute, $value, $fail) {
+                    $decoded = is_string($value) ? json_decode($value, true) : $value;
+                    if (!is_array($decoded)) {
+                        return $fail('The correct_answer must be a valid JSON array.');
+                    }
+                    foreach ($decoded as $pair) {
+                        if (!isset($pair['left']) || !isset($pair['right'])) {
+                            return $fail('Each matching pair must have left and right values.');
+                        }
+                    }
                 }
-
-                $options[] = $optionData;
-            }
-            $question->options = $options;
-
-            // Store the question's KaTeX content in the metadata field
-            if ($request->is_math || $request->is_chemistry) {
-                // Create a metadata array to store additional information
-                $metadata = [
-                    'katex_content' => $request->question,
-                    'is_math' => $request->is_math,
-                    'is_chemistry' => $request->is_chemistry
-                ];
-                $question->metadata = $metadata;
-            }
-        } elseif (isset($validated['options'])) {
-            $validated['options'] = json_encode($validated['options']);
-        }
-
-        $question->update($validated);
-
-        // Reload and transform the question for response
-        $question = Question::findOrFail($id);
-        $question->options = json_decode($question->options);
-        //$question->correct_answer = json_decode($question->correct_answer);
-        if ($question->question_image) {
-            $question->question_image_url = asset('storage/' . $question->question_image);
-        } else {
-            $question->question_image_url = null;
-        }
-
-        return response()->json($question);
+            ];
+            break;
     }
+
+    // Validate the request
+    $validated = $request->validate($rules);
+
+    // Handle image upload
+    if ($request->hasFile('question_image')) {
+        if ($question->question_image) {
+            Storage::disk('public')->delete($question->question_image);
+        }
+        $validated['question_image'] = $request->file('question_image')->store('questions', 'public');
+    }
+
+    // Encode arrays as JSON before saving
+    if (isset($validated['options']) && is_array($validated['options'])) {
+        $validated['options'] = json_encode($validated['options']);
+    }
+
+    if (isset($validated['correct_answer']) && is_array($validated['correct_answer'])) {
+        $validated['correct_answer'] = json_encode($validated['correct_answer']);
+    }
+
+    // Update the question
+    $question->update($validated);
+
+    // Reload and decode JSON for response
+    $question->refresh();
+    $question->options = is_string($question->options) ? json_decode($question->options, true) : $question->options;
+    $question->correct_answer = isset($question->correct_answer)
+        ? (is_string($question->correct_answer) ? json_decode($question->correct_answer, true) : $question->correct_answer)
+        : null;
+    $question->question_image_url = $question->question_image ? asset('storage/' . $question->question_image) : null;
+
+    return response()->json($question);
+}
+
     public function getQuestionCount($id)
     {
         $count = Question::where('topic_id', $id)->count();
