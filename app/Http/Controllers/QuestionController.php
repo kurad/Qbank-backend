@@ -117,7 +117,7 @@ class QuestionController extends Controller
         }
 
         if ($request->question_type === 'true_false') {
-            $rules['correct_answer'] = 'required|in:true,false,1,0';
+            $rules['correct_answer'] = 'required|boolean';
         }
         if ($request->question_type === 'short_answer') {
             $rules['correct_answer'] = 'nullable|string';
@@ -161,7 +161,7 @@ class QuestionController extends Controller
     public function byTopic($topicId, Request $request)
     {
         $questions = Question::where('topic_id', $topicId)
-            ->with('topic') // Eager load relationships
+            ->with(['topic']) // Eager load relationships
             ->get();
 
         return response()->json([

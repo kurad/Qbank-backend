@@ -56,11 +56,20 @@ class AuthController extends Controller
         }
 
         $user = auth()->user();
-        $token = $user->createToken('auth_token')->plainTextToken;
+
+        // Create a token with expiry time of 1 hour
+        $token = $user->createToken(
+            'auth_token', 
+            ['*'], //abilities
+            now()->addMinutes(60) //expiry time
+            )->plainTextToken;
+
+
         return response()->json([
             'user' => $user,
             'token' => $token,
             'user_role' => $user->role,
+            'expires_at' => now()->addMinutes(60)->toDateTimeString(),
         ]);
     }
     public function redirectToGoogle()
