@@ -63,6 +63,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/topics', [TopicController::class, 'store']);
     Route::put('/topics/{topic}', [TopicController::class, 'update']);
     Route::post('/questions', [QuestionController::class, 'store']);
+    Route::get('/my-questions', [QuestionController::class, 'myQuestions']);
+    Route::delete('/questions/{id}', [QuestionController::class, 'destroy']);
 });
 
 Route::middleware('auth:sanctum')->get('/user', function (Request $request) {

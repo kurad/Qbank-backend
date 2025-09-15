@@ -291,4 +291,66 @@ class QuestionController extends Controller
             return response()->json(['error' => 'Question not found'], 404);
         }
     }
+    public function myQuestions(Request $request) {
+        $questions = Question::with([
+            'topic.gradeSubject.gradeLevel',
+            'topic.gradeSubject.subject',
+
+        ])
+        ->where('created_by', auth()->id())
+        ->orderBy('id', 'desc')
+        ->paginate(15);
+
+        // Group the results
+        $grouped = $questions->getCollection()->groupBy(function ($q) {
+            return $q->topic->gradeSubject->grade->grade_name;
+        })->map(function($byGrade) {
+            return $byGrade->groupBy(function ($q) {
+                return $q->topic->gradeSubject->subject->name;
+            })->map(function($bySubject) {
+                return $bySubject->groupBy(function ($q) {
+                    return $q->topic->topic_name;
+                })->map(function($byTopic) {
+                    return $byTopic->map(function ($q) {
+                        return [
+                            'id' => $q->id,
+                            'question' => $q->question,
+                            'question_type' => $q->question_type,
+                            'options' => json_decode($q->options),
+                            'correct_answer' => json_decode($q->correct_answer),
+                            'marks' => $q->marks,
+                            'difficulty_level' => $q->difficulty_level,
+                            'explanation' => $q->explanation,
+                            'question_image_url' => $q->question_image ? asset('storage/' . $q->question_image) : null,
+                        ];
+                    });
+                });
+            });
+        });
+
+        return response()->json([
+            'data' => $grouped,
+            'pagination' => [
+                'current_page' => $questions->currentPage(),
+                'last_page' => $questions->lastPage(),
+                'per_page' => $questions->perPage(),
+                'total' => $questions->total(),
+            ],
+        ]);
+        
+    }
+    public function destroy ($id) {
+        $question = Question::findOrFail($id);
+
+        if (!$question) {
+            return response()->json(['error' => 'Question not found'], 404);
+        }
+        if ($question->question_image) {
+            Storage::disk('public')->delete($question->question_image);
+        }
+        $question->delete();
+        return response()->json([
+            'message' => 'Question deleted successfully'
+        ], 200);
+    }
 }
