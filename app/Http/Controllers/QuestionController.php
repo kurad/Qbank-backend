@@ -292,42 +292,15 @@ class QuestionController extends Controller
         }
     }
     public function myQuestions(Request $request) {
-        $questions = Question::with([
-            'topic.gradeSubject.gradeLevel',
-            'topic.gradeSubject.subject',
+        $userId = auth()->id();
+        $questions = Question::with(['topic.gradeSubject.gradeLevel', 'topic.gradeSubject.subject'])
+            ->where('created_by', $userId)
+            ->select('id', 'topic_id', 'question','options', 'question_type', 'difficulty_level', 'marks', 'correct_answer')
+            ->paginate(10);
 
-        ])
-        ->where('created_by', auth()->id())
-        ->orderBy('id', 'desc')
-        ->paginate(15);
-
-        // Group the results
-        $grouped = $questions->getCollection()->groupBy(function ($q) {
-            return $q->topic->gradeSubject->grade->grade_name;
-        })->map(function($byGrade) {
-            return $byGrade->groupBy(function ($q) {
-                return $q->topic->gradeSubject->subject->name;
-            })->map(function($bySubject) {
-                return $bySubject->groupBy(function ($q) {
-                    return $q->topic->topic_name;
-                })->map(function($byTopic) {
-                    return $byTopic->map(function ($q) {
-                        return [
-                            'id' => $q->id,
-                            'question' => $q->question,
-                            'question_type' => $q->question_type,
-                            'options' => json_decode($q->options),
-                            'correct_answer' => json_decode($q->correct_answer),
-                            'marks' => $q->marks,
-                            'difficulty_level' => $q->difficulty_level,
-                            'explanation' => $q->explanation,
-                            'question_image_url' => $q->question_image ? asset('storage/' . $q->question_image) : null,
-                        ];
-                    });
-                });
-            });
+        $grouped = $questions->groupBy(function ($q) {
+            return $q->topic->topic_name;
         });
-
         return response()->json([
             'data' => $grouped,
             'pagination' => [
