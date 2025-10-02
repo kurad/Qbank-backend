@@ -40,6 +40,7 @@ Route::get('/subjects/{id}/topics', [TopicController::class, 'topicsBySubject'])
 Route::get('/grade-subjects/{gradeId}/{subjectId}/topics', [TopicController::class, 'topicsByGradeAndSubject']);
 Route::get('/subjects/{subjectId}/grades/{gradeId}/topics', [TopicController::class, 'topicsBySubjectAndGrade']);
 Route::get('/subjects/{subjectId}/grades/{gradeId}/units', [TopicController::class, 'topicsBySubjectGrade']); // For Cascading selection
+Route::delete('/topics/{id}', [TopicController::class, 'destroy']);
 Route::get('/topics/{topic}/questions', [QuestionController::class, 'byTopic']);
 // Route to get grade levels
 Route::get('/grade-levels', [GradeLevelController::class, 'index']);

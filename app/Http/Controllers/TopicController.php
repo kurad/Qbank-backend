@@ -131,4 +131,22 @@ class TopicController extends Controller
 
         return response()->json($topics);
     }
+    public function destroy($id)
+    {
+        $topic = Topic::findOrFail($id);
+
+        // Check if any questions are associated
+
+        if($topic->questions()->exists()){
+            return response()->json([
+                'message' => 'Cannot delete topic with associated questions',
+            ], 400);
+        }
+        // Delete the topic if no questions exist
+        $topic->delete();
+
+        return response()->json([
+            'message' => 'Topic deleted successfully',
+        ], 200);
+    }
 }
