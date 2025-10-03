@@ -136,7 +136,7 @@ class QuestionController extends Controller
                 break;
 
             case 'short_answer':
-                $rules['options'] = 'nullable|array|max:0';
+                $rules['options'] = 'nullable';
                 $rules['correct_answer'] = 'nullable|string|max:0';
                 break;
 
