@@ -137,7 +137,7 @@ class QuestionController extends Controller
 
             case 'short_answer':
                 $rules['options'] = 'nullable';
-                $rules['correct_answer'] = 'nullable|string|max:0';
+                $rules['correct_answer'] = 'nullable';
                 break;
 
             case 'matching':
