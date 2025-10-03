@@ -151,7 +151,7 @@ class AssessmentController extends Controller
         $validated = $request->validate([
             'topic_id' => 'required|exists:topics,id',
             'mode' => 'required|in:all,custom,unpracticed',
-            'limit' => 'required_if:mode,custom,unpracticed|integer|min:1'
+            'limit' => 'nullable|integer|min:1'
         ]);
 
         $student = Auth::user();
@@ -165,37 +165,49 @@ class AssessmentController extends Controller
         }
        
 
-        // Get all questions for the topic
-        $questionQuery = Question::where('topic_id', $topic->id);
+        // Total questions available for the topic
+        $totalQuestions = Question::where('topic_id', $topic->id)->count();
         
+        //Business rule: if <=10, force mode = all
+
+        if ($totalQuestions <= 10) {
+            $validated['mode'] = 'all';
+            $validated['limit'] = null;
+        }
+        // Build base query
+        $questionQuery = Question::where('topic_id', $topic->id);
+
+
         if ($validated['mode'] === 'unpracticed') {
             $practicedQuestionIds = StudentQuestionHistory::where('student_id', $student->id)
                 ->where('topic_id', $topic->id)
                 ->pluck('question_id');
-            $questionQuery = $questionQuery->whereNotIn('id', $practicedQuestionIds);
+            $questionQuery->whereNotIn('id', $practicedQuestionIds);
         }
 
-        if ($validated['mode'] !== 'all') {
-            $questions = $questionQuery->inRandomOrder()->take($validated['limit'])->get();
-        } else {
-            $questions = $questionQuery->get();
-        }
+        // Select questions
+    $questions = match ($validated['mode']) {
+        'all' => $questionQuery->get(),
+        default => $questionQuery->inRandomOrder()->take($validated['limit'])->get(),
+    };
 
-        if ($questions->isEmpty()) {
-            return response()->json(['message' => 'No questions found for this topic.'], 404);
-        }
+    if ($questions->isEmpty()) {
+        return response()->json(['message' => 'No questions found for this topic.'], 404);
+    }
+
+
 
         // Create the title suffix
         $titleSuffix = match ($validated['mode']) {
             'all' => 'Practice All Questions',
-            'custom' => "Practice {$validated['limit']} Questions",
-            'unpracticed' => "Practice {$validated['limit']} of Unpracticed Questions",
+            'custom' => "{$validated['limit']} Questions",
+            'unpracticed' => "{$validated['limit']} Unpracticed Questions",
         };
 
         // Create the practice assessment
         $practiceAssessment = Assessment::create([
             'type' => 'practice',
-            'title' => $titleSuffix,
+            'title' => "Practice: {$titleSuffix}",
             'creator_id' => $student->id,
             'topic_id' => $topic->id,
             'question_count' => $questions->count(),
