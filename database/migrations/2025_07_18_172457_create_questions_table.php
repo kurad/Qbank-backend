@@ -15,7 +15,7 @@ return new class extends Migration
             $table->id();
             $table->foreignId('topic_id')->constrained()->onDelete('cascade');
             $table->text('question');
-            $table->enum('question_type', ['mcq', 'true_false', 'short_answer'])->default('mcq');
+            $table->enum('question_type', ['mcq', 'true_false', 'short_answer','matching'])->default('mcq');
             $table->json('options')->nullable(); // {'A': 'Option 1', 'B': 'Option 2'...}
             $table->string('correct_answer'); // e.g. 'A' or json for multiple answers
             $table->decimal('marks', 2, 1)->default(1.00); // Marks for the question

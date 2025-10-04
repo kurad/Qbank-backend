@@ -102,6 +102,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/student/assigned-assessments', [AssessmentController::class, 'assignedAssessments']);
     Route::get('/student/statistics', [HomeController::class, 'statistics']);
 
+    Route::post('/refresh-token', [AuthController::class, 'refreshToken']);
+
     
 
 });
