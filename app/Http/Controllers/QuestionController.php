@@ -219,6 +219,17 @@ class QuestionController extends Controller
             ],
         ]);
     }
+    public function byTopicNoPagination($topicId)
+{
+    $questions = Question::where('topic_id', $topicId)
+        ->with('topic') // Eager load relationships
+        ->get();
+
+    return response()->json([
+        'success' => true,
+        'data' => $questions,
+    ]);
+}
 
     public function update(Request $request, $id)
     {
