@@ -115,3 +115,5 @@ Route::get('/questions/{id}', [QuestionController::class, 'show']);
 Route::get('/subjects/overview', [HomeController::class, 'subjectsOverview']);
 Route::get('/subjects/{subject}/topics', [HomeController::class, 'subjectTopics']);
     // Route::get('/topics/{topic}/questions', [HomeController::class, 'topicQuestions']);
+    // Reports
+    Route::get('/reports/questions-per-subject', [HomeController::class, 'questionsPerSubject']);

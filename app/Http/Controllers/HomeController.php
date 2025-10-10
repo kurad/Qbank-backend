@@ -10,6 +10,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Subject;
 use App\Models\Topic;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 
 class HomeController extends Controller
 {
@@ -129,5 +130,33 @@ class HomeController extends Controller
             'topic' => $topic->topic_name,
             'questions' => $questions,
         ]);
+    }
+
+    /**
+     * Summarized report: number of questions per subject
+     * GET /reports/questions-per-subject
+     */
+    public function questionsPerSubject()
+    {
+        // Left-join from subjects so subjects with zero questions are included
+        // Schema path: subjects -> grade_subjects (subject_id) -> topics (grade_subject_id) -> questions (topic_id)
+        $summary = Subject::query()
+            ->leftJoin('grade_subjects', 'grade_subjects.subject_id', '=', 'subjects.id')
+            ->leftJoin('grade_levels', 'grade_levels.id', '=', 'grade_subjects.grade_level_id')
+            ->leftJoin('topics', 'topics.grade_subject_id', '=', 'grade_subjects.id')
+            ->leftJoin('questions', 'questions.topic_id', '=', 'topics.id')
+            ->select([
+                'subjects.id as subject_id',
+                'subjects.name as subject_name',
+                'grade_levels.id as grade_id',
+                'grade_levels.grade_name as grade_name',
+                DB::raw('COUNT(questions.id) as questions_count'),
+            ])
+            ->groupBy('subjects.id', 'subjects.name', 'grade_levels.id', 'grade_levels.grade_name')
+            ->orderBy('subjects.name')
+            ->orderBy('grade_levels.grade_name')
+            ->get();
+
+        return response()->json($summary);
     }
 }
