@@ -58,6 +58,7 @@ Route::post('/grade-subjects', [TopicController::class, 'createOrGet']);
 Route::get('/subjects/{subject}/grades', [SubjectController::class, 'gradesForSubject']);
 Route::post('/subjects', [SubjectController::class, 'createSubject']);
 Route::put('/subjects/{id}', [SubjectController::class, 'update']);
+Route::get('/subjects/search', [SubjectController::class, 'searchSubjects']);
 Route::get('/topics', [TopicController::class, 'index']);
 // Routes for teachers to create subjects, topics, and questions
 Route::middleware('auth:sanctum')->group(function () {

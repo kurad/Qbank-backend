@@ -58,6 +58,33 @@ class SubjectController extends Controller
             'data' => $subject
         ], 201);
     }
+    public function searchSubjects(Request $request)
+    {
+        $search = $request->input('search', '');
+        $query = Subject::query();
+
+        if (!empty($search)) {
+            $query->where('name', 'like', "%{$search}%");
+        }
+
+        // Join with grade_levels to include grade information
+        $subjects = $query->with('gradeLevels')
+            ->orderBy('name')
+            ->limit(10)
+            ->get()
+            ->map(function ($subject) {
+                // Format each subject with its grade level
+                $gradeLevels = $subject->gradeLevels->pluck('name')->join(', ');
+
+                return [
+                    'id' => $subject->id,
+                    'name' => $subject->name,
+                    'grade_level' => $gradeLevels ?: 'All Levels'
+                ];
+            });
+
+        return response()->json($subjects);
+    }
     public function subjectWithTopicsAndQuestions()
     {
         $subjects = Subject::with(['gradeLevel', 'topics.questions'])
