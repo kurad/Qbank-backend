@@ -2,12 +2,13 @@
 
 namespace App\Http\Controllers;
 
-use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Storage;
+use App\Models\Topic;
 use App\Models\Question;
 use App\Models\GradeLevel;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 
 class QuestionController extends Controller
 {
@@ -388,6 +389,14 @@ class QuestionController extends Controller
                 'total' => $questions->total(),
             ],
         ]);
+    }
+    public function topicsWithQuestionsBySubject($subjectId)
+    {
+        $topics = Topic::where('subject_id', $subjectId)
+            ->with('questions')
+            ->orderBy('topic_name')
+            ->get();
+            return response()->json($topics);
     }
     public function destroy($id)
     {
