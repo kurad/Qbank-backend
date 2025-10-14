@@ -391,10 +391,12 @@ class QuestionController extends Controller
             ],
         ]);
     }
-    public function topicsWithQuestionsBySubject($subjectId)
+    public function topicsWithQuestionsBySubject($subjectId, $gradeLevelId)
     {
         // Get all grade_subjects for this subject
-    $gradeSubjectIds = GradeSubject::where('subject_id', $subjectId)->pluck('id');
+    $gradeSubjectIds = GradeSubject::where('subject_id', $subjectId)
+                ->where('grade_level_id', $gradeLevelId)
+                ->pluck('id');
 
     // Get all topics for these grade_subjects, with their questions
     $topics = Topic::whereIn('grade_subject_id', $gradeSubjectIds)

@@ -43,7 +43,7 @@ Route::get('/subjects/{subjectId}/grades/{gradeId}/units', [TopicController::cla
 Route::delete('/topics/{id}', [TopicController::class, 'destroy']);
 Route::get('/topics/{topic}/questions', [QuestionController::class, 'byTopic']);
 Route::get('/topics/{topic}/questions/no-pagination', [QuestionController::class, 'byTopicNoPagination']);
-Route::get('/subjects/{subjectId}/topics-with-questions', [QuestionController::class, 'topicsWithQuestionsBySubject']);
+Route::get('/subjects/{subjectId}/grades/{gradeId}/topics-with-questions', [QuestionController::class, 'topicsWithQuestionsBySubject']);
 // Route to get grade levels
 Route::get('/grade-levels', [GradeLevelController::class, 'index']);
 Route::get('/grade-levels/{gradeId}/subjects', [SubjectController::class, 'getSubjectsByGrade']);
