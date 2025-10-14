@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Topic;
 use App\Models\Question;
 use App\Models\GradeLevel;
+use App\Models\GradeSubject;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -392,10 +393,14 @@ class QuestionController extends Controller
     }
     public function topicsWithQuestionsBySubject($subjectId)
     {
-        $topics = Topic::where('subject_id', $subjectId)
-            ->with('questions')
-            ->orderBy('topic_name')
-            ->get();
+        // Get all grade_subjects for this subject
+    $gradeSubjectIds = GradeSubject::where('subject_id', $subjectId)->pluck('id');
+
+    // Get all topics for these grade_subjects, with their questions
+    $topics = Topic::whereIn('grade_subject_id', $gradeSubjectIds)
+        ->with('questions')
+        ->orderBy('topic_name')
+        ->get();
             return response()->json($topics);
     }
     public function destroy($id)
