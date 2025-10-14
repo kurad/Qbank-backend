@@ -393,31 +393,42 @@ class QuestionController extends Controller
     }
     public function topicsWithQuestionsBySubject($subjectId)
     {
-        // Get all grade_subjects for this subject
+        // 1️⃣ Get all grade_subject IDs for the given subject
         $gradeSubjectIds = GradeSubject::where('subject_id', $subjectId)->pluck('id');
 
-        // Fetch all topics under these grade_subjects with their related questions
+        // 2️⃣ Get topics under those grade_subjects, along with their questions
         $topics = Topic::whereIn('grade_subject_id', $gradeSubjectIds)
             ->with(['questions' => function ($query) {
-                $query->select('id', 'topic_id', 'question_text', 'difficulty', 'type'); // choose relevant columns
+                $query->select(
+                    'id',
+                    'topic_id',
+                    'question',
+                    'question_type',
+                    'options',
+                    'correct_answer',
+                    'marks',
+                    'difficulty_level'
+                );
             }])
             ->orderBy('topic_name')
             ->get(['id', 'topic_name', 'grade_subject_id']);
 
-        // Group data to make it frontend-friendly
+        // 3️⃣ Format output for frontend filtering
         $grouped = $topics->map(function ($topic) {
             return [
                 'topic_id' => $topic->id,
                 'topic_name' => $topic->topic_name,
-                'questions' => $topic->questions
+                'questions' => $topic->questions,
             ];
         });
 
+        // 4️⃣ Return clean response
         return response()->json([
             'success' => true,
-            'data' => $grouped
+            'data' => $grouped,
         ]);
     }
+
     public function destroy($id)
     {
         $question = Question::findOrFail($id);
