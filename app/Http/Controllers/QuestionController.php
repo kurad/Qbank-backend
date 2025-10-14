@@ -222,16 +222,16 @@ class QuestionController extends Controller
         ]);
     }
     public function byTopicNoPagination($topicId)
-{
-    $questions = Question::where('topic_id', $topicId)
-        ->with('topic') // Eager load relationships
-        ->get();
+    {
+        $questions = Question::where('topic_id', $topicId)
+            ->with('topic') // Eager load relationships
+            ->get();
 
-    return response()->json([
-        'success' => true,
-        'data' => $questions,
-    ]);
-}
+        return response()->json([
+            'success' => true,
+            'data' => $questions,
+        ]);
+    }
 
     public function update(Request $request, $id)
     {
@@ -394,14 +394,29 @@ class QuestionController extends Controller
     public function topicsWithQuestionsBySubject($subjectId)
     {
         // Get all grade_subjects for this subject
-    $gradeSubjectIds = GradeSubject::where('subject_id', $subjectId)->pluck('id');
+        $gradeSubjectIds = GradeSubject::where('subject_id', $subjectId)->pluck('id');
 
-    // Get all topics for these grade_subjects, with their questions
-    $topics = Topic::whereIn('grade_subject_id', $gradeSubjectIds)
-        ->with('questions')
-        ->orderBy('topic_name')
-        ->get();
-            return response()->json($topics);
+        // Fetch all topics under these grade_subjects with their related questions
+        $topics = Topic::whereIn('grade_subject_id', $gradeSubjectIds)
+            ->with(['questions' => function ($query) {
+                $query->select('id', 'topic_id', 'question_text', 'difficulty', 'type'); // choose relevant columns
+            }])
+            ->orderBy('topic_name')
+            ->get(['id', 'topic_name', 'grade_subject_id']);
+
+        // Group data to make it frontend-friendly
+        $grouped = $topics->map(function ($topic) {
+            return [
+                'topic_id' => $topic->id,
+                'topic_name' => $topic->topic_name,
+                'questions' => $topic->questions
+            ];
+        });
+
+        return response()->json([
+            'success' => true,
+            'data' => $grouped
+        ]);
     }
     public function destroy($id)
     {
