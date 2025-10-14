@@ -5,11 +5,11 @@ namespace App\Http\Controllers;
 use App\Models\Topic;
 use App\Models\Question;
 use App\Models\GradeLevel;
-use App\Models\GradeSubject;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
+use App\Models\GradeSubject;
 
 class QuestionController extends Controller
 {
@@ -391,12 +391,10 @@ class QuestionController extends Controller
             ],
         ]);
     }
-    public function topicsWithQuestionsBySubject($subjectId, $gradeLevelId)
+    public function topicsWithQuestionsBySubject($subjectId)
     {
         // Get all grade_subjects for this subject
-    $gradeSubjectIds = GradeSubject::where('subject_id', $subjectId)
-                ->where('grade_level_id', $gradeLevelId)
-                ->pluck('id');
+    $gradeSubjectIds = GradeSubject::where('subject_id', $subjectId)->pluck('id');
 
     // Get all topics for these grade_subjects, with their questions
     $topics = Topic::whereIn('grade_subject_id', $gradeSubjectIds)
