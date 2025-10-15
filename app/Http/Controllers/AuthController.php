@@ -57,6 +57,12 @@ class AuthController extends Controller
 
         $user = auth()->user();
 
+        // Only allow users with active status to log in
+        if ($user->status !== 'active') {
+            Auth::logout();
+            return response()->json(['message' => 'Your account is not active'], 403);
+        }
+
         // Create a token with expiry time of 1 hour
         $token = $user->createToken(
             'auth_token', 
