@@ -11,6 +11,7 @@ use App\Http\Controllers\QuestionController;
 use App\Http\Controllers\AssessmentController;
 use App\Http\Controllers\GradeLevelController;
 use App\Http\Controllers\StudentAnswerController;
+use App\Http\Controllers\AssessmentBuilderController;
 
 /*
 |--------------------------------------------------------------------------
@@ -61,6 +62,7 @@ Route::post('/subjects', [SubjectController::class, 'createSubject']);
 Route::put('/subjects/{id}', [SubjectController::class, 'update']);
 Route::get('/subjects/search', [SubjectController::class, 'searchSubjects']);
 Route::get('/topics', [TopicController::class, 'index']);
+Route::get('/topics-by-subject', [TopicController::class, 'topicsBySubject']);
 // Routes for teachers to create subjects, topics, and questions
 Route::middleware('auth:sanctum')->group(function () {
     // Route::post('/subjects', [SubjectController::class, 'store']);
@@ -119,3 +121,8 @@ Route::get('/subjects/{subject}/topics', [HomeController::class, 'subjectTopics'
     // Route::get('/topics/{topic}/questions', [HomeController::class, 'topicQuestions']);
     // Reports
     Route::get('/reports/questions-per-subject', [HomeController::class, 'questionsPerSubject']);
+
+    Route::middleware('auth:sanctum')->group(function () {
+        Route::get('/questions/by-topics', [AssessmentBuilderController::class, 'questionsByTopics']);
+        Route::post('/create-assessments', [AssessmentBuilderController::class, 'store']);
+});

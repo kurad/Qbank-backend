@@ -13,7 +13,6 @@ class Assessment extends Model
         'type',
         'title',
         'creator_id',
-        'topic_id',
         'question_count',
         'delivery_mode',
         'due_date',
@@ -40,9 +39,18 @@ class Assessment extends Model
     {
         return $this->hasMany(StudentAssessment::class);
     }
-    public function topic()
+    /**
+     * Backwards-compatible accessor that returns the first topic attached to the assessment.
+     * Allows existing code to use $assessment->topic->name while the canonical relation is many-to-many.
+     */
+    public function getTopicAttribute()
     {
-        return $this->belongsTo(Topic::class, 'topic_id');
+        return $this->topics()->first();
+    }
+
+    public function topics()
+    {
+        return $this->belongsToMany(Topic::class, 'assessment_topic', 'assessment_id', 'topic_id')->withTimestamps();
     }
     public function questions()
     {

@@ -9,13 +9,29 @@ use Illuminate\Support\Facades\DB;
 
 class TopicController extends Controller
 {
-    public function index()
+    public function index(Request $request)
     {
 
-        $topics = Topic::with(['gradeSubject.subject', 'gradeSubject.gradeLevel'])
-            ->orderBy('created_at', 'desc')
-            ->get();
-        return response()->json($topics);
+       $query = Topic::with(['gradeSubject.subject', 'gradeSubject.gradeLevel'])
+        ->orderBy('created_at', 'desc');
+
+    // Filter by subject
+    if ($request->has('subject_id')) {
+        $query->whereHas('gradeSubject', function ($q) use ($request) {
+            $q->where('subject_id', $request->subject_id);
+        });
+    }
+
+    // Optional filter by grade level
+    if ($request->has('grade_level_id')) {
+        $query->whereHas('gradeSubject', function ($q) use ($request) {
+            $q->where('grade_level_id', $request->grade_level_id);
+        });
+    }
+
+    $topics = $query->get();
+
+    return response()->json($topics);
     }
     public function createOrGet(Request $request)
     {

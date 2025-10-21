@@ -209,12 +209,13 @@ class AssessmentController extends Controller
             'type' => 'practice',
             'title' => "Practice: {$titleSuffix}",
             'creator_id' => $student->id,
-            'topic_id' => $topic->id,
             'question_count' => $questions->count(),
             'due_date' => now()->addDay(), // Use due_date instead of start_time/end_time
             'is_timed' => false,
             'time_limit' => null,
         ]);
+        // Attach topic via pivot
+        $practiceAssessment->topics()->attach($topic->id);
 
         // Associate questions with the assessment
         foreach ($questions as $order => $question) {
@@ -271,14 +272,15 @@ class AssessmentController extends Controller
                 'type' => $validated['type'],
                 'title' => $validated['title'],
                 'creator_id' => Auth::id(), // Use authenticated user ID
-                'topic_id' => $validated['topic_id'],
                 'question_count' => 0, // Will be updated later
                 'due_date' => $validated['due_date'] ?? now(),
                 'is_timed' => $validated['is_timed'] ?? false,
                 'time_limit' => $validated['time_limit'] ?? null,
                 'delivery_mode' => $validated['delivery_mode'],
-                
             ]);
+            // Attach the provided topic via pivot
+            $assessment->topics()->attach($validated['topic_id']);
+            
             
             return response()->json([
             'message' => 'Assessment created successfully',

@@ -23,7 +23,7 @@ class AssessmentSeeder extends Seeder
         if (!$topic) {
             return; // No topic for this subject, skip seeding
         }
-        $questions = Question::where('topic_id', $topic->id)->get();
+    $questions = Question::where('topic_id', $topic->id)->get();
         if ($questions->isEmpty()) {
             return; // No questions for this topic, skip seeding
         }
@@ -34,13 +34,14 @@ class AssessmentSeeder extends Seeder
             'title' => 'Sample Quiz Assessment',
             'creator_id' => $teacher->id,
             'subject_id' => $subject->id,
-            'topic_id' => $topic->id,
             'question_count' => min(5, $questions->count()),
             'start_time' => now(),
             'end_time' => now()->addDays(1),
             'is_timed' => true,
             'time_limit' => 30,
         ]);
+        // Attach the topic via pivot
+        $quizAssessment->topics()->attach($topic->id);
         foreach ($questions->take(5) as $order => $question) {
             AssessmentQuestion::create([
                 'assessment_id' => $quizAssessment->id,
@@ -57,13 +58,13 @@ class AssessmentSeeder extends Seeder
                 'title' => 'Practice All Questions for Topic',
                 'creator_id' => $teacher->id,
                 'subject_id' => $subject->id,
-                'topic_id' => $topic->id,
                 'question_count' => $questions->count(),
                 'start_time' => now(),
                 'end_time' => now()->addDays(1),
                 'is_timed' => false,
                 'time_limit' => null,
             ]);
+            $practiceAssessment->topics()->attach($topic->id);
             foreach ($questions as $order => $question) {
                 AssessmentQuestion::create([
                     'assessment_id' => $practiceAssessment->id,

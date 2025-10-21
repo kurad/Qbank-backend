@@ -16,7 +16,6 @@ return new class extends Migration
             $table->enum('type', ['quiz','exam','homework', 'practice']);
             $table->string('title');
             $table->unsignedBigInteger('creator_id');
-            $table->unsignedBigInteger('topic_id');
             $table->integer('question_count');
             $table->enum('delivery_mode', ['online', 'offline'])->default('offline');
             $table->timestamp('due_date')->nullable();
@@ -24,8 +23,7 @@ return new class extends Migration
             $table->integer('time_limit')->nullable(); // in minutes
             $table->timestamps();
 
-             $table->foreign('creator_id')->references('id')->on('users')->onDelete('cascade');
-            $table->foreign('topic_id')->references('id')->on('topics')->onDelete('restrict');
+            $table->foreign('creator_id')->references('id')->on('users')->onDelete('cascade');
         });
     }
 

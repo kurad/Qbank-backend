@@ -32,7 +32,7 @@ class Topic extends Model
     }
     public function assessments()
     {
-        return $this->hasMany(Assessment::class);
+        return $this->belongsToMany(Assessment::class, 'assessment_topic', 'topic_id', 'assessment_id')->withTimestamps();
     }
 
 }
