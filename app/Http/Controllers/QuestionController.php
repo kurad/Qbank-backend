@@ -232,7 +232,24 @@ class QuestionController extends Controller
             'data' => $questions,
         ]);
     }
+    public function allQuestions()
+    {
+        $questions = DB::table('questions as q')
+            ->leftJoin('topics as t', 'q.topic_id', '=', 't.id')
+            ->leftJoin('grade_subjects as gs', 't.grade_subject_id', '=', 'gs.id')
+            ->leftJoin('subjects as s', 'gs.subject_id', '=', 's.id')
+            ->leftJoin('grade_levels as g', 'gs.grade_level_id', '=', 'g.id')
+            ->select(
+                'q.*',
+                't.topic_name',
+                's.name as subject_name',
+                'g.grade_name'
+            )
+            ->orderByDesc('q.id')
+            ->get();
 
+        return response()->json($questions);
+    }
     public function update(Request $request, $id)
     {
         Log::info('Updating question with ID: ' . $id);
