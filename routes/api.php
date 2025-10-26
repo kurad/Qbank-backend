@@ -71,8 +71,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/questions', [QuestionController::class, 'store']);
     Route::get('/my-questions', [QuestionController::class, 'myQuestions']);
     Route::delete('/questions/{id}', [QuestionController::class, 'destroy']);
-    Route::get('/questions/all', [QuestionController::class, 'allQuestions']);
 });
+Route::get('/questions/all', [QuestionController::class, 'allQuestions']);
 
 Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
     return $request->user();
@@ -83,7 +83,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // 1. Create assessment
     Route::post('/assessments', [AssessmentController::class, 'createAssessment']);
     // 2. Add questions to assessment
-    Route::post('/assessments/{assessment}/questions', [AssessmentController::class, 'addQuestions']);
+    Route::post('/assessments/{id}/questions', [AssessmentController::class, 'addQuestions']);
     // 3. Get questions for assessment
     Route::get('/assessments/{assessment}/questions', [AssessmentController::class, 'getAssessmentQuestions']);
     // 4. Remove a question from an assessment
