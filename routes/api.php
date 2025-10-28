@@ -4,6 +4,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\HomeController;
+use App\Http\Controllers\GroupController;
 use App\Http\Controllers\TopicController;
 use App\Http\Controllers\SchoolController;
 use App\Http\Controllers\SubjectController;
@@ -126,4 +127,19 @@ Route::get('/subjects/{subject}/topics', [HomeController::class, 'subjectTopics'
     Route::middleware('auth:sanctum')->group(function () {
         Route::get('/questions/by-topics', [AssessmentBuilderController::class, 'questionsByTopics']);
         Route::post('/create-assessments', [AssessmentBuilderController::class, 'store']);
+});
+
+Route::middleware('auth:sanctum')->group(function () {
+    // Groups
+    Route::get('/groups', [GroupController::class, 'index']);          // List groups created by user
+    Route::post('/groups', [GroupController::class, 'store']);         // Create new group
+    Route::get('/groups/{id}', [GroupController::class, 'show']);      // View single group with students
+    Route::put('/groups/{id}', [GroupController::class, 'update']);    // Edit group name or members
+    Route::delete('/groups/{id}', [GroupController::class, 'destroy']); // Delete group
+
+    // Manage group members
+    Route::post('/groups/{id}/students', [GroupController::class, 'addStudents']); // Add students to group
+    Route::delete('/groups/{id}/students/{studentId}', [GroupController::class, 'removeStudent']); // Remove one student
+    Route::post('/assessments/{id}/assign-group', [AssessmentController::class, 'assignGroup']);
+
 });

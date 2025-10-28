@@ -384,6 +384,23 @@ class AssessmentController extends Controller
             ], 422);
         }
 
+public function assignGroup(Request $request, $assessmentId)
+{
+    $validated = $request->validate([
+        'group_id' => 'required|exists:groups,id',
+    ]);
+
+    $assessment = Assessment::findOrFail($assessmentId);
+    $group = Group::with('students')->findOrFail($validated['group_id']);
+
+    // Attach all group students to this assessment
+    foreach ($group->students as $student) {
+        $assessment->students()->syncWithoutDetaching([$student->id]);
+    }
+
+    return response()->json(['message' => 'Group assigned successfully']);
+}
+
 
     // Start a practice assessment for the authenticated student
     public function startPractice(Request $request)
