@@ -20,11 +20,11 @@ class GroupController extends Controller
     public function store(Request $request)
     {
         $validated = $request->validate([
-            'name' => 'required|string|max:255',
+            'group_name' => 'required|string|max:255',
         ]);
 
         $group = Group::create([
-            'name' => $validated['name'],
+            'group_name' => $validated['group_name'],
             'created_by' => auth()->id(),
         ]);
         return response()->json([$group],201);
@@ -40,7 +40,7 @@ class GroupController extends Controller
         $this->authorize('update', $group);
 
         $validated = $request->validate([
-            'name' => 'sometimes|string|max:255',
+            'group_name' => 'sometimes|string|max:255',
         ]);
 
         $group->update($validated);
