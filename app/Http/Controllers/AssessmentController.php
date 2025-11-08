@@ -629,7 +629,14 @@ class AssessmentController extends Controller
             } else {
                 // For MCQ questions
                 try {
-                    $options = json_decode($question->options, true) ?? [];
+                    $rawOptions = $question->options;
+                    if (is_string($rawOptions)) {
+                        $options = json_decode($rawOptions, true) ?? [];
+                    } elseif (is_array($rawOptions)) {
+                        $options = $rawOptions;
+                    } else {
+                        $options = [];
+                    }
                     $formattedQuestion['options'] = array_map(function ($option) use ($question) {
                         return [
                             'text' => $option,
