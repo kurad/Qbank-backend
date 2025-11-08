@@ -301,7 +301,6 @@
         @if(isset($total_marks))
             <div class="total-marks">
                 <div>Total Marks: <strong>{{ $total_marks }}</strong></div>
-                <div>Pass Mark: <strong>{{ ceil($total_marks * 0.5) }}</strong> (50%)</div>
             </div>
         @endif
         

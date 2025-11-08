@@ -118,7 +118,7 @@
     <div class="total-marks">Total: {{ $total_marks ?? 'N/A' }} marks</div>
 
     <div class="footer">
-        {{ $school['school_name'] ?? 'School Name' }} | {{ $title }} | Page <span class="page-number">{{ $page ?? 1 }}</span>
+        {{ $school['school_name'] ?? 'School Name' }} | {{ $title }} | Page <span class="page-number">{{ $page ?? 1 }}</span> | | {{ date('F j, Y') }}
     </div>
 
     <script>

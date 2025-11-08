@@ -563,7 +563,7 @@ class AssessmentController extends Controller
     {
         $assessment = Assessment::with([
             'questions.question',
-            'subject',
+            'topics.gradeSubject.subject',
             'creator.school'
         ])
             ->findOrFail($id);
@@ -578,10 +578,13 @@ class AssessmentController extends Controller
         // Get school details
         $school = $assessment->creator->school ?? null;
 
+        $subjects = $assessment->topics->map(function($topic) {
+            return $topic->gradeSubject?->subject?->name;
+        })->filter()->unique()->values();
         // Format the data for the PDF
         $data = [
             'title' => $assessment->title,
-            'subject' => $assessment->subject ? $assessment->subject->name : 'General',
+            'subject' => $subjects->first() ?? 'General',
             'topic' => $assessment->topic ? $assessment->topic->name : 'General',
             'created_at' => $assessment->created_at->format('F j, Y'),
             'school' => [
@@ -614,7 +617,7 @@ class AssessmentController extends Controller
             $formattedQuestion = [
                 'number' => $index + 1,
                 'text' => $question->question,
-                'marks' => $question->marks ?? 1,
+                'total_marks' => $question->marks ?? 1,
                 'type' => $question->question_type,
                 'image' => $imagePath,
                 'options' => []
