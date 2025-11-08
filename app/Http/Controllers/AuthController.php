@@ -15,10 +15,7 @@ class AuthController extends Controller
     // Admin: Update user
     public function updateUser(Request $request, $id)
     {
-        $admin = $request->user();
-        if (!$admin || $admin->role !== 'admin') {
-            return response()->json(['message' => 'Forbidden'], 403);
-        }
+      
         $user = User::findOrFail($id);
         $validated = $request->validate([
             'name' => 'sometimes|string|max:255',
