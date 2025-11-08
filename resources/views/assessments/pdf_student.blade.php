@@ -88,13 +88,13 @@
                     @foreach($q['options'] as $i => $opt)
                         <div class="option">
                             <div class="option-label">{{ chr(65 + $i) }}.</div>
-                            <span>
+                                <span>
                                 @if(!empty($opt['image']))
                                     <img src="{{ $opt['image'] }}" style="max-height:50px;">
                                 @else
                                     {!! $opt['text'] !!}
                                 @endif
-                            </span>
+                                </span>
                         </div>
                     @endforeach
                 </div>
