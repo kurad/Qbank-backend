@@ -141,5 +141,6 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/groups/{id}/students', [GroupController::class, 'addStudents']); // Add students to group
     Route::delete('/groups/{id}/students/{studentId}', [GroupController::class, 'removeStudent']); // Remove one student
     Route::post('/assessments/{id}/assign-group', [AssessmentController::class, 'assignGroup']);
+    Route::post('/groups/join', [GroupController::class, 'joinClassByCode'])->middleware('auth:sanctum');
 
 });

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Group;
+use Illuminate\Support\Str;
 use Illuminate\Http\Request;
 
 class GroupController extends Controller
@@ -26,6 +27,7 @@ class GroupController extends Controller
         $group = Group::create([
             'group_name' => $validated['group_name'],
             'created_by' => auth()->id(),
+            'class_code' => strtoupper(Str::random(8)),
         ]);
         return response()->json([$group],201);
     }
@@ -73,6 +75,35 @@ class GroupController extends Controller
             'message' => 'Students added to group successfully',
         ]);
     }
+    public function joinClassByCode(Request $request)
+    {
+        $validated = $request->validate([
+            'class_code' => 'required|string|exists:groups, class_code',
+        ]);
+
+        // Find the group using the provided class code
+
+        $group = Group::where('class_code', $validated['class_code'])->firstOrFail();
+
+        // Ensure only student can join
+        if(auth()->user()->role != 'student') {
+            return response()->join(['message' => 'Only students can join the class'], 403);
+        }
+        // Check if the student is already in the group
+        $alreadyJoined = $group->students()->where('student_id', auth()->id())->exists();
+        if($alreadyJoined){
+            return response()->json(['message' => 'You have already joined this class.'], 409);
+        }
+
+        //Add the student to the group
+
+        $group->students()->attach(auth()->id());
+        return response()->json([
+            'message' => 'Successfully joined the class!',
+            'group' =>$group,
+        ]);
+    }
+
     public function removeStudent($id, $studentId)
     {
         $group = Group::findOrFail($id);

@@ -245,6 +245,7 @@ class QuestionController extends Controller
                 's.name as subject_name',
                 'g.grade_name'
             )
+            //->where('q.created_by', auth()->id())
             ->orderByDesc('q.id')
             ->get();
 
