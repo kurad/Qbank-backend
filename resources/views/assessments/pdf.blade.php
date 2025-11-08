@@ -23,73 +23,73 @@
         }
         
         .header {
-            border-bottom: 2px solid #1a5276;
-            padding-bottom: 10px;
-            margin-bottom: 20px;
+            border-bottom: 3px solid #1a5276;
+            padding-bottom: 18px;
+            margin-bottom: 28px;
             position: relative;
+            background: linear-gradient(90deg, #f0f7ff 0%, #eaf6fb 100%);
+            box-shadow: 0 2px 8px rgba(26,82,118,0.04);
         }
-        
         .school-logo {
             max-height: 80px;
             margin-bottom: 10px;
+            border-radius: 50%;
+            box-shadow: 0 2px 8px rgba(26,82,118,0.10);
+            border: 2px solid #e0e0e0;
         }
-        
         .school-info {
             text-align: center;
-            margin-bottom: 15px;
+            margin-bottom: 10px;
         }
-        
         .school-name {
-            font-size: 18pt;
+            font-size: 22pt;
             font-weight: bold;
             color: #1a5276;
-            margin: 5px 0;
+            margin: 5px 0 2px 0;
             text-transform: uppercase;
+            letter-spacing: 1.5px;
         }
-        
         .school-details {
-            font-size: 9pt;
+            font-size: 10pt;
             color: #555;
             margin-bottom: 5px;
             line-height: 1.3;
         }
         
         .assessment-title {
-            font-size: 14pt;
+            font-size: 16pt;
             font-weight: bold;
             text-align: center;
-            margin: 15px 0;
+            margin: 18px 0 10px 0;
             color: #2c3e50;
             text-transform: uppercase;
-            letter-spacing: 1px;
+            letter-spacing: 2px;
+            text-shadow: 0 1px 0 #fff;
         }
         
         .assessment-meta {
-            margin: 15px 0;
-            font-size: 10pt;
+            margin: 18px 0 10px 0;
+            font-size: 11pt;
             background-color: #f8f9fa;
-            padding: 12px 20px;
-            border-radius: 4px;
-            border-left: 4px solid #1a5276;
+            padding: 14px 24px;
+            border-radius: 6px;
+            border-left: 5px solid #1a5276;
+            box-shadow: 0 1px 4px rgba(26,82,118,0.06);
+            display: flex;
+            justify-content: center;
+            gap: 32px;
         }
-        
         .meta-row {
             display: flex;
-            margin-bottom: 6px;
             align-items: center;
+            gap: 6px;
         }
-        
-        .meta-row:last-child {
-            margin-bottom: 0;
-        }
-        
         .meta-label {
             font-weight: 600;
             color: #2c3e50;
             min-width: 70px;
             display: inline-block;
         }
-        
         .meta-value {
             color: #1a5276;
             font-weight: 500;
@@ -97,17 +97,17 @@
         
         .total-marks {
             text-align: right;
-            margin: 20px 0;
-            font-size: 12pt;
-            color: #1a5276;
-            padding: 10px 15px;
-            background-color: #f0f7ff;
-            border-radius: 4px;
-            border-left: 4px solid #1a5276;
-        }
-        
-        .total-marks div {
-            margin: 5px 0;
+            margin: 22px 0 10px 0;
+            font-size: 13pt;
+            color: #fff;
+            padding: 12px 22px;
+            background: linear-gradient(90deg, #1a5276 60%, #2980b9 100%);
+            border-radius: 20px 0 0 20px;
+            border-left: 0;
+            box-shadow: 0 2px 8px rgba(26,82,118,0.08);
+            font-weight: bold;
+            letter-spacing: 1px;
+            display: inline-block;
         }
         
         .marking-notes {
@@ -130,19 +130,30 @@
         }
         
         .question {
-            margin-bottom: 25px;
+            margin-bottom: 28px;
             page-break-inside: avoid;
-            border: 1px solid #e0e0e0;
-            padding: 15px;
-            border-radius: 6px;
+            border: 1.5px solid #e0e0e0;
+            padding: 18px 18px 14px 18px;
+            border-radius: 10px;
             background-color: #fff;
             position: relative;
+            box-shadow: 0 2px 8px rgba(44,62,80,0.04);
+            transition: box-shadow 0.2s;
         }
         
         .question-number {
             font-weight: bold;
-            color: #1a5276;
-            margin-right: 5px;
+            color: #fff;
+            background: #1a5276;
+            border-radius: 50%;
+            width: 28px;
+            height: 28px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            margin-right: 10px;
+            font-size: 12pt;
+            box-shadow: 0 1px 4px rgba(26,82,118,0.10);
         }
         
         .question-text {
@@ -230,11 +241,12 @@
             left: 0;
             right: 0;
             text-align: center;
-            font-size: 9pt;
-            color: #666;
-            padding: 8px 0;
-            background-color: #f8f9fa;
-            border-top: 1px solid #e0e0e0;
+            font-size: 10pt;
+            color: #fff;
+            padding: 10px 0;
+            background: linear-gradient(90deg, #1a5276 60%, #2980b9 100%);
+            border-top: 2px solid #1a5276;
+            letter-spacing: 1px;
         }
         
         .page-break {
@@ -358,7 +370,12 @@
 
     <!-- Footer -->
     <div class="footer">
-        {{ $school['school_name'] ?? 'School' }} | {{ $title }} | {{ date('F j, Y') }}
+        <span style="font-weight:600;">{{ $school['school_name'] ?? 'School' }}</span>
+        &nbsp;|&nbsp;
+        <span>{{ $title }}</span>
+        &nbsp;|&nbsp;
+        <span>{{ date('F j, Y') }}</span>
+        <span style="float:right; font-size:9pt; color:#e0e0e0; margin-right:20px;">Powered by Lesson Plan App</span>
     </div>
     
     <script type="text/php">

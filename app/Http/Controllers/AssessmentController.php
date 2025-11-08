@@ -617,7 +617,7 @@ class AssessmentController extends Controller
             $formattedQuestion = [
                 'number' => $index + 1,
                 'text' => $question->question,
-                'total_marks' => $question->marks ?? 1,
+                'marks' => $question->marks ?? 1,
                 'type' => $question->question_type,
                 'image' => $imagePath,
                 'options' => []
@@ -652,6 +652,7 @@ class AssessmentController extends Controller
             }
 
             $data['questions'][] = $formattedQuestion;
+            $data['total_marks'] += $formattedQuestion['marks'];
         }
 
         // Generate PDF
