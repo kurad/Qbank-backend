@@ -14,6 +14,8 @@ class School extends Model
         'district',
         'email',
         'school_code',
+        'logo_path',
+        'status',
     ];
 
     // Boot method to auto-generate unique school_code

@@ -30,6 +30,7 @@ use App\Http\Controllers\AssessmentBuilderController;
 // Public route for school creation
 // Public routes for school creation and update
 Route::post('/schools', [SchoolController::class, 'store']);
+Route::get('/schools', [SchoolController::class, 'index']);
 Route::match(['put', 'patch'], '/schools/{id}', [SchoolController::class, 'update']);
 Route::post('/login', [AuthController::class, 'login']);
 Route::post('/register', [AuthController::class, 'register']);
