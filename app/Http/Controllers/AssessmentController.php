@@ -1057,7 +1057,14 @@ public function assignGroup(Request $request, $assessmentId)
                         ['text' => 'False'],
                     ];
                 } else {
-                    $decodedOptions = json_decode($question->options, true) ?? [];
+                    $rawOptions = $question->options;
+                    if (is_string($rawOptions)) {
+                        $decodedOptions = json_decode($rawOptions, true) ?? [];
+                    } elseif (is_array($rawOptions)) {
+                        $decodedOptions = $rawOptions;
+                    } else {
+                        $decodedOptions = [];
+                    }
                     foreach ($decodedOptions as $opt) {
                         $options[] = [
                             'text' => $opt,
