@@ -639,7 +639,7 @@ class AssessmentController extends Controller
                     }
                     $formattedQuestion['options'] = array_map(function ($option) use ($question) {
                         return [
-                            'text' => $option,
+                            'text' => is_array($option) ? ($option['text'] ?? '') : $option,
                             'is_correct' => $option === $question->correct_answer
                         ];
                     }, $options);
