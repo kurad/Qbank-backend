@@ -36,11 +36,11 @@
             <div><img src="{{ $school['logo'] }}" alt="Logo" style="max-height:80px;"></div>
         @endif
         <div class="school-name">{{ $school['school_name'] ?? 'School Name' }}</div>
-        <div class="school-details">
+        <!-- <div class="school-details">
             {{ $school['address'] ?? 'School Address' }} |
             Tel: {{ $school['phone'] ?? 'Phone Number' }} |
             Email: {{ $school['email'] ?? 'school@example.com' }}
-        </div>
+        </div> -->
         <div class="assessment-title">{{ $title }}</div>
         <div class="assessment-meta">
             <div>Subject: {{ $subject ?? 'General' }}</div>

@@ -1,4 +1,5 @@
 <?php
+
 namespace App\Http\Controllers;
 
 use Log;
@@ -30,7 +31,7 @@ class AssessmentController extends Controller
             ->get();
 
         // For each assessment, get unique topics from its questions
-        $createdAssessments = $assessments->map(function($assessment) {
+        $createdAssessments = $assessments->map(function ($assessment) {
             $topicIds = $assessment->questions->pluck('question.topic_id')->unique()->filter();
             $topics = Topic::whereIn('id', $topicIds)->get();
             $assessment->topics = $topics;
@@ -46,16 +47,16 @@ class AssessmentController extends Controller
             return response()->json(['message' => 'Only students can view their practice assessments.'], 403);
         }
         $practiceAssessments = Assessment::where('type', 'practice')
-            ->whereHas('studentAssessments', function($q) use ($student) {
+            ->whereHas('studentAssessments', function ($q) use ($student) {
                 $q->where('student_id', $student->id);
             })
-            ->with(['questions.question', 'subject', 'studentAssessments' => function($q) use ($student) {
+            ->with(['questions.question', 'subject', 'studentAssessments' => function ($q) use ($student) {
                 $q->where('student_id', $student->id);
             }])
             ->latest()
             ->get();
 
-        $practiceAssessments = $practiceAssessments->map(function($assessment) {
+        $practiceAssessments = $practiceAssessments->map(function ($assessment) {
             $topicIds = $assessment->questions->pluck('question.topic_id')->unique()->filter();
             $topics = Topic::whereIn('id', $topicIds)->get();
             $assessment->topics = $topics;
@@ -80,16 +81,16 @@ class AssessmentController extends Controller
 
         // Assigned assessments (non-practice types) for the student
         $assignedAssessments = Assessment::where('type', '!=', 'practice')
-            ->whereHas('studentAssessments', function($q) use ($student) {
+            ->whereHas('studentAssessments', function ($q) use ($student) {
                 $q->where('student_id', $student->id);
             })
-            ->with(['questions.question', 'subject', 'studentAssessments' => function($q) use ($student) {
+            ->with(['questions.question', 'subject', 'studentAssessments' => function ($q) use ($student) {
                 $q->where('student_id', $student->id);
             }])
             ->latest()
             ->get();
 
-        $assignedAssessments = $assignedAssessments->map(function($assessment) {
+        $assignedAssessments = $assignedAssessments->map(function ($assessment) {
             $topicIds = $assessment->questions->pluck('question.topic_id')->unique()->filter();
             $topics = Topic::whereIn('id', $topicIds)->get();
             $assessment->topics = $topics;
@@ -121,7 +122,7 @@ class AssessmentController extends Controller
     // Get assessment details (questions) for answering
     public function show($id)
     {
-        $assessment = Assessment::with(['questions.question', 'subject','creator.school'])->findOrFail($id);
+        $assessment = Assessment::with(['questions.question', 'subject', 'creator.school'])->findOrFail($id);
         $student = Auth::user();
         $studentAssessment = StudentAssessment::where('assessment_id', $assessment->id)
             ->where('student_id', $student->id)
@@ -160,14 +161,14 @@ class AssessmentController extends Controller
         }
 
         $topic = Topic::find($validated['topic_id']);
-        if(!$topic) {
+        if (!$topic) {
             return response()->json(['message' => 'Topic not found.', 404]);
         }
-       
+
 
         // Total questions available for the topic
         $totalQuestions = Question::where('topic_id', $topic->id)->count();
-        
+
         //Business rule: if <=10, force mode = all
 
         if ($totalQuestions <= 10) {
@@ -186,14 +187,14 @@ class AssessmentController extends Controller
         }
 
         // Select questions
-    $questions = match ($validated['mode']) {
-        'all' => $questionQuery->get(),
-        default => $questionQuery->inRandomOrder()->take($validated['limit'])->get(),
-    };
+        $questions = match ($validated['mode']) {
+            'all' => $questionQuery->get(),
+            default => $questionQuery->inRandomOrder()->take($validated['limit'])->get(),
+        };
 
-    if ($questions->isEmpty()) {
-        return response()->json(['message' => 'No questions found for this topic.'], 404);
-    }
+        if ($questions->isEmpty()) {
+            return response()->json(['message' => 'No questions found for this topic.'], 404);
+        }
 
 
 
@@ -251,7 +252,7 @@ class AssessmentController extends Controller
             'due_date' => 'nullable|date|after_or_equal:start_time',
             'is_timed' => 'boolean',
             'time_limit' => 'nullable|integer|min:1',
-            
+
         ]);
         // Adjust field based on delivery mode
         if ($validated['delivery_mode'] === 'online') {
@@ -260,7 +261,7 @@ class AssessmentController extends Controller
                 'is_timed' => 'required|boolean',
                 'time_limit' => 'nullable|integer|min:1',
             ]);
-        }else {
+        } else {
             // Set fields to null/false for offline assessments
             $validated['due_date'] = null;
             $validated['is_timed'] = false;
@@ -268,21 +269,21 @@ class AssessmentController extends Controller
         }
 
         // Create the assessment
-            $assessment = Assessment::create([
-                'type' => $validated['type'],
-                'title' => $validated['title'],
-                'creator_id' => Auth::id(), // Use authenticated user ID
-                'question_count' => 0, // Will be updated later
-                'due_date' => $validated['due_date'] ?? now(),
-                'is_timed' => $validated['is_timed'] ?? false,
-                'time_limit' => $validated['time_limit'] ?? null,
-                'delivery_mode' => $validated['delivery_mode'],
-            ]);
-            // Attach the provided topic via pivot
-            $assessment->topics()->attach($validated['topic_id']);
-            
-            
-            return response()->json([
+        $assessment = Assessment::create([
+            'type' => $validated['type'],
+            'title' => $validated['title'],
+            'creator_id' => Auth::id(), // Use authenticated user ID
+            'question_count' => 0, // Will be updated later
+            'due_date' => $validated['due_date'] ?? now(),
+            'is_timed' => $validated['is_timed'] ?? false,
+            'time_limit' => $validated['time_limit'] ?? null,
+            'delivery_mode' => $validated['delivery_mode'],
+        ]);
+        // Attach the provided topic via pivot
+        $assessment->topics()->attach($validated['topic_id']);
+
+
+        return response()->json([
             'message' => 'Assessment created successfully',
             'assessment' => $assessment
         ], 201);
@@ -315,14 +316,14 @@ class AssessmentController extends Controller
                 'updated_at' => $now,
             ];
         }
-        if (!empty($questionInsert)){
+        if (!empty($questionInsert)) {
             AssessmentQuestion::insert($questionInsert);
         }
 
         // Update question count
         $assessment->question_count = $assessment->questions()->count();
         $assessment->save();
-    
+
         return response()->json([
             'message' => 'Questions added successfully',
             'assessment' => $assessment->load('questions.question')
@@ -349,57 +350,57 @@ class AssessmentController extends Controller
     }
     // Assign an assessment (quiz or practice) to a student or a group of students
     public function assign(Request $request, AssessmentAssigner $assigner)
-        {
-            $request->validate([
-                'assessment_id' => 'required|exists:assessments,id',
-                'student_id' => 'nullable|exists:users,id',
-                'grade_level_id' => 'nullable|exists:grade_levels,id',
-            ]);
+    {
+        $request->validate([
+            'assessment_id' => 'required|exists:assessments,id',
+            'student_id' => 'nullable|exists:users,id',
+            'grade_level_id' => 'nullable|exists:grade_levels,id',
+        ]);
 
-            $assessmentId = $request->assessment_id;
-            $assignedCount = 0;
+        $assessmentId = $request->assessment_id;
+        $assignedCount = 0;
 
-            if ($request->filled('student_id')) {
-                $success = $assigner->assignToStudent($request->student_id, $assessmentId);
-
-                return response()->json([
-                    'message' => $success 
-                        ? 'Assessment assigned to student'
-                        : 'Student already has this assessment',
-                    'assigned_count' => $success ? 1 : 0,
-                ]);
-            }
-
-            if ($request->filled('grade_level_id')) {
-                $assignedCount = $assigner->assignToGrade($request->grade_level_id, $assessmentId);
-
-                return response()->json([
-                    'message' => "Assessment assigned to {$assignedCount} students",
-                    'assigned_count' => $assignedCount,
-                ]);
-            }
+        if ($request->filled('student_id')) {
+            $success = $assigner->assignToStudent($request->student_id, $assessmentId);
 
             return response()->json([
-                'error' => 'You must provide either student_id or grade_level_id',
-            ], 422);
+                'message' => $success
+                    ? 'Assessment assigned to student'
+                    : 'Student already has this assessment',
+                'assigned_count' => $success ? 1 : 0,
+            ]);
         }
 
-public function assignGroup(Request $request, $assessmentId)
-{
-    $validated = $request->validate([
-        'group_id' => 'required|exists:groups,id',
-    ]);
+        if ($request->filled('grade_level_id')) {
+            $assignedCount = $assigner->assignToGrade($request->grade_level_id, $assessmentId);
 
-    $assessment = Assessment::findOrFail($assessmentId);
-    $group = Group::with('students')->findOrFail($validated['group_id']);
+            return response()->json([
+                'message' => "Assessment assigned to {$assignedCount} students",
+                'assigned_count' => $assignedCount,
+            ]);
+        }
 
-    // Attach all group students to this assessment
-    foreach ($group->students as $student) {
-        $assessment->students()->syncWithoutDetaching([$student->id]);
+        return response()->json([
+            'error' => 'You must provide either student_id or grade_level_id',
+        ], 422);
     }
 
-    return response()->json(['message' => 'Group assigned successfully']);
-}
+    public function assignGroup(Request $request, $assessmentId)
+    {
+        $validated = $request->validate([
+            'group_id' => 'required|exists:groups,id',
+        ]);
+
+        $assessment = Assessment::findOrFail($assessmentId);
+        $group = Group::with('students')->findOrFail($validated['group_id']);
+
+        // Attach all group students to this assessment
+        foreach ($group->students as $student) {
+            $assessment->students()->syncWithoutDetaching([$student->id]);
+        }
+
+        return response()->json(['message' => 'Group assigned successfully']);
+    }
 
 
     // Start a practice assessment for the authenticated student
@@ -454,8 +455,8 @@ public function assignGroup(Request $request, $assessmentId)
             'total_questions' => $assessment->question_count,
             'score' => $studentAssessment->score,
             'max_score' => $studentAssessment->max_score,
-            'percentage' => $studentAssessment->max_score > 0 
-                ? ($studentAssessment->score / $studentAssessment->max_score) * 100 
+            'percentage' => $studentAssessment->max_score > 0
+                ? ($studentAssessment->score / $studentAssessment->max_score) * 100
                 : 0,
             'completed_at' => $studentAssessment->completed_at,
             'time_taken' => ($completedAt && $startedAt)
@@ -497,19 +498,19 @@ public function assignGroup(Request $request, $assessmentId)
             $questions = Question::where('topic_id', $topicId)->get();
         } elseif ($mode === 'custom') {
             $questions = Question::where('topic_id', $topicId)
-                        ->inRandomOrder()
-                        ->take($request->limit)
-                        ->get();
+                ->inRandomOrder()
+                ->take($request->limit)
+                ->get();
         } else {
             // Unpracticed questions only
             $practicedQuestionIds = StudentQuestionHistory::where('student_id', $studentId)
-                                        ->pluck('question_id');
+                ->pluck('question_id');
 
             $questions = Question::where('topic_id', $topicId)
-                        ->whereNotIn('id', $practicedQuestionIds)
-                        ->inRandomOrder()
-                        ->take($request->limit)
-                        ->get();
+                ->whereNotIn('id', $practicedQuestionIds)
+                ->inRandomOrder()
+                ->take($request->limit)
+                ->get();
         }
 
         return response()->json($questions);
@@ -525,7 +526,7 @@ public function assignGroup(Request $request, $assessmentId)
         $user = Auth::user();
 
         // Verify the user is the creator of the assessment
-        if ( $assessment->creator_id !== $user->id ) {
+        if ($assessment->creator_id !== $user->id) {
             return response()->json([
                 'message' => 'You are not authorized to reorder questions for this assessment.',
             ], 403);
@@ -561,10 +562,10 @@ public function assignGroup(Request $request, $assessmentId)
     public function generatePdf($id)
     {
         $assessment = Assessment::with([
-                'questions.question', 
-                'subject', 
-                'creator.school'
-            ])
+            'questions.question',
+            'subject',
+            'creator.school'
+        ])
             ->findOrFail($id);
 
         // Check if user is authorized to view this assessment
@@ -629,7 +630,7 @@ public function assignGroup(Request $request, $assessmentId)
                 // For MCQ questions
                 try {
                     $options = json_decode($question->options, true) ?? [];
-                    $formattedQuestion['options'] = array_map(function($option) use ($question) {
+                    $formattedQuestion['options'] = array_map(function ($option) use ($question) {
                         return [
                             'text' => $option,
                             'is_correct' => $option === $question->correct_answer
@@ -645,7 +646,7 @@ public function assignGroup(Request $request, $assessmentId)
 
         // Generate PDF
         $pdf = PDF::loadView('assessments.pdf', $data);
-        
+
         // Return the PDF as a download
         $filename = 'assessment-' . Str::slug($assessment->title) . '.pdf';
         return $pdf->download($filename);
@@ -659,13 +660,13 @@ public function assignGroup(Request $request, $assessmentId)
         $html = shell_exec("katex --inline $latex 2>&1");
         return $html ?: $latex; // fallback to raw LaTeX if rendering fails
     }
-    
+
     /**
      * Render chemistry equations using KaTeX with mhchem extension
      * 
      * @param string $equation The chemistry equation to render
      * @return string The rendered HTML
-     */   
+     */
 
     /**
      * Generate a student version of the assessment PDF (without answers)
@@ -676,11 +677,11 @@ public function assignGroup(Request $request, $assessmentId)
     public function generatePdfStudent1($id)
     {
         $assessment = Assessment::with([
-                'questions.question', 
-                'subject', 
-                
-                'creator.school' // Eager load the creator's school
-            ])
+            'questions.question',
+            'subject',
+
+            'creator.school' // Eager load the creator's school
+        ])
             ->findOrFail($id);
 
         // Check if user is authorized to view this assessment
@@ -718,19 +719,19 @@ public function assignGroup(Request $request, $assessmentId)
             if (!$question) continue;
 
             $renderedText = $question->question;
-            if($question->is_math) {
-                $renderedText = preg_replace_callback('/\\\((.*?)\\\)/', function($matches) {
+            if ($question->is_math) {
+                $renderedText = preg_replace_callback('/\\\((.*?)\\\)/', function ($matches) {
                     return $this->renderKatex($matches[1]);
                 }, $question->question);
-            } elseif($question->is_chemistry) {
-                $renderedText = preg_replace_callback('/\\\[(.*?)\\\]/', function($matches) {
+            } elseif ($question->is_chemistry) {
+                $renderedText = preg_replace_callback('/\\\[(.*?)\\\]/', function ($matches) {
                     return $this->renderChemistry($matches[1]);
                 }, $question->question);
             }
             // Render options for MCQ/ True-False
 
             $options = [];
-            if(in_array($question->question_type, ['mcq', 'true_false'])) {
+            if (in_array($question->question_type, ['mcq', 'true_false'])) {
                 if ($question->question_type === 'true_false') {
                     $options = [
                         ['text' => 'True'],
@@ -740,11 +741,11 @@ public function assignGroup(Request $request, $assessmentId)
                     $rawOptions = json_decode($question->options, true) ?? [];
                     foreach ($rawOptions as $opt) {
                         if ($question->is_math) {
-                            $opt = preg_replace_callback('/\\\\\((.*?)\\\\\)/', function($m) {
+                            $opt = preg_replace_callback('/\\\\\((.*?)\\\\\)/', function ($m) {
                                 return $this->renderKatex($m[1]);
                             }, $opt);
                         } elseif ($question->is_chemistry) {
-                            $opt = preg_replace_callback('/\\\\\[(.*?)\\\\\]/', function($m) {
+                            $opt = preg_replace_callback('/\\\\\[(.*?)\\\\\]/', function ($m) {
                                 return $this->renderChemistry($m[1]);
                             }, $opt);
                         }
@@ -784,7 +785,7 @@ public function assignGroup(Request $request, $assessmentId)
                     // For MCQ questions
                     try {
                         $options = json_decode($question->options, true) ?? [];
-                        $formattedQuestion['options'] = array_map(function($option) {
+                        $formattedQuestion['options'] = array_map(function ($option) {
                             return ['text' => $option];
                         }, $options);
                     } catch (\Exception $e) {
@@ -799,14 +800,14 @@ public function assignGroup(Request $request, $assessmentId)
 
         // Generate PDF using a student-specific view
         $pdf = PDF::loadView('assessments.pdf_student', $data);
-        
+
         // Set PDF options
         $pdf->setPaper('a4');
         $pdf->setOption('margin-top', 20);
         $pdf->setOption('margin-bottom', 20);
         $pdf->setOption('margin-left', 15);
         $pdf->setOption('margin-right', 15);
-        
+
         // Return the PDF as a download
         $filename = 'student-assessment-' . Str::slug($assessment->title) . '.pdf';
         return $pdf->download($filename);
@@ -857,11 +858,11 @@ public function assignGroup(Request $request, $assessmentId)
             // Render math or chemistry in question text
             $renderedText = $question->question;
             if ($question->is_math) {
-                $renderedText = preg_replace_callback('/\\\\\((.*?)\\\\\)/', function($matches) {
+                $renderedText = preg_replace_callback('/\\\\\((.*?)\\\\\)/', function ($matches) {
                     return $this->renderKatex($matches[1]);
                 }, $question->question);
             } elseif ($question->is_chemistry) {
-                $renderedText = preg_replace_callback('/\\\\\[(.*?)\\\\\]/', function($matches) {
+                $renderedText = preg_replace_callback('/\\\\\[(.*?)\\\\\]/', function ($matches) {
                     return $this->renderChemistry($matches[1]);
                 }, $question->question);
             }
@@ -878,7 +879,7 @@ public function assignGroup(Request $request, $assessmentId)
                     $rawOptions = json_decode($question->options, true) ?? [];
                     foreach ($rawOptions as $opt) {
                         if ($question->is_math) {
-                            $opt = preg_replace_callback('/\\\\\((.*?)\\\\\)/', function($m) {
+                            $opt = preg_replace_callback('/\\\\\((.*?)\\\\\)/', function ($m) {
                                 return $this->renderKatex($m[1]);
                             }, $opt);
                         }
@@ -914,8 +915,8 @@ public function assignGroup(Request $request, $assessmentId)
     public function generatePdfStudent3($id)
     {
         $assessment = Assessment::with([
-            'questions.question', 
-            'subject', 
+            'questions.question',
+            'subject',
             'creator.school'
         ])->findOrFail($id);
 
@@ -1011,7 +1012,7 @@ public function assignGroup(Request $request, $assessmentId)
 
     public function generatePdfStudent($id)
     {
-       $assessment = Assessment::with(['questions.question', 'subject', 'creator.school'])->findOrFail($id);
+        $assessment = Assessment::with(['questions.question', 'topics.gradeSubject.subject', 'creator.school'])->findOrFail($id);
 
         // Authorization
         $user = Auth::user();
@@ -1021,9 +1022,13 @@ public function assignGroup(Request $request, $assessmentId)
 
         $school = $assessment->creator->school ?? null;
 
+        // Get all subjects for the assessment's topics
+        $subjects = $assessment->topics->map(function ($topic) {
+            return $topic->gradeSubject?->subject?->name;
+        })->filter()->unique()->values();
         $data = [
             'title' => $assessment->title . ' - Question Paper',
-            'subject' => $assessment->subject->name ?? 'General',
+            'subject' => $subjects->first() ?? 'General',
             'created_at' => $assessment->created_at->format('F j, Y'),
             'school' => [
                 'school_name' => $school?->school_name ?? 'School Name',
@@ -1068,8 +1073,7 @@ public function assignGroup(Request $request, $assessmentId)
                     foreach ($decodedOptions as $opt) {
                         $options[] = [
                             'text' => $opt,
-                            'image' => $question->is_math ? $this->renderLatexToImage($opt) : 
-                                     ($question->is_chemistry ? $this->renderLatexToImage('\\ce{' . $opt . '}') : null),
+                            'image' => $question->is_math ? $this->renderLatexToImage($opt) : ($question->is_chemistry ? $this->renderLatexToImage('\\ce{' . $opt . '}') : null),
                         ];
                     }
                 }
@@ -1095,29 +1099,29 @@ public function assignGroup(Request $request, $assessmentId)
 
         $filename = 'student-assessment-' . Str::slug($assessment->title) . '.pdf';
         return $pdf->download($filename);
-    
     }
 
 
-    public function assignedAssessments(Request $request){
+    public function assignedAssessments(Request $request)
+    {
         $studentId = $request->user()->id;
         // Only return assessments assigned to the student (not created by them)
         $assignedAssessments = StudentAssessment::with([
-            'assessment' => function($query) {
+            'assessment' => function ($query) {
                 $query->select('id', 'type', 'title', 'subject_id', 'creator_id', 'due_date', 'time_limit')
-                      ->with('subject:id,name', 'creator:id,name');
+                    ->with('subject:id,name', 'creator:id,name');
             }
         ])
-        ->where('student_id', $studentId)
-        ->whereHas('assessment', function($q) use ($studentId) {
-            $q->where('creator_id', '!=', $studentId);
-        })
-        ->orderByDesc('assigned_at')
-        ->paginate(5);
+            ->where('student_id', $studentId)
+            ->whereHas('assessment', function ($q) use ($studentId) {
+                $q->where('creator_id', '!=', $studentId);
+            })
+            ->orderByDesc('assigned_at')
+            ->paginate(5);
 
         return response()->json($assignedAssessments);
     }
-        /**
+    /**
      * Render chemistry equations using KaTeX with mhchem extension
      *
      * @param string $latex The LaTeX content to render
@@ -1129,36 +1133,37 @@ public function assignGroup(Request $request, $assessmentId)
         if (strpos($latex, '\\ce{') === false) {
             $latex = '\\ce{' . $latex . '}';
         }
-        
+
         // Escape the LaTeX for shell execution
         $escapedLatex = escapeshellarg($latex);
-        
+
         // Use KaTeX with the mhchem extension to render the chemistry equation
         // The --trust flag is needed to allow the mhchem extension
         // The --macros flag is used to define macros for chemistry notation
         $html = shell_exec("katex --trust --macros '{\"\\\\ce\":{\"\\\\ce\":\"true\"}}' $escapedLatex 2>&1");
-        
+
         return $html ?: $latex;
     }
 
-    public function practice(Request $request){
+    public function practice(Request $request)
+    {
         $studentId = $request->user()->id;
         // Only return practice assessments initiated by the student
         $practiceAssessments = Assessment::with([
             'subject:id,name',
             'subject.topic:id,subject_id,topic_name',
             'creator:id,name',
-            'studentAssessments' => function($q) use ($studentId) {
+            'studentAssessments' => function ($q) use ($studentId) {
                 $q->where('student_id', $studentId);
             }
         ])
-        ->where('type', 'practice')
-        ->where('creator_id', $studentId)
-        ->orderByDesc('created_at')
-        ->paginate(5);
+            ->where('type', 'practice')
+            ->where('creator_id', $studentId)
+            ->orderByDesc('created_at')
+            ->paginate(5);
 
         // Attach the StudentAssessment (like assignedAssessments)
-        $practiceAssessments->getCollection()->transform(function($assessment) use ($studentId) {
+        $practiceAssessments->getCollection()->transform(function ($assessment) use ($studentId) {
             $studentAssessment = $assessment->studentAssessments->first();
             $assessment->student_assessment = $studentAssessment;
             unset($assessment->studentAssessments);
