@@ -12,6 +12,11 @@ use Laravel\Socialite\Facades\Socialite;
 
 class AuthController extends Controller
 {
+    public function index()
+    {
+        $users = User::paginate(10);
+        return response()->json($users);
+    }
     // User registration
     public function register(Request $request)
     {
@@ -154,5 +159,6 @@ class AuthController extends Controller
         'expires_at' => now()->addMinutes(60)->toDateTimeString(),
     ]);
 }
+
 
 }

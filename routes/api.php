@@ -36,6 +36,8 @@ Route::post('/login', [AuthController::class, 'login']);
 Route::post('/register', [AuthController::class, 'register']);
 Route::get('/students', [AuthController::class, 'getStudents']);
 Route::post('/logout', [AuthController::class, 'logout']);
+Route::get('/users', [AuthController::class, 'index']);
+
 
 Route::get('/subjects', [SubjectController::class, 'index']);
 Route::get('/subjects/details', [SubjectController::class, 'subjectsByGrade']);
