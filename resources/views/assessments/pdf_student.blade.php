@@ -15,8 +15,10 @@
         .question-text { margin-bottom: 10px; font-weight:bold; }
         .question-number { font-weight:bold; margin-right:5px; }
         .options { margin-left:20px; margin-bottom:10px; }
-        .option { margin-bottom:5px; display:flex; align-items:flex-start; }
-        .option-label { margin-right:10px; min-width:20px; }
+        /* Use table layout for better PDF engine support */
+        .option { margin-bottom:5px; display:table; width:100%; }
+        .option-label { display:table-cell; width:20px; padding-right:8px; vertical-align:top; }
+        .option-text { display:table-cell; vertical-align:top; }
         .answer-space { border-bottom:1px solid #000; min-width:200px; display:inline-block; margin-left:10px; height:15px; }
         .marks { float:right; font-weight:bold; }
         .footer { margin-top:30px; font-size:10px; color:#666; text-align:center; border-top:1px solid #eee; padding-top:10px; }
@@ -88,13 +90,13 @@
                     @foreach($q['options'] as $i => $opt)
                         <div class="option">
                             <div class="option-label">{{ chr(65 + $i) }}.</div>
-                                <span>
+                                <div class="option-text">
                                 @if(!empty($opt['image']))
                                     <img src="{{ $opt['image'] }}" style="max-height:50px;">
                                 @else
                                     {!! $opt['text'] !!}
                                 @endif
-                                </span>
+                                </div>
                         </div>
                     @endforeach
                 </div>
