@@ -37,6 +37,8 @@ Route::post('/register', [AuthController::class, 'register']);
 Route::get('/students', [AuthController::class, 'getStudents']);
 Route::post('/logout', [AuthController::class, 'logout']);
 Route::get('/users', [AuthController::class, 'index']);
+Route::put('/users/{id}', [AuthController::class, 'updateUser']);
+Route::delete('/users/{id}', [AuthController::class, 'deleteUser']);
 
 
 Route::get('/subjects', [SubjectController::class, 'index']);

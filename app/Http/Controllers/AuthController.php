@@ -12,6 +12,41 @@ use Laravel\Socialite\Facades\Socialite;
 
 class AuthController extends Controller
 {
+    // Admin: Update user
+    public function updateUser(Request $request, $id)
+    {
+        $admin = $request->user();
+        if (!$admin || $admin->role !== 'admin') {
+            return response()->json(['message' => 'Forbidden'], 403);
+        }
+        $user = User::findOrFail($id);
+        $validated = $request->validate([
+            'name' => 'sometimes|string|max:255',
+            'email' => 'sometimes|email|max:255|unique:users,email,' . $id,
+            'role' => 'sometimes|in:student,teacher,admin',
+            'school_id' => 'sometimes|nullable|exists:schools,id',
+            'status' => 'sometimes|in:active,inactive',
+            'password' => 'sometimes|string|min:8',
+        ]);
+        if (isset($validated['password'])) {
+            $validated['password'] = bcrypt($validated['password']);
+        }
+        $user->update($validated);
+        return response()->json(['user' => $user]);
+    }
+
+    // Admin: Delete user
+    public function deleteUser(Request $request, $id)
+    {
+        $admin = $request->user();
+        if (!$admin || $admin->role !== 'admin') {
+            return response()->json(['message' => 'Forbidden'], 403);
+        }
+        $user = User::findOrFail($id);
+        $user->delete();
+        return response()->json(['message' => 'User deleted successfully']);
+    }
+
     public function index()
     {
         $users = User::paginate(10);
