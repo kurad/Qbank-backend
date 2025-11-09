@@ -97,6 +97,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // 5. Assign assessment to student or grade level
     Route::post('/assessments/{assessment}/assign', [AssessmentController::class, 'assign']);
     // 6. Reorder questions in an assessment
+    Route::patch('/assessments/{id}', [AssessmentController::class, 'updateTitle']);
     Route::put('/assessments/{id}/reorder', [AssessmentController::class, 'reorderQuestions']);
     Route::get('/assessments/{id}/pdf', [AssessmentController::class, 'generatePdf']);
     Route::get('/assessments/{id}/pdf/student', [AssessmentController::class, 'generatePdfStudent']);

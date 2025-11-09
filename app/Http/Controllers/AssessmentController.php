@@ -119,6 +119,22 @@ class AssessmentController extends Controller
         ]);
     }
 
+    public function updateTitle($id, Request $request)
+    {
+        $data = $request->validate([
+            'title' => ['required','string','max:255'],
+        ]);
+
+        $assessment = Assessment::find($id);
+        if (!$assessment) {
+            return response()->json(['message' => 'Assessment not found'], 404);
+        }
+
+        $assessment->title = $data['title'];
+        $assessment->save();
+
+        return response()->json(['assessment' => $assessment], 200);
+    }
     // Get assessment details (questions) for answering
     public function show($id)
     {
