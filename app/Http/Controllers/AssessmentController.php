@@ -122,7 +122,22 @@ class AssessmentController extends Controller
     // Get assessment details (questions) for answering
     public function show($id)
     {
-        $assessment = Assessment::with(['questions.question', 'subject', 'creator.school'])->findOrFail($id);
+        $assessment = Assessment::with(['questions.question', 'topics.gradeSubject.subject', 'topics.gradeSubject.gradeLevel', 'creator.school'])->findOrFail($id);
+
+        // Get all subject/grade level pairs for the assessment's topics
+        $subjectGradeLevels = $assessment->topics->map(function ($topic) {
+            $gradeSubject = $topic->gradeSubject;
+            $subjectName = $gradeSubject?->subject?->name;
+            $gradeLevelName = $gradeSubject?->gradeLevel?->grade_name;
+            if ($subjectName && $gradeLevelName) {
+                return [
+                    'subject' => $subjectName,
+                    'grade_level' => $gradeLevelName
+                ];
+            }
+            return null;
+        })->filter()->unique()->values();
+
         $student = Auth::user();
         $studentAssessment = StudentAssessment::where('assessment_id', $assessment->id)
             ->where('student_id', $student->id)
@@ -137,12 +152,17 @@ class AssessmentController extends Controller
                 $topic = $firstQuestion->topic;
             }
         }
-        $subject = $assessment->subject;
+
+        // Use the first subject/grade level as primary, or fallback
+        $primarySubject = $subjectGradeLevels->first()['subject'] ?? 'General';
+        $primaryGradeLevel = $subjectGradeLevels->first()['grade_level'] ?? null;
 
         return response()->json([
             'assessment' => $assessment,
             'topic' => $topic,
-            'subject' => $subject
+            'subject' => $primarySubject,
+            'grade_level' => $primaryGradeLevel,
+            'subject_grade_levels' => $subjectGradeLevels
         ]);
     }
 
@@ -578,7 +598,7 @@ class AssessmentController extends Controller
         // Get school details
         $school = $assessment->creator->school ?? null;
 
-        $subjects = $assessment->topics->map(function($topic) {
+        $subjects = $assessment->topics->map(function ($topic) {
             return $topic->gradeSubject?->subject?->name;
         })->filter()->unique()->values();
         // Format the data for the PDF
