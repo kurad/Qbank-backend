@@ -122,7 +122,7 @@ class AssessmentController extends Controller
     // Get assessment details (questions) for answering
     public function show($id)
     {
-        $assessment = Assessment::with(['questions.question', 'topics.gradeSubject.subject', 'topics.gradeSubject.gradeLevel', 'creator.school'])->findOrFail($id);
+    $assessment = Assessment::with(['questions.question', 'topics.gradeSubject.subject', 'topics.gradeSubject.gradeLevel', 'creator.school'])->findOrFail($id);
 
         // Get all subject/grade level pairs for the assessment's topics
         $subjectGradeLevels = $assessment->topics->map(function ($topic) {
@@ -157,12 +157,16 @@ class AssessmentController extends Controller
         $primarySubject = $subjectGradeLevels->first()['subject'] ?? 'General';
         $primaryGradeLevel = $subjectGradeLevels->first()['grade_level'] ?? null;
 
+        // Get logo_path from creator's school if available
+        $logoPath = $assessment->creator && $assessment->creator->school ? $assessment->creator->school->logo_path : null;
+
         return response()->json([
             'assessment' => $assessment,
             'topic' => $topic,
             'subject' => $primarySubject,
             'grade_level' => $primaryGradeLevel,
-            'subject_grade_levels' => $subjectGradeLevels
+            'subject_grade_levels' => $subjectGradeLevels,
+            'logo_path' => $logoPath
         ]);
     }
 
