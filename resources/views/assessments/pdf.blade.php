@@ -23,71 +23,67 @@
         }
         
         .header {
-            border-bottom: 3px solid #1a5276;
-            padding-bottom: 18px;
-            margin-bottom: 28px;
+            border-bottom: 2px solid #1a5276;
+            padding-bottom: 8px;
+            margin-bottom: 10px;
             position: relative;
-            background: linear-gradient(90deg, #f0f7ff 0%, #eaf6fb 100%);
-            box-shadow: 0 2px 8px rgba(26,82,118,0.04);
+            background: #f8f9fa;
         }
         .school-logo {
-            max-height: 80px;
-            margin-bottom: 10px;
+            max-height: 50px;
+            margin-bottom: 4px;
             border-radius: 50%;
-            box-shadow: 0 2px 8px rgba(26,82,118,0.10);
-            border: 2px solid #e0e0e0;
+            border: 1px solid #e0e0e0;
         }
         .school-info {
             text-align: center;
-            margin-bottom: 10px;
+            margin-bottom: 4px;
         }
         .school-name {
-            font-size: 22pt;
+            font-size: 14pt;
             font-weight: bold;
             color: #1a5276;
-            margin: 5px 0 2px 0;
+            margin: 2px 0 2px 0;
             text-transform: uppercase;
-            letter-spacing: 1.5px;
+            letter-spacing: 1px;
         }
         .school-details {
-            font-size: 10pt;
+            font-size: 8.5pt;
             color: #555;
-            margin-bottom: 5px;
-            line-height: 1.3;
+            margin-bottom: 2px;
+            line-height: 1.2;
         }
         
         .assessment-title {
-            font-size: 16pt;
+            font-size: 11pt;
             font-weight: bold;
             text-align: center;
-            margin: 18px 0 10px 0;
+            margin: 6px 0 4px 0;
             color: #2c3e50;
             text-transform: uppercase;
-            letter-spacing: 2px;
-            text-shadow: 0 1px 0 #fff;
+            letter-spacing: 1px;
         }
         
         .assessment-meta {
-            margin: 18px 0 10px 0;
-            font-size: 11pt;
+            margin: 6px 0 4px 0;
+            font-size: 9pt;
             background-color: #f8f9fa;
-            padding: 14px 24px;
-            border-radius: 6px;
-            border-left: 5px solid #1a5276;
-            box-shadow: 0 1px 4px rgba(26,82,118,0.06);
+            padding: 4px 8px;
+            border-radius: 3px;
+            border-left: 2px solid #1a5276;
             display: flex;
             justify-content: center;
-            gap: 32px;
+            gap: 10px;
         }
         .meta-row {
             display: flex;
             align-items: center;
-            gap: 6px;
+            gap: 2px;
         }
         .meta-label {
             font-weight: 600;
             color: #2c3e50;
-            min-width: 70px;
+            min-width: 50px;
             display: inline-block;
         }
         .meta-value {
@@ -97,85 +93,82 @@
         
         .total-marks {
             text-align: right;
-            margin: 22px 0 10px 0;
-            font-size: 13pt;
-            color: #fff;
-            padding: 12px 22px;
-            background: linear-gradient(90deg, #1a5276 60%, #2980b9 100%);
-            border-radius: 20px 0 0 20px;
-            border-left: 0;
-            box-shadow: 0 2px 8px rgba(26,82,118,0.08);
+            margin: 6px 0 4px 0;
+            font-size: 10pt;
+            color: #1a5276;
+            padding: 3px 8px;
+            background: #f0f7ff;
+            border-radius: 5px;
+            border-left: 2px solid #1a5276;
             font-weight: bold;
-            letter-spacing: 1px;
+            letter-spacing: 0.5px;
             display: inline-block;
         }
         
         .marking-notes {
-            margin-top: 15px;
-            padding: 12px;
+            margin-top: 4px;
+            padding: 5px;
             background-color: #f9f9f9;
-            border-radius: 4px;
-            border-left: 3px solid #1a5276;
+            border-radius: 2px;
+            border-left: 2px solid #1a5276;
+            font-size: 8.5pt;
         }
         
         .marking-points {
-            margin-top: 8px;
-            margin-left: 10px;
-            font-size: 10.5pt;
-            line-height: 1.6;
+            margin-top: 2px;
+            margin-left: 4px;
+            font-size: 8.5pt;
+            line-height: 1.3;
         }
         
         .marking-points div {
-            margin: 4px 0;
+            margin: 1px 0;
         }
         
         .question {
-            margin-bottom: 28px;
+            margin-bottom: 6px;
             page-break-inside: avoid;
-            border: 1.5px solid #e0e0e0;
-            padding: 18px 18px 14px 18px;
-            border-radius: 10px;
+            border: 1px solid #e0e0e0;
+            padding: 5px 7px 4px 7px;
+            border-radius: 3px;
             background-color: #fff;
             position: relative;
-            box-shadow: 0 2px 8px rgba(44,62,80,0.04);
-            transition: box-shadow 0.2s;
         }
         
         .question-number {
             font-weight: bold;
-            color: #fff;
-            background: #1a5276;
+            color: #1a5276;
+            background: #eaf6fb;
             border-radius: 50%;
-            width: 28px;
-            height: 28px;
+            width: 16px;
+            height: 16px;
             display: inline-flex;
             align-items: center;
             justify-content: center;
-            margin-right: 10px;
-            font-size: 12pt;
-            box-shadow: 0 1px 4px rgba(26,82,118,0.10);
+            margin-right: 5px;
+            font-size: 9pt;
         }
         
         .question-text {
-            margin-bottom: 12px;
-            font-size: 11pt;
+            margin-bottom: 3px;
+            font-size: 9.5pt;
             color: #2c3e50;
-            line-height: 1.5;
+            line-height: 1.3;
         }
         
         .question-text img {
             max-width: 100%;
             height: auto;
-            margin: 5px 0;
+            margin: 2px 0;
         }
         
         .options {
-            margin: 10px 0 0 20px;
+            margin: 3px 0 0 12px;
         }
         
         .option {
-            margin-bottom: 8px;
-            padding: 5px 0 5px 30px;
+            margin-bottom: 2px;
+            padding: 1px 0 1px 16px;
             position: relative;
             page-break-inside: avoid;
         }
@@ -184,11 +177,11 @@
             content: "";
             position: absolute;
             left: 0;
-            top: 8px;
-            width: 16px;
-            height: 16px;
-            border: 2px solid #999;
-            border-radius: 3px;
+            top: 3px;
+            width: 10px;
+            height: 10px;
+            border: 1px solid #999;
+            border-radius: 2px;
             background-color: #fff;
         }
         
@@ -198,8 +191,8 @@
             content: "✓";
             color: white;
             text-align: center;
-            line-height: 16px;
-            font-size: 12px;
+            line-height: 10px;
+            font-size: 8px;
             font-weight: bold;
         }
         
@@ -213,10 +206,10 @@
             font-weight: bold;
             color: #1a5276;
             background-color: #e8f0f7;
-            padding: 2px 8px;
-            border-radius: 10px;
-            font-size: 9pt;
-            margin-left: 10px;
+            padding: 1px 4px;
+            border-radius: 5px;
+            font-size: 8pt;
+            margin-left: 4px;
         }
         
         .student-answer-space {
@@ -241,12 +234,12 @@
             left: 0;
             right: 0;
             text-align: center;
-            font-size: 10pt;
+            font-size: 8pt;
             color: #fff;
-            padding: 10px 0;
-            background: linear-gradient(90deg, #1a5276 60%, #2980b9 100%);
-            border-top: 2px solid #1a5276;
-            letter-spacing: 1px;
+            padding: 4px 0;
+            background: #1a5276;
+            border-top: 1px solid #1a5276;
+            letter-spacing: 0.5px;
         }
         
         .page-break {
