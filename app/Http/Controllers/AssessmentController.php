@@ -1056,15 +1056,19 @@ class AssessmentController extends Controller
             $question = $aq->question;
             if (!$question) continue;
 
-            // Generate question image if math or chemistry
-            $questionImage = null;
+            // Render math or chemistry in question text
+            $renderedText = $question->question;
             if ($question->is_math) {
-                $questionImage = $this->renderLatexToImage($question->question);
+                $renderedText = preg_replace_callback('/\\\((.*?)\\\)/', function ($matches) {
+                    return $this->renderKatex($matches[1]);
+                }, $question->question);
             } elseif ($question->is_chemistry) {
-                $questionImage = $this->renderLatexToImage('\\ce{' . $question->question . '}');
+                $renderedText = preg_replace_callback('/\\\[(.*?)\\\]/', function ($matches) {
+                    return $this->renderChemistry($matches[1]);
+                }, $question->question);
             }
 
-            // Prepare options with images if math
+            // Prepare options with math rendering if needed
             $options = [];
             if (in_array($question->question_type, ['mcq', 'true_false'])) {
                 if ($question->question_type === 'true_false') {
@@ -1082,17 +1086,24 @@ class AssessmentController extends Controller
                         $decodedOptions = [];
                     }
                     foreach ($decodedOptions as $opt) {
-                        $options[] = [
-                            'text' => $opt,
-                            'image' => $question->is_math ? $this->renderLatexToImage($opt) : ($question->is_chemistry ? $this->renderLatexToImage('\\ce{' . $opt . '}') : null),
-                        ];
+                        $optText = $opt;
+                        if ($question->is_math) {
+                            $optText = preg_replace_callback('/\\\((.*?)\\\)/', function ($m) {
+                                return $this->renderKatex($m[1]);
+                            }, $opt);
+                        } elseif ($question->is_chemistry) {
+                            $optText = preg_replace_callback('/\\\[(.*?)\\\]/', function ($m) {
+                                return $this->renderChemistry($m[1]);
+                            }, $opt);
+                        }
+                        $options[] = ['text' => $optText];
                     }
                 }
             }
 
             $data['questions'][] = [
                 'number' => $index + 1,
-                'text' => $questionImage ?: $question->question,
+                'text' => $renderedText,
                 'type' => $question->question_type,
                 'marks' => $question->marks ?? 1,
                 'options' => $options,
