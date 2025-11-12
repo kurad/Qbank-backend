@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use Log;
 use PDF;
 use App\Models\User;
+use App\Models\Group;
 use App\Models\Topic;
 use App\Models\Question;
 use App\Models\Assessment;
@@ -338,26 +339,34 @@ class AssessmentController extends Controller
         ]);
 
         $assessment = Assessment::findOrFail($validated['assessment_id']);
-        $existingQuestionIds = $assessment->questions()->pluck('question_id')->toArray();
-        $newQuestionIds = array_diff($validated['question_ids'], $existingQuestionIds);
-
-        $existingCount = count($existingQuestionIds);
-
         $now = now();
-        $questionInsert = [];
 
-        // Only add questions that are not already linked
-        foreach (array_values($newQuestionIds) as $index => $qid) {
-            $questionInsert[] = [
-                'assessment_id' => $assessment->id,
-                'question_id' => $qid,
-                'order' => $existingCount + $index + 1,
-                'created_at' => $now,
-                'updated_at' => $now,
-            ];
+        // Get all current assessment_question rows for this assessment
+        $existing = $assessment->questions()->pluck('id', 'question_id')->toArray(); // [question_id => assessment_question_id]
+
+        foreach (array_values($validated['question_ids']) as $order => $qid) {
+            if (isset($existing[$qid])) {
+                // Update order for existing question
+                AssessmentQuestion::where('id', $existing[$qid])
+                    ->update(['order' => $order + 1, 'updated_at' => $now]);
+            } else {
+                // Insert new question
+                AssessmentQuestion::create([
+                    'assessment_id' => $assessment->id,
+                    'question_id' => $qid,
+                    'order' => $order + 1,
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ]);
+            }
         }
-        if (!empty($questionInsert)) {
-            AssessmentQuestion::insert($questionInsert);
+
+        // Remove any questions not in the new list
+        $toRemove = array_diff(array_keys($existing), $validated['question_ids']);
+        if (!empty($toRemove)) {
+            AssessmentQuestion::where('assessment_id', $assessment->id)
+                ->whereIn('question_id', $toRemove)
+                ->delete();
         }
 
         // Update question count
@@ -365,7 +374,7 @@ class AssessmentController extends Controller
         $assessment->save();
 
         return response()->json([
-            'message' => 'Questions added successfully',
+            'message' => 'Questions added/updated successfully',
             'assessment' => $assessment->load('questions.question')
         ], 200);
     }
