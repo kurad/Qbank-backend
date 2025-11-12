@@ -314,6 +314,17 @@ class QuestionController extends Controller
         // Validate the request
         $validated = $request->validate($rules);
 
+        // Set marks based on difficulty level if not explicitly provided (same as store)
+        if ((!isset($validated['marks']) || $validated['marks'] === 0) && isset($validated['difficulty_level'])) {
+            $validated['marks'] = match ($validated['difficulty_level']) {
+                'remembering', 'understanding' => 1,
+                'analyzing' => 2,
+                'applying', 'evaluating' => 3,
+                'creating' => 4,
+                default => 1,
+            };
+        }
+
         // Handle image upload
         if ($request->hasFile('question_image')) {
             if ($question->question_image) {
