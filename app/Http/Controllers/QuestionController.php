@@ -23,22 +23,24 @@ class QuestionController extends Controller
             $questionText = trim($validated['question']);
             $validated['question'] = $questionText;
 
-            // Check for duplicate or very similar questions in the same topic
-            $existingQuestions = Question::where('topic_id', $validated['topic_id'])
-                ->pluck('question')
-                ->map(fn($q) => trim($q))
-                ->toArray();
+            // Only check for duplicate question text for non-matching types
+            if ($validated['question_type'] !== 'matching') {
+                $existingQuestions = Question::where('topic_id', $validated['topic_id'])
+                    ->pluck('question')
+                    ->map(fn($q) => trim($q))
+                    ->toArray();
 
-            // Check for exact match (case-insensitive)
-            $exactMatch = collect($existingQuestions)->first(function ($existing) use ($questionText) {
-                return strtolower($existing) === strtolower($questionText);
-            });
+                // Check for exact match (case-insensitive)
+                $exactMatch = collect($existingQuestions)->first(function ($existing) use ($questionText) {
+                    return strtolower($existing) === strtolower($questionText);
+                });
 
-            if ($exactMatch) {
-                return response()->json([
-                    'error' => 'This exact question already exists in this topic.',
-                    'duplicate_question' => $exactMatch
-                ], 422);
+                if ($exactMatch) {
+                    return response()->json([
+                        'error' => 'This exact question already exists in this topic.',
+                        'duplicate_question' => $exactMatch
+                    ], 422);
+                }
             }
 
             // Handle options/correct_answer encoding for MCQ and matching
