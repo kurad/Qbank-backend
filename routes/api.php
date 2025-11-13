@@ -116,8 +116,10 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/student/statistics', [HomeController::class, 'statistics']);
 
     Route::post('/refresh-token', [AuthController::class, 'refreshToken']);
+    // Delete an assessment
+    Route::delete('/assessments/{id}', [AssessmentController::class, 'destroy']);
 
-    
+
 
 });
 Route::get('/topics/{id}/question-count', [QuestionController::class, 'getQuestionCount']);

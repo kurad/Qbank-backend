@@ -85,4 +85,8 @@ public function studentAnswers()
 {
     return $this->hasMany(StudentAnswer::class);
 }
+public function usages()
+{
+    return $this->hasMany(QuestionUsage::class);
+}
 }

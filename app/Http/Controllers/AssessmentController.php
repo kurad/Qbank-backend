@@ -1,5 +1,4 @@
 <?php
-
 namespace App\Http\Controllers;
 
 use Log;
@@ -15,6 +14,7 @@ use Illuminate\Http\Request;
 use App\Models\StudentAnswer;
 use App\Models\StudentAssessment;
 use App\Models\AssessmentQuestion;
+use App\Models\QuestionUsage;
 use Illuminate\Support\Facades\DB;
 use App\Services\AssessmentAssigner;
 use Illuminate\Support\Facades\Auth;
@@ -357,6 +357,14 @@ class AssessmentController extends Controller
                     'order' => $order + 1,
                     'created_at' => $now,
                     'updated_at' => $now,
+                ]);
+
+                // Log usage when a new question is added
+
+                QuestionUsage::create([
+                    'question_id' => $qid,
+                    'assessment_id' => $assessment->id,
+                    'used_at' => $now,
                 ]);
             }
         }
@@ -872,203 +880,6 @@ class AssessmentController extends Controller
         $filename = 'student-assessment-' . Str::slug($assessment->title) . '.pdf';
         return $pdf->download($filename);
     }
-    public function generatePdfStudent2($id)
-    {
-        $assessment = Assessment::with([
-            'questions.question',
-            'subject',
-            'creator.school'
-        ])->findOrFail($id);
-
-        $user = Auth::user();
-        if ($assessment->creator_id !== $user->id) {
-            return response()->json(['message' => 'Not authorized'], 403);
-        }
-
-        $school = $assessment->creator->school ?? null;
-
-        $data = [
-            'title' => $assessment->title . ' - Question Paper',
-            'subject' => $assessment->subject?->name ?? 'General',
-            'topic' => $assessment->topic?->name ?? 'General',
-            'created_at' => $assessment->created_at->format('F j, Y'),
-            'school' => [
-                'school_name' => $school->school_name ?? 'School Name',
-                'address' => $school->address ?? 'School Address',
-                'phone' => $school->phone ?? 'Phone Number',
-                'email' => $school->email ?? 'school@example.com',
-                'logo' => $school->logo_path ? storage_path('app/public/' . $school->logo_path) : null,
-            ],
-            'questions' => [],
-            'total_marks' => 0
-        ];
-
-        foreach ($assessment->questions->sortBy('order') as $index => $aq) {
-            $question = $aq->question;
-            if (!$question) continue;
-
-            // Question image path
-            $imagePath = null;
-            if ($question->question_image) {
-                $relativePath = ltrim($question->question_image, '/');
-                $imagePath = storage_path('app/public/' . $relativePath);
-                if (!file_exists($imagePath)) $imagePath = null;
-            }
-
-            // Render math or chemistry in question text
-            $renderedText = $question->question;
-            if ($question->is_math) {
-                $renderedText = preg_replace_callback('/\\\\\((.*?)\\\\\)/', function ($matches) {
-                    return $this->renderKatex($matches[1]);
-                }, $question->question);
-            } elseif ($question->is_chemistry) {
-                $renderedText = preg_replace_callback('/\\\\\[(.*?)\\\\\]/', function ($matches) {
-                    return $this->renderChemistry($matches[1]);
-                }, $question->question);
-            }
-
-            // Render options for MCQ/True-False
-            $options = [];
-            if (in_array($question->question_type, ['mcq', 'true_false'])) {
-                if ($question->question_type === 'true_false') {
-                    $options = [
-                        ['text' => 'True'],
-                        ['text' => 'False']
-                    ];
-                } else {
-                    $rawOptions = json_decode($question->options, true) ?? [];
-                    foreach ($rawOptions as $opt) {
-                        if ($question->is_math) {
-                            $opt = preg_replace_callback('/\\\\\((.*?)\\\\\)/', function ($m) {
-                                return $this->renderKatex($m[1]);
-                            }, $opt);
-                        }
-                        $options[] = ['text' => $opt];
-                    }
-                }
-            }
-
-            $data['questions'][] = [
-                'number' => $index + 1,
-                'text' => $renderedText,
-                'marks' => $question->marks ?? 1,
-                'image' => $imagePath,
-                'type' => $question->question_type,
-                'options' => $options,
-            ];
-
-            $data['total_marks'] += $question->marks ?? 1;
-        }
-
-        // Generate PDF
-        $pdf = PDF::loadView('assessments.pdf_student', $data)
-            ->setPaper('a4')
-            ->setOption('margin-top', 20)
-            ->setOption('margin-bottom', 20)
-            ->setOption('margin-left', 15)
-            ->setOption('margin-right', 15);
-
-        $filename = 'student-assessment-' . Str::slug($assessment->title) . '.pdf';
-        return $pdf->download($filename);
-    }
-
-    public function generatePdfStudent3($id)
-    {
-        $assessment = Assessment::with([
-            'questions.question',
-            'subject',
-            'creator.school'
-        ])->findOrFail($id);
-
-        // Authorization check
-        $user = Auth::user();
-        if ($assessment->creator_id !== $user->id) {
-            return response()->json([
-                'message' => 'You are not authorized to view this assessment.',
-            ], 403);
-        }
-
-        $school = $assessment->creator->school ?? null;
-
-        // Server-side KaTeX render function
-        $renderKatex = function ($latex) {
-            $latex = escapeshellarg($latex);
-            $html = shell_exec("mathjax-node-cli --inline $latex 2>&1");
-            return $html ?: $latex;
-        };
-
-        $data = [
-            'title' => $assessment->title . ' - Question Paper',
-            'subject' => $assessment->subject ? $assessment->subject->name : 'General',
-            'topic' => $assessment->topic ? $assessment->topic->name : 'General',
-            'created_at' => $assessment->created_at->format('F j, Y'),
-            'school' => [
-                'school_name' => $school->school_name ?? 'School Name',
-                'address' => $school->address ?? 'School Address',
-                'phone' => $school->phone ?? 'Phone Number',
-                'email' => $school->email ?? 'school@example.com',
-                'logo' => $school->logo_path ? storage_path('app/public/' . $school->logo_path) : null,
-            ],
-            'questions' => [],
-            'is_student_version' => true,
-            'total_marks' => 0
-        ];
-
-        foreach ($assessment->questions->sortBy('order') as $index => $aq) {
-            $question = $aq->question;
-            if (!$question) continue;
-
-            // Image path
-            $imagePath = null;
-            if ($question->question_image) {
-                $relativePath = ltrim($question->question_image, '/');
-                $imagePath = storage_path('app/public/' . $relativePath);
-                if (!file_exists($imagePath)) $imagePath = null;
-            }
-
-            // Convert question text to KaTeX
-            $questionText = $renderKatex($question->question);
-
-            // Convert options to KaTeX
-            $options = [];
-            if (in_array($question->question_type, ['mcq', 'true_false'])) {
-                if ($question->question_type === 'true_false') {
-                    $options = [
-                        ['text' => $renderKatex('True')],
-                        ['text' => $renderKatex('False')]
-                    ];
-                } else {
-                    $decodedOptions = json_decode($question->options, true) ?? [];
-                    foreach ($decodedOptions as $opt) {
-                        $options[] = ['text' => $renderKatex($opt)];
-                    }
-                }
-            }
-
-            $formattedQuestion = [
-                'number' => $index + 1,
-                'text' => $questionText,
-                'type' => $question->question_type,
-                'marks' => $question->marks ?? 1,
-                'image' => $imagePath,
-                'options' => $options
-            ];
-
-            $data['questions'][] = $formattedQuestion;
-            $data['total_marks'] += $formattedQuestion['marks'];
-        }
-
-        // Generate PDF
-        $pdf = PDF::loadView('assessments.pdf_student', $data);
-        $pdf->setPaper('a4');
-        $pdf->setOption('margin-top', 20);
-        $pdf->setOption('margin-bottom', 20);
-        $pdf->setOption('margin-left', 15);
-        $pdf->setOption('margin-right', 15);
-
-        $filename = 'student-assessment-' . Str::slug($assessment->title) . '.pdf';
-        return $pdf->download($filename);
-    }
 
     public function generatePdfStudent($id)
     {
@@ -1242,5 +1053,35 @@ class AssessmentController extends Controller
         });
 
         return response()->json($practiceAssessments);
+    }
+        /**
+     * Delete an assessment by ID
+     */
+    public function destroy($id)
+    {
+        $user = Auth::user();
+        $assessment = Assessment::findOrFail($id);
+        // Only the creator can delete
+        if ($assessment->creator_id !== $user->id) {
+            return response()->json(['message' => 'You are not authorized to delete this assessment.'], 403);
+        }
+
+        // Count related topics and questions
+        $topicCount = $assessment->topics()->count();
+        $questionCount = $assessment->questions()->count();
+
+        // Detach topics (assessment_topic pivot)
+        $assessment->topics()->detach();
+        // Delete assessment_questions
+        $assessment->questions()->delete();
+
+        // Delete the assessment
+        $assessment->delete();
+
+        return response()->json([
+            'message' => 'Assessment and all related topics/questions deleted successfully.',
+            'topics_unlinked' => $topicCount,
+            'questions_deleted' => $questionCount
+        ]);
     }
 }
