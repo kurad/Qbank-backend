@@ -48,7 +48,7 @@ class AssessmentBuilderController extends Controller
             'delivery_mode' => $validated['delivery_mode'],
         ];
 
-        $assessment = $this->svc->createWithTopicsAndQuestions(
+        $result = $this->svc->createWithTopicsAndQuestions(
             $assessmentData,
             $validated['topic_ids'],
             $validated['question_ids'],
@@ -57,7 +57,8 @@ class AssessmentBuilderController extends Controller
 
         return response()->json([
             'status' => 'success',
-            'assessment' => $assessment
+            'assessment' => $result['assessment'],
+            'warnings' => $result['warnings'],
         ], 201);
     }
 }

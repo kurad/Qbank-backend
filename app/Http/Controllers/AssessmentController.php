@@ -340,11 +340,22 @@ class AssessmentController extends Controller
 
         $assessment = Assessment::findOrFail($validated['assessment_id']);
         $now = now();
+        $userId = auth()->id();
 
         // Get all current assessment_question rows for this assessment
         $existing = $assessment->questions()->pluck('id', 'question_id')->toArray(); // [question_id => assessment_question_id]
+        $warnings = []; // <--- store warnings to return to frontend
 
         foreach (array_values($validated['question_ids']) as $order => $qid) {
+            // Check usage by same user (limit = 3)
+            $usageCount = QuestionUsage::where('question_id', $qid)
+                ->whereHas('assessment', function($q) use ($userId) {
+                    $q->where('creator_id', $userId);
+                })->count();
+                if ($usageCount >= 3) {
+                    $warnings[] = "Question ID {$qid} has been used in 3 or more assessments created by you.";
+                }
+            // -------------------------------------------------------
             if (isset($existing[$qid])) {
                 // Update order for existing question
                 AssessmentQuestion::where('id', $existing[$qid])
@@ -383,6 +394,7 @@ class AssessmentController extends Controller
 
         return response()->json([
             'message' => 'Questions added/updated successfully',
+            'warnings' => $warnings,
             'assessment' => $assessment->load('questions.question')
         ], 200);
     }
