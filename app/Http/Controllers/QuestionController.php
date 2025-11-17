@@ -526,11 +526,7 @@ class QuestionController extends Controller
                             $q['correct_answer'] = 'True';
                         }
                         $q['options'] = ['True', 'False'];
-                    } elseif ($type === 'matching') {
-                        if (empty($q['correct_answer'])) {
-                            $q['correct_answer'] = [];
-                        }
-                    }
+                    } 
                 }
             }
             return response()->json([
@@ -560,18 +556,7 @@ class QuestionController extends Controller
         if ($validated['question_type'] === 'mcq') {
             $validated['options'] = array_map('trim', $validated['options']);
         }
-        if ($validated['question_type'] === 'matching') {
-            if (is_string($validated['options'])) {
-                $validated['options'] = json_decode($validated['options'], true);
-            }
-            if (is_string($validated['correct_answer'])) {
-                $validated['correct_answer'] = json_decode($validated['correct_answer'], true);
-            }
-            $validated['options'] = json_encode($validated['options']);
-            $validated['correct_answer'] = json_encode($validated['correct_answer']);
-        }
-
-        // Handle image upload (optional, not expected from AI)
+            // Handle image upload (optional, not expected from AI)
         if ($request->hasFile('question_image')) {
             $validated['question_image'] = $this->handleQuestionImage($request);
         }

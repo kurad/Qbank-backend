@@ -22,8 +22,31 @@ class GroqAIService
         ])->post($url, [
             'model' => 'llama-3.3-70b-versatile',
             'messages' => [
-                ["role" => "system", "content" => "You generate high-quality exam questions."],
-                ['role' => 'user', 'content' => $prompt],
+                [
+                    "role" => "system", 
+                    "content" => 
+                        "You generate exam questions.\n" .
+                    "Return ONLY valid JSON, no markdown, no explanation.\n" .
+                    "Format: an array of question objects.\n" .
+                    "Each object must have:\n" .
+                    "  - question (string)\n" .
+                    "  - question_type (mcq|true_false|short_answer)\n" .
+                    "  - difficulty_level (remembering|understanding|applying|analyzing|evaluating|creating)\n" .
+                    "  - options (array or object, depending on type)\n" .
+                    "  - correct_answer\n" .
+                    "Example:\n" .
+                    "[{\n" .
+                    "  \"question\": \"What is 2+2?\",\n" .
+                    "  \"question_type\": \"mcq\",\n" .
+                    "  \"difficulty_level\": \"remembering\",\n" .
+                    "  \"options\": [\"3\", \"4\", \"5\"],\n" .
+                    "  \"correct_answer\": \"4\"\n" .
+                    "}]"
+                    ],
+                [
+                    "role" => "user",
+                    "content" => $prompt,
+                ],
             ],
         ]);
         if ($response->failed()) {
