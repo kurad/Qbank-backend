@@ -16,36 +16,37 @@ class GroqAIService
         ]);
         $url = 'https://api.groq.com/openai/v1/chat/completions';
 
+
+        // Always generate 10 unique questions
+        $fullPrompt =
+            "Generate **10 different exam questions** every time this request is made.\n" .
+            "Do NOT repeat questions from previous generations.\n" .
+            "Vary the style, wording, and difficulty.\n\n" .
+            "User request: " . $prompt;
+
         $response = Http::withHeaders([
             'Authorization' => 'Bearer ' . config('services.groq.api_key'),
             'Content-Type' => 'application/json',
         ])->post($url, [
             'model' => 'llama-3.3-70b-versatile',
+            'temperature' => 1.1, // Increases randomness
             'messages' => [
                 [
                     "role" => "system", 
                     "content" => 
                         "You generate exam questions.\n" .
                     "Return ONLY valid JSON, no markdown, no explanation.\n" .
-                    "Format: an array of question objects.\n" .
+                    "Format: an array of 10 question objects.\n" .
                     "Each object must have:\n" .
                     "  - question (string)\n" .
                     "  - question_type (mcq|true_false|short_answer)\n" .
                     "  - difficulty_level (remembering|understanding|applying|analyzing|evaluating|creating)\n" .
-                    "  - options (array or object, depending on type)\n" .
-                    "  - correct_answer\n" .
-                    "Example:\n" .
-                    "[{\n" .
-                    "  \"question\": \"What is 2+2?\",\n" .
-                    "  \"question_type\": \"mcq\",\n" .
-                    "  \"difficulty_level\": \"remembering\",\n" .
-                    "  \"options\": [\"3\", \"4\", \"5\"],\n" .
-                    "  \"correct_answer\": \"4\"\n" .
-                    "}]"
+                    "  - options (array of strings for MCQ, or null for other types)\n" .
+                    "  - correct_answer (string)\n"
                     ],
                 [
                     "role" => "user",
-                    "content" => $prompt,
+                    "content" => $fullPrompt,
                 ],
             ],
         ]);
