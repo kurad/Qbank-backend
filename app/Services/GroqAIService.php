@@ -17,7 +17,7 @@ class GroqAIService
         $url = 'https://api.groq.com/openai/v1/chat/completions';
 
         $response = Http::withHeaders([
-            'Authorization' => 'Bearer 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' ,
+            'Authorization' => 'Bearer ' . env('GROQ_API_KEY'),
             'Content-Type' => 'application/json',
         ])->post($url, [
             'model' => 'llama-3.3-70b-versatile',
