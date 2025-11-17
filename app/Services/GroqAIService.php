@@ -11,13 +11,13 @@ class GroqAIService
     public function generateQuestions($prompt)
     {
         Log::info('GROQ key debug', [
-            'prefix' => substr(env('GROQ_API_KEY'), 0, 8),
-            'is_null' => env('GROQ_API_KEY') === null,
+            'prefix' => substr(config('services.groq.api_key'), 0, 8),
+            'is_null' => config('services.groq.api_key') === null,
         ]);
         $url = 'https://api.groq.com/openai/v1/chat/completions';
 
         $response = Http::withHeaders([
-            'Authorization' => 'Bearer ' . env('GROQ_API_KEY'),
+            'Authorization' => 'Bearer ' . config('services.groq.api_key'),
             'Content-Type' => 'application/json',
         ])->post($url, [
             'model' => 'llama-3.3-70b-versatile',
