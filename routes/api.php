@@ -77,6 +77,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/questions', [QuestionController::class, 'store']);
     Route::get('/my-questions', [QuestionController::class, 'myQuestions']);
     Route::delete('/questions/{id}', [QuestionController::class, 'destroy']);
+    Route::post('questions/ai-generate', [QuestionController::class, 'generateAIQuestions']);
+    Route::post('questions/ai-generate/store', [QuestionController::class, 'storeAIQuestions']);
 });
 Route::get('/questions/all', [QuestionController::class, 'allQuestions']);
 

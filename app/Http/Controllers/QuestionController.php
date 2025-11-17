@@ -5,15 +5,21 @@ namespace App\Http\Controllers;
 use App\Models\Topic;
 use App\Models\Question;
 use App\Models\GradeLevel;
+use App\Models\GradeSubject;
 use Illuminate\Http\Request;
+use App\Services\GroqAIService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
-use App\Models\GradeSubject;
 
 class QuestionController extends Controller
 {
 
+    protected $groqAI;
+    public function __construct(GroqAIService $groqAI)
+    {
+        $this->groqAI = $groqAI;
+    }
     public function store(Request $request)
     {
         try {
@@ -474,5 +480,132 @@ class QuestionController extends Controller
         return response()->json([
             'message' => 'Question deleted successfully'
         ], 200);
+    }
+    public function generateAIQuestions(Request $request)
+    {
+        $request->validate([
+            'prompt' => 'required|string|max:2000',
+            'topic_id' => 'required|exists:topics,id',
+            'question_type' => 'required|in:mcq,true_false,short_answer,matching',
+            'difficulty_level' => 'required|in:remembering,understanding,applying,analyzing,evaluating,creating',
+        ]);
+        try {
+            $prompt = $request->prompt;
+            $aiResponse = $this->groqAI->generateQuestions($prompt);
+
+            $generatedQuestions = json_decode($aiResponse, true);
+            if (!$generatedQuestions) {
+                $generatedQuestions = [
+                    [
+                        'question' => $aiResponse,
+                        'question_type' => $request->question_type ?? 'short_answer',
+                        'difficulty_level' => $request->difficulty_level ?? 'remembering',
+                        'topic_id' => $request->topic_id,
+                        'created_by' => auth()->id() ?? 1,
+                    ]
+                ];
+            } else {
+                // Add topic_id, created_by, and ensure correct_answer for each AI question
+                foreach ($generatedQuestions as &$q) {
+                    $q['topic_id'] = $request->topic_id;
+                    $q['created_by'] = auth()->id() ?? 1;
+
+                    // Ensure correct_answer is set for each type
+                    $type = $q['question_type'] ?? $request->question_type;
+                    if ($type === 'mcq') {
+                        // Decode options if needed
+                        if (isset($q['options']) && is_string($q['options'])) {
+                            $q['options'] = json_decode($q['options'], true);
+                        }
+                        // If no correct_answer, pick the first option
+                        if (empty($q['correct_answer']) && !empty($q['options']) && is_array($q['options'])) {
+                            $q['correct_answer'] = is_array($q['options'][0]) && isset($q['options'][0]['text']) ? $q['options'][0]['text'] : $q['options'][0];
+                        }
+                    } elseif ($type === 'true_false') {
+                        if (empty($q['correct_answer'])) {
+                            $q['correct_answer'] = 'True';
+                        }
+                        $q['options'] = ['True', 'False'];
+                    } elseif ($type === 'matching') {
+                        if (empty($q['correct_answer'])) {
+                            $q['correct_answer'] = [];
+                        }
+                    }
+                }
+            }
+            return response()->json([
+                'success' => true,
+                'data' => $generatedQuestions,
+            ]);
+        } catch (\Exception $e) {
+            Log::error('AI question generation failed', ['error' => $e->getMessage()]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to generate questions: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Store a selected AI-generated question in the database
+     */
+    public function storeAIQuestions(Request $request)
+    {
+        // Validate as if coming from the frontend selection
+        $validated = $this->validateQuestionData($request);
+        $questionText = trim($validated['question']);
+        $validated['question'] = $questionText;
+
+        // Handle options/correct_answer encoding for MCQ and matching
+        if ($validated['question_type'] === 'mcq') {
+            $validated['options'] = array_map('trim', $validated['options']);
+        }
+        if ($validated['question_type'] === 'matching') {
+            if (is_string($validated['options'])) {
+                $validated['options'] = json_decode($validated['options'], true);
+            }
+            if (is_string($validated['correct_answer'])) {
+                $validated['correct_answer'] = json_decode($validated['correct_answer'], true);
+            }
+            $validated['options'] = json_encode($validated['options']);
+            $validated['correct_answer'] = json_encode($validated['correct_answer']);
+        }
+
+        // Handle image upload (optional, not expected from AI)
+        if ($request->hasFile('question_image')) {
+            $validated['question_image'] = $this->handleQuestionImage($request);
+        }
+
+        // Set marks based on difficulty level if not explicitly provided
+        if (!isset($validated['marks']) || $validated['marks'] === 0) {
+            $validated['marks'] = match ($validated['difficulty_level']) {
+                'remembering', 'understanding' => 1,
+                'analyzing' => 2,
+                'applying', 'evaluating' => 3,
+                'creating' => 4,
+                default => 1,
+            };
+        }
+
+        $validated['created_by'] = auth()->id() ?? 1;
+
+        DB::beginTransaction();
+        try {
+            $question = Question::create($validated);
+            DB::commit();
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('AI question save failed', ['error' => $e->getMessage()]);
+            return response()->json([
+                'error' => 'Failed to save question',
+                'details' => $e->getMessage()
+            ], 500);
+        }
+
+        $question->question_image_url = $question->question_image
+            ? asset('storage/' . $question->question_image)
+            : null;
+
+        return response()->json($question, 201);
     }
 }
