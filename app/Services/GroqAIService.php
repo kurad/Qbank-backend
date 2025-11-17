@@ -1,6 +1,8 @@
 <?php
 
 namespace App\Services;
+
+use Log;
 use Groq\Groq;
 use Illuminate\Support\Facades\Http;
 
@@ -8,6 +10,10 @@ class GroqAIService
 {
     public function generateQuestions($prompt)
     {
+        Log::info('GROQ key debug', [
+            'prefix' => substr(env('GROQ_API_KEY'), 0, 8),
+            'is_null' => env('GROQ_API_KEY') === null,
+        ]);
         $url = 'https://api.groq.com/openai/v1/chat/completions';
 
         $response = Http::withHeaders([
@@ -25,5 +31,4 @@ class GroqAIService
         }
         return $response->json()['choices'][0]['message']['content'];
     }
-  
 }
