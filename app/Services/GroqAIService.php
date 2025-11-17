@@ -53,5 +53,7 @@ class GroqAIService
             throw new \Exception('Groq API Error: ' . $response->body());
         }
         return $response->json()['choices'][0]['message']['content'];
+
+        
     }
 }
