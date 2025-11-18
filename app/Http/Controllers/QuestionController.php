@@ -497,9 +497,16 @@ class QuestionController extends Controller
     }
 
     // Helper: ensure text is wrapped in LaTeX inline math delimiters \(...\)
+    // Does not modify strings already wrapped in $...$ or \(...\)
     private function wrapInlineLatex(string $text): string
     {
+        // Already wrapped in \(...\)
         if (preg_match('/^\\\(.*\\\)$/', $text)) {
+            return $text;
+        }
+
+        // Already wrapped in $...$
+        if (preg_match('/^\$.*\$$/', $text)) {
             return $text;
         }
 
@@ -539,6 +546,17 @@ class QuestionController extends Controller
                         $q['is_math'] = true;
                         // Optionally wrap in \(...\) if not already
                         $q['question'] = $this->wrapInlineLatex($q['question']);
+
+                        // If MCQ, also format options as LaTeX
+                        if (($q['question_type'] ?? $request->question_type) === 'mcq' && isset($q['options']) && is_array($q['options'])) {
+                            foreach ($q['options'] as $idx => $opt) {
+                                if (is_string($opt)) {
+                                    $q['options'][$idx] = $this->wrapInlineLatex($opt);
+                                } elseif (is_array($opt) && isset($opt['text']) && is_string($opt['text'])) {
+                                    $q['options'][$idx]['text'] = $this->wrapInlineLatex($opt['text']);
+                                }
+                            }
+                        }
                     } else {
                         $q['is_math'] = false;
                     }
@@ -589,6 +607,20 @@ class QuestionController extends Controller
         if (isset($validated['question']) && $this->containsLatexMath($validated['question'])) {
             $validated['is_math'] = true;
             $validated['question'] = $this->wrapInlineLatex($validated['question']);
+
+            // For MCQ math questions, also format options as LaTeX
+            if ($validated['question_type'] === 'mcq' && isset($validated['options']) && is_array($validated['options'])) {
+                $validated['options'] = array_map(function ($opt) {
+                    if (is_string($opt)) {
+                        return $this->wrapInlineLatex(trim($opt));
+                    }
+                    if (is_array($opt) && isset($opt['text']) && is_string($opt['text'])) {
+                        $opt['text'] = $this->wrapInlineLatex(trim($opt['text']));
+                        return $opt;
+                    }
+                    return $opt;
+                }, $validated['options']);
+            }
         } else {
             $validated['is_math'] = false;
         }
