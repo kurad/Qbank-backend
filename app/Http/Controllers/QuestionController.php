@@ -512,36 +512,48 @@ class QuestionController extends Controller
         return false;
     }
 
-    // Helper: ensure text is wrapped in LaTeX inline math delimiters \(...\)
-    // Does not modify strings already wrapped in $...$ or \(...\)
+    // Helper: ensure text is wrapped in LaTeX inline math delimiters $...$
+    // Safely converts existing \(...\) to $...$ and avoids double-wrapping
     private function wrapInlineLatex(string $text): string
     {
-        // Already wrapped in \(...\)
-        if (preg_match('/^\\\(.*\\\)$/', $text)) {
-            return $text;
-        }
+        $trimmed = trim($text);
 
         // Already wrapped in $...$
-        if (preg_match('/^\$.*\$$/', $text)) {
-            return $text;
+        if (preg_match('/^\$.*\$$/s', $trimmed)) {
+            return $trimmed;
         }
 
-        return '\\(' . $text . '\\)';
+        // If wrapped in \(...\), convert to $...$
+        if (preg_match('/^\\\((.*)\\\)$/s', $trimmed, $m)) {
+            return '$' . $m[1] . '$';
+        }
+
+        return '$' . $trimmed . '$';
     }
     private function normalizeMathOptions(array $options): array
     {
         return array_map(function ($opt) {
+            // String option
             if (is_string($opt)) {
-                if ($this->containsLatexMath($opt)) {
-                    return $this->wrapInlineLatex($opt);
+                $trimmed = trim($opt);
+
+                if ($this->containsLatexMath($trimmed)) {
+                    return $this->wrapInlineLatex($trimmed);
                 }
-                return $opt;
+
+                return $trimmed;
             }
 
+            // Object-like option with 'text' field
             if (is_array($opt) && isset($opt['text']) && is_string($opt['text'])) {
-                if ($this->containsLatexMath($opt['text'])) {
-                    $opt['text'] = $this->wrapInlineLatex($opt['text']);
+                $text = trim($opt['text']);
+
+                if ($this->containsLatexMath($text)) {
+                    $opt['text'] = $this->wrapInlineLatex($text);
+                } else {
+                    $opt['text'] = $text;
                 }
+
                 return $opt;
             }
 
