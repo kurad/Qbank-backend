@@ -510,6 +510,17 @@ class QuestionController extends Controller
                     $q['topic_id'] = $request->topic_id;
                     $q['created_by'] = auth()->id() ?? 1;
 
+                    // Detect math (LaTeX) and set is_math
+                    if (isset($q['question']) && preg_match('/\\\(|\\\)|\$.*\$|\\frac|\\sqrt|\\sum|\\int|\\[a-zA-Z]+/', $q['question'])) {
+                        $q['is_math'] = true;
+                        // Optionally wrap in \(...\) if not already
+                        if (!preg_match('/^\\\(.*\\\)$/', $q['question'])) {
+                            $q['question'] = '\\(' . $q['question'] . '\\)';
+                        }
+                    } else {
+                        $q['is_math'] = false;
+                    }
+
                     // Ensure correct_answer is set for each type
                     $type = $q['question_type'] ?? $request->question_type;
                     if ($type === 'mcq') {
@@ -526,7 +537,7 @@ class QuestionController extends Controller
                             $q['correct_answer'] = 'True';
                         }
                         $q['options'] = ['True', 'False'];
-                    } 
+                    }
                 }
             }
             return response()->json([
@@ -552,11 +563,21 @@ class QuestionController extends Controller
         $questionText = trim($validated['question']);
         $validated['question'] = $questionText;
 
+        // Detect math (LaTeX) and set is_math
+        if (isset($validated['question']) && preg_match('/\\\(|\\\)|\$.*\$|\\frac|\\sqrt|\\sum|\\int|\\[a-zA-Z]+/', $validated['question'])) {
+            $validated['is_math'] = true;
+            if (!preg_match('/^\\\(.*\\\)$/', $validated['question'])) {
+                $validated['question'] = '\\(' . $validated['question'] . '\\)';
+            }
+        } else {
+            $validated['is_math'] = false;
+        }
+
         // Handle options/correct_answer encoding for MCQ and matching
         if ($validated['question_type'] === 'mcq') {
             $validated['options'] = array_map('trim', $validated['options']);
         }
-            // Handle image upload (optional, not expected from AI)
+        // Handle image upload (optional, not expected from AI)
         if ($request->hasFile('question_image')) {
             $validated['question_image'] = $this->handleQuestionImage($request);
         }
