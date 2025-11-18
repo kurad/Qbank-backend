@@ -511,7 +511,7 @@ class QuestionController extends Controller
                     $q['created_by'] = auth()->id() ?? 1;
 
                     // Detect math (LaTeX) and set is_math
-                    if (isset($q['question']) && preg_match('/\\\(|\\\)|\$.*\$|\\frac|\\sqrt|\\sum|\\int|\\[a-zA-Z]+/', $q['question'])) {
+                    if (isset($q['question']) && preg_match('/\\\(|\\\)|\$.*\$|\\frac|\\sqrt|\\sum|\\int/', $q['question'])) {
                         $q['is_math'] = true;
                         // Optionally wrap in \(...\) if not already
                         if (!preg_match('/^\\\(.*\\\)$/', $q['question'])) {
@@ -564,7 +564,7 @@ class QuestionController extends Controller
         $validated['question'] = $questionText;
 
         // Detect math (LaTeX) and set is_math
-        if (isset($validated['question']) && preg_match('/\\\(|\\\)|\$.*\$|\\frac|\\sqrt|\\sum|\\int|\\[a-zA-Z]+/', $validated['question'])) {
+        if (isset($validated['question']) && preg_match('/\\\(|\\\)|\$.*\$|\\frac|\\sqrt|\\sum|\\int/', $validated['question'])) {
             $validated['is_math'] = true;
             if (!preg_match('/^\\\(.*\\\)$/', $validated['question'])) {
                 $validated['question'] = '\\(' . $validated['question'] . '\\)';
