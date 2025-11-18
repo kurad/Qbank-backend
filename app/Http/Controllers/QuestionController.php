@@ -482,13 +482,29 @@ class QuestionController extends Controller
         ], 200);
     }
     
-    // Helper: detect presence of common LaTeX math markers in a string
+    // Helper: detect presence of common LaTeX/math markers in a string
     private function containsLatexMath(string $text): bool
     {
-        $needles = ['\\\(', '\\\)', '$', '\\frac', '\\sqrt', '\\sum', '\\int'];
+        // We treat typical LaTeX markers and caret-based math as "mathy"
+        $needles = ['\\\(', '\\\)', '$', '\\frac', '\\sqrt', '\\sum', '\\int', '^'];
 
         foreach ($needles as $needle) {
             if (strpos($text, $needle) !== false) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    // Helper: check if any option string looks like math
+    private function optionsContainLatexMath(array $options): bool
+    {
+        foreach ($options as $opt) {
+            if (is_string($opt) && $this->containsLatexMath($opt)) {
+                return true;
+            }
+            if (is_array($opt) && isset($opt['text']) && is_string($opt['text']) && $this->containsLatexMath($opt['text'])) {
                 return true;
             }
         }
@@ -541,11 +557,24 @@ class QuestionController extends Controller
                     $q['topic_id'] = $request->topic_id;
                     $q['created_by'] = auth()->id() ?? 1;
 
-                    // Detect math (LaTeX) and set is_math
-                    if (isset($q['question']) && $this->containsLatexMath($q['question'])) {
+                    // If options came from AI as a JSON string, decode once here
+                    if (isset($q['options']) && is_string($q['options'])) {
+                        $decodedOptions = json_decode($q['options'], true);
+                        if (json_last_error() === JSON_ERROR_NONE && is_array($decodedOptions)) {
+                            $q['options'] = $decodedOptions;
+                        }
+                    }
+
+                    // Detect math (LaTeX) via question and/or options and set is_math
+                    $hasMathInQuestion = isset($q['question']) && $this->containsLatexMath($q['question']);
+                    $hasMathInOptions = isset($q['options']) && is_array($q['options']) && $this->optionsContainLatexMath($q['options']);
+
+                    if ($hasMathInQuestion || $hasMathInOptions) {
                         $q['is_math'] = true;
-                        // Optionally wrap in \(...\) if not already
-                        $q['question'] = $this->wrapInlineLatex($q['question']);
+                        // Optionally wrap question in \(...\) if it actually contains math markers
+                        if ($hasMathInQuestion) {
+                            $q['question'] = $this->wrapInlineLatex($q['question']);
+                        }
 
                         // If MCQ, also format options as LaTeX
                         if (($q['question_type'] ?? $request->question_type) === 'mcq' && isset($q['options']) && is_array($q['options'])) {
@@ -603,10 +632,16 @@ class QuestionController extends Controller
         $questionText = trim($validated['question']);
         $validated['question'] = $questionText;
 
-        // Detect math (LaTeX) and set is_math
-        if (isset($validated['question']) && $this->containsLatexMath($validated['question'])) {
+        // Detect math (LaTeX) from question and/or options and set is_math
+        $hasMathInQuestion = isset($validated['question']) && $this->containsLatexMath($validated['question']);
+        $hasMathInOptions = isset($validated['options']) && is_array($validated['options']) && $this->optionsContainLatexMath($validated['options']);
+
+        if ($hasMathInQuestion || $hasMathInOptions) {
             $validated['is_math'] = true;
-            $validated['question'] = $this->wrapInlineLatex($validated['question']);
+
+            if ($hasMathInQuestion) {
+                $validated['question'] = $this->wrapInlineLatex($validated['question']);
+            }
 
             // For MCQ math questions, also format options as LaTeX
             if ($validated['question_type'] === 'mcq' && isset($validated['options']) && is_array($validated['options'])) {
