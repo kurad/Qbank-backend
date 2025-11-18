@@ -481,6 +481,30 @@ class QuestionController extends Controller
             'message' => 'Question deleted successfully'
         ], 200);
     }
+    
+    // Helper: detect presence of common LaTeX math markers in a string
+    private function containsLatexMath(string $text): bool
+    {
+        $needles = ['\\\(', '\\\)', '$', '\\frac', '\\sqrt', '\\sum', '\\int'];
+
+        foreach ($needles as $needle) {
+            if (strpos($text, $needle) !== false) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    // Helper: ensure text is wrapped in LaTeX inline math delimiters \(...\)
+    private function wrapInlineLatex(string $text): string
+    {
+        if (preg_match('/^\\\(.*\\\)$/', $text)) {
+            return $text;
+        }
+
+        return '\\(' . $text . '\\)';
+    }
     public function generateAIQuestions(Request $request)
     {
         $request->validate([
@@ -511,12 +535,10 @@ class QuestionController extends Controller
                     $q['created_by'] = auth()->id() ?? 1;
 
                     // Detect math (LaTeX) and set is_math
-                    if (isset($q['question']) && preg_match('/\\\(|\\\)|\$.*\$|\\frac|\\sqrt|\\sum|\\int/', $q['question'])) {
+                    if (isset($q['question']) && $this->containsLatexMath($q['question'])) {
                         $q['is_math'] = true;
                         // Optionally wrap in \(...\) if not already
-                        if (!preg_match('/^\\\(.*\\\)$/', $q['question'])) {
-                            $q['question'] = '\\(' . $q['question'] . '\\)';
-                        }
+                        $q['question'] = $this->wrapInlineLatex($q['question']);
                     } else {
                         $q['is_math'] = false;
                     }
@@ -564,11 +586,9 @@ class QuestionController extends Controller
         $validated['question'] = $questionText;
 
         // Detect math (LaTeX) and set is_math
-        if (isset($validated['question']) && preg_match('/\\\(|\\\)|\$.*\$|\\frac|\\sqrt|\\sum|\\int/', $validated['question'])) {
+        if (isset($validated['question']) && $this->containsLatexMath($validated['question'])) {
             $validated['is_math'] = true;
-            if (!preg_match('/^\\\(.*\\\)$/', $validated['question'])) {
-                $validated['question'] = '\\(' . $validated['question'] . '\\)';
-            }
+            $validated['question'] = $this->wrapInlineLatex($validated['question']);
         } else {
             $validated['is_math'] = false;
         }
