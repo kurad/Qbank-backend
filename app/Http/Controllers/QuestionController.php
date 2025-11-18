@@ -528,6 +528,37 @@ class QuestionController extends Controller
 
         return '\\(' . $text . '\\)';
     }
+    private function normalizeMathOptions(array $options): array
+    {
+        return array_map(function ($opt) {
+            if (is_string($opt)) {
+                if ($this->containsLatexMath($opt)) {
+                    return $this->wrapInlineLatex($opt);
+                }
+                return $opt;
+            }
+
+            if (is_array($opt) && isset($opt['text']) && is_string($opt['text'])) {
+                if ($this->containsLatexMath($opt['text'])) {
+                    $opt['text'] = $this->wrapInlineLatex($opt['text']);
+                }
+                return $opt;
+            }
+
+            return $opt;
+        }, $options);
+    }
+
+    private function normalizeMathQuestion(string $question): string
+    {
+        $trimmed = trim($question);
+
+        if ($this->containsLatexMath($trimmed)) {
+            return $this->wrapInlineLatex($trimmed);
+        }
+
+        return $trimmed;
+    }
     public function generateAIQuestions(Request $request)
     {
         $request->validate([
@@ -565,12 +596,19 @@ class QuestionController extends Controller
                         }
                     }
 
-                    // Detect math (LaTeX) via question and/or options and set is_math
+                    // Detect math (LaTeX) via question and/or options
                     $hasMathInQuestion = isset($q['question']) && $this->containsLatexMath($q['question']);
                     $hasMathInOptions = isset($q['options']) && is_array($q['options']) && $this->optionsContainLatexMath($q['options']);
 
+                    if ($hasMathInQuestion && isset($q['question'])) {
+                        $q['question'] = $this->normalizeMathQuestion($q['question']);
+                    }
+
+                    if ($hasMathInOptions && isset($q['options']) && is_array($q['options'])) {
+                        $q['options'] = $this->normalizeMathOptions($q['options']);
+                    }
+
                     if ($hasMathInQuestion || $hasMathInOptions) {
-                        // Mark as math so frontend can render with KaTeX, but do not modify text
                         $q['is_math'] = true;
                     } else {
                         $q['is_math'] = false;
@@ -618,12 +656,19 @@ class QuestionController extends Controller
         $questionText = trim($validated['question']);
         $validated['question'] = $questionText;
 
-        // Detect math (LaTeX) from question and/or options and set is_math
+        // Detect math (LaTeX) from question and/or options
         $hasMathInQuestion = isset($validated['question']) && $this->containsLatexMath($validated['question']);
         $hasMathInOptions = isset($validated['options']) && is_array($validated['options']) && $this->optionsContainLatexMath($validated['options']);
 
+        if ($hasMathInQuestion) {
+            $validated['question'] = $this->normalizeMathQuestion($validated['question']);
+        }
+
+        if ($hasMathInOptions && isset($validated['options']) && is_array($validated['options'])) {
+            $validated['options'] = $this->normalizeMathOptions($validated['options']);
+        }
+
         if ($hasMathInQuestion || $hasMathInOptions) {
-            // Mark as math so frontend can render with KaTeX, but do not modify text
             $validated['is_math'] = true;
         } else {
             $validated['is_math'] = false;
