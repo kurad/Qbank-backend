@@ -565,11 +565,19 @@ class QuestionController extends Controller
     {
         $trimmed = trim($question);
 
-        if ($this->containsLatexMath($trimmed)) {
-            return $this->wrapInlineLatex($trimmed);
+        // If it doesn't look mathy at all, return as-is
+        if (!$this->containsLatexMath($trimmed)) {
+            return $trimmed;
         }
 
-        return $trimmed;
+        // If it is a full sentence (several spaces or common words), keep as text.
+        // We only auto-wrap short, expression-like strings.
+        $wordCount = str_word_count($trimmed);
+        if ($wordCount >= 5 || preg_match('/\b(if|what|value|find|which|true|false|choose)\b/i', $trimmed)) {
+            return $trimmed;
+        }
+
+        return $this->wrapInlineLatex($trimmed);
     }
     public function generateAIQuestions(Request $request)
     {
