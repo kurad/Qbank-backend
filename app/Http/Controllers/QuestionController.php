@@ -570,14 +570,25 @@ class QuestionController extends Controller
             return $trimmed;
         }
 
-        // If it is a full sentence (several spaces or common words), keep as text.
-        // We only auto-wrap short, expression-like strings.
+        // If the whole string is already a single math expression (no spaces or very few words),
+        // treat it as a pure expression and wrap it entirely.
         $wordCount = str_word_count($trimmed);
-        if ($wordCount >= 5 || preg_match('/\b(if|what|value|find|which|true|false|choose)\b/i', $trimmed)) {
-            return $trimmed;
+        if ($wordCount <= 2 && !preg_match('/[\.!?]/', $trimmed)) {
+            return $this->wrapInlineLatex($trimmed);
         }
 
-        return $this->wrapInlineLatex($trimmed);
+        // For sentence-like text that contains math fragments (e.g. "2^x", "2^4"),
+        // wrap only those fragments in $...$ while leaving the rest as plain text.
+        $wrapped = preg_replace_callback(
+            // Match simple power expressions like 2^x, x^2, (x+1)^2 etc. without spaces
+            '/([A-Za-z0-9()]+\^[A-Za-z0-9()]+)/',
+            function ($m) {
+                return $this->wrapInlineLatex($m[1]);
+            },
+            $trimmed
+        );
+
+        return $wrapped !== null ? $wrapped : $trimmed;
     }
     public function generateAIQuestions(Request $request)
     {
