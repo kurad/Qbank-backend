@@ -94,16 +94,18 @@ class QuestionController extends Controller
             }
 
             // Set marks based on difficulty level if not explicitly provided
-            if (!isset($validated['marks']) || $validated['marks'] === 0) {
-                $validated['marks'] = match ($validated['difficulty_level']) {
-                    'remembering', 'understanding' => 1,
-                    'analyzing' => 2,
-                    'applying', 'evaluating' => 3,
-                    'creating' => 4,
-                    default => 1, // fallback to 1 mark
-                };
+            // For matching and short_answer, always respect user-provided marks
+            if (!in_array($validated['question_type'], ['matching', 'short_answer'], true)) {
+                if (!isset($validated['marks']) || $validated['marks'] === 0) {
+                    $validated['marks'] = match ($validated['difficulty_level']) {
+                        'remembering', 'understanding' => 1,
+                        'analyzing' => 2,
+                        'applying', 'evaluating' => 3,
+                        'creating' => 4,
+                        default => 1, // fallback to 1 mark
+                    };
+                }
             }
-
             // Set creator
             $validated['created_by'] = auth()->id() ?? 1;
 
@@ -411,14 +413,18 @@ class QuestionController extends Controller
         $validated = $request->validate($rules);
 
         // Set marks based on difficulty level if not explicitly provided (same as store)
-        if ((!isset($validated['marks']) || $validated['marks'] === 0) && isset($validated['difficulty_level'])) {
-            $validated['marks'] = match ($validated['difficulty_level']) {
-                'remembering', 'understanding' => 1,
-                'analyzing' => 2,
-                'applying', 'evaluating' => 3,
-                'creating' => 4,
-                default => 1,
-            };
+        // For matching and short_answer, always respect user-provided marks
+        $effectiveType = $validated['question_type'] ?? $question->question_type;
+        if (!in_array($effectiveType, ['matching', 'short_answer'], true)) {
+            if ((!isset($validated['marks']) || $validated['marks'] === 0) && isset($validated['difficulty_level'])) {
+                $validated['marks'] = match ($validated['difficulty_level']) {
+                    'remembering', 'understanding' => 1,
+                    'analyzing' => 2,
+                    'applying', 'evaluating' => 3,
+                    'creating' => 4,
+                    default => 1,
+                };
+            }
         }
 
         // Handle image upload
@@ -979,14 +985,17 @@ class QuestionController extends Controller
         }
 
         // Set marks based on difficulty level if not explicitly provided
-        if (!isset($validated['marks']) || $validated['marks'] === 0) {
-            $validated['marks'] = match ($validated['difficulty_level']) {
-                'remembering', 'understanding' => 1,
-                'analyzing' => 2,
-                'applying', 'evaluating' => 3,
-                'creating' => 4,
-                default => 1,
-            };
+        // For matching and short_answer, always respect user-provided marks
+        if (!in_array($validated['question_type'], ['matching', 'short_answer'], true)) {
+            if (!isset($validated['marks']) || $validated['marks'] === 0) {
+                $validated['marks'] = match ($validated['difficulty_level']) {
+                    'remembering', 'understanding' => 1,
+                    'analyzing' => 2,
+                    'applying', 'evaluating' => 3,
+                    'creating' => 4,
+                    default => 1,
+                };
+            }
         }
 
         $validated['created_by'] = auth()->id() ?? 1;
