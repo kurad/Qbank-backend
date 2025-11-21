@@ -400,8 +400,11 @@ class QuestionController extends Controller
                             return $fail('The correct_answer must be a valid JSON array.');
                         }
                         foreach ($decoded as $pair) {
-                            if (!isset($pair['left']) || !isset($pair['right'])) {
-                                return $fail('Each matching pair must have left and right values.');
+                            if (!isset($pair['left_index']) || !isset($pair['right_index'])) {
+                                return $fail('Each matching pair must have left_index and right_index values.');
+                            }
+                            if (!is_int($pair['left_index']) || !is_int($pair['right_index'])) {
+                                return $fail('left_index and right_index must be integers.');
                             }
                         }
                     }
