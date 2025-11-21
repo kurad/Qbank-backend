@@ -437,16 +437,28 @@ class QuestionController extends Controller
 
         // Encode arrays as JSON before saving
         if (isset($validated['question_type']) && $validated['question_type'] === 'matching') {
-            // Store matching_items in options, matching_pairs in correct_answer
-            if (isset($validated['matching_items'])) {
-                $validated['options'] = is_string($validated['matching_items'])
-                    ? $validated['matching_items']
-                    : json_encode($validated['matching_items']);
+            // For matching, mirror the store() behaviour: options is an object {left,right},
+            // correct_answer is an array of {left_index,right_index}.
+            if (isset($validated['options'])) {
+                if (is_string($validated['options'])) {
+                    $decodedOptions = json_decode($validated['options'], true);
+                    if (json_last_error() === JSON_ERROR_NONE) {
+                        $validated['options'] = json_encode($decodedOptions);
+                    }
+                } else {
+                    $validated['options'] = json_encode($validated['options']);
+                }
             }
-            if (isset($validated['matching_pairs'])) {
-                $validated['correct_answer'] = is_string($validated['matching_pairs'])
-                    ? $validated['matching_pairs']
-                    : json_encode($validated['matching_pairs']);
+
+            if (isset($validated['correct_answer'])) {
+                if (is_string($validated['correct_answer'])) {
+                    $decodedCa = json_decode($validated['correct_answer'], true);
+                    if (json_last_error() === JSON_ERROR_NONE) {
+                        $validated['correct_answer'] = json_encode($decodedCa);
+                    }
+                } else {
+                    $validated['correct_answer'] = json_encode($validated['correct_answer']);
+                }
             }
         } else {
             if (isset($validated['options']) && is_array($validated['options'])) {
