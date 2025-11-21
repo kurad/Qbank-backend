@@ -81,6 +81,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('questions/ai-generate/store', [QuestionController::class, 'storeAIQuestions']);
 });
 Route::get('/questions/all', [QuestionController::class, 'allQuestions']);
+Route::get('/questions/search', [QuestionController::class, 'search']);
 
 Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
     return $request->user();

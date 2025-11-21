@@ -551,6 +551,69 @@ class QuestionController extends Controller
         ]);
     }
 
+    public function search(Request $request)
+    {
+        $search = $request->input('search');
+        $topicId = $request->input('topic_id');
+        $subjectId = $request->input('subject_id');
+        $gradeLevelId = $request->input('grade_level_id');
+        $questionType = $request->input('question_type');
+        $difficulty = $request->input('difficulty_level');
+        $createdBy = $request->input('created_by');
+        $pageSize = $request->input('page_size', 10);
+
+        $query = Question::with(['topic.gradeSubject.gradeLevel', 'topic.gradeSubject.subject']);
+
+        if (!empty($search)) {
+            $query->where('question', 'like', "%{$search}%");
+        }
+
+        if (!empty($topicId)) {
+            $query->where('topic_id', $topicId);
+        }
+
+        if (!empty($subjectId)) {
+            $query->whereHas('topic.gradeSubject', function ($q) use ($subjectId) {
+                $q->where('subject_id', $subjectId);
+            });
+        }
+
+        if (!empty($gradeLevelId)) {
+            $query->whereHas('topic.gradeSubject.gradeLevel', function ($q) use ($gradeLevelId) {
+                $q->where('id', $gradeLevelId);
+            });
+        }
+
+        if (!empty($questionType)) {
+            $query->where('question_type', $questionType);
+        }
+
+        if (!empty($difficulty)) {
+            $query->where('difficulty_level', $difficulty);
+        }
+
+        if (!empty($createdBy)) {
+            $query->where('created_by', $createdBy);
+        }
+
+        $questions = $query->orderByDesc('id')->paginate($pageSize);
+
+        $normalizedItems = $questions->getCollection()->map(function ($question) {
+            return $this->normalizeQuestionPayload($question);
+        })->values();
+
+        return response()->json([
+            'success' => true,
+            'data' => $normalizedItems,
+            'pagination' => [
+                'current_page' => $questions->currentPage(),
+                'last_page' => $questions->lastPage(),
+                'per_page' => $questions->perPage(),
+                'total' => $questions->total(),
+            ],
+        ]);
+    }
+
     public function destroy($id)
     {
         $question = Question::findOrFail($id);
