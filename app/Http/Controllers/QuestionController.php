@@ -293,9 +293,14 @@ class QuestionController extends Controller
             ->with(['topic']) // Eager load relationships
             ->paginate($pageSize);
 
+        // Normalize options/correct_answer for each question in the page
+        $normalizedItems = $questions->getCollection()->map(function ($question) {
+            return $this->normalizeQuestionPayload($question);
+        })->values();
+
         return response()->json([
             'success' => true,
-            'data' => $questions->items(),
+            'data' => $normalizedItems,
             'pagination' => [
                 'current_page' => $questions->currentPage(),
                 'last_page' => $questions->lastPage(),
@@ -310,9 +315,14 @@ class QuestionController extends Controller
             ->with('topic') // Eager load relationships
             ->get();
 
+        // Normalize options/correct_answer for all questions
+        $normalized = $questions->map(function ($question) {
+            return $this->normalizeQuestionPayload($question);
+        })->values();
+
         return response()->json([
             'success' => true,
-            'data' => $questions,
+            'data' => $normalized,
         ]);
     }
     public function allQuestions()
@@ -332,7 +342,12 @@ class QuestionController extends Controller
             ->orderByDesc('q.id')
             ->get();
 
-        return response()->json($questions);
+        // Map collection to apply normalization similar to Eloquent models
+        $normalized = $questions->map(function ($q) {
+            return $this->normalizeRawQuestionPayload($q);
+        })->values();
+
+        return response()->json($normalized);
     }
     public function update(Request $request, $id)
     {
@@ -461,23 +476,9 @@ class QuestionController extends Controller
         try {
             $question = Question::findOrFail($id);
 
-            // Decode JSON fields
-            $question->options = json_decode($question->options);
+            $normalizedQuestion = $this->normalizeQuestionPayload($question);
 
-            // Add image URL if exists
-            if ($question->question_image) {
-                $question->question_image_url = asset('storage/' . $question->question_image);
-            } else {
-                $question->question_image_url = null;
-            }
-
-            // Include metadata with KaTeX content if it exists
-            if ($question->metadata) {
-                $metadata = json_decode($question->metadata, true);
-                $question->katex_content = $metadata['katex_content'] ?? null;
-            }
-
-            return response()->json($question);
+            return response()->json($normalizedQuestion);
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
             return response()->json(['error' => 'Question not found'], 404);
         }
@@ -490,7 +491,12 @@ class QuestionController extends Controller
             ->select('id', 'topic_id', 'question', 'options', 'question_type', 'difficulty_level', 'marks', 'correct_answer')
             ->paginate(10);
 
-        $grouped = $questions->groupBy(function ($q) {
+        // Normalize question payloads before grouping
+        $normalizedCollection = $questions->getCollection()->map(function ($q) {
+            return $this->normalizeQuestionPayload($q);
+        });
+
+        $grouped = $normalizedCollection->groupBy(function ($q) {
             return $q->topic->topic_name;
         });
         return response()->json([
@@ -525,12 +531,16 @@ class QuestionController extends Controller
             ->orderBy('topic_name')
             ->get(['id', 'topic_name', 'grade_subject_id']);
 
-        // 3️⃣ Format output for frontend filtering
+        // 3️⃣ Format output for frontend filtering and normalize question payloads
         $grouped = $topics->map(function ($topic) {
+            $normalizedQuestions = $topic->questions->map(function ($q) {
+                return $this->normalizeQuestionPayload($q);
+            })->values();
+
             return [
                 'topic_id' => $topic->id,
                 'topic_name' => $topic->topic_name,
-                'questions' => $topic->questions,
+                'questions' => $normalizedQuestions,
             ];
         });
 
@@ -555,6 +565,101 @@ class QuestionController extends Controller
         return response()->json([
             'message' => 'Question deleted successfully'
         ], 200);
+    }
+    
+    // Normalize options and correct_answer values that may be JSON-like strings
+    private function decodeJsonIfNeeded($value)
+    {
+        if (!is_string($value)) {
+            return $value;
+        }
+
+        $trimmed = trim($value);
+
+        // Only attempt decode for JSON-looking strings
+        if (($trimmed[0] === '[' && substr($trimmed, -1) === ']') ||
+            ($trimmed[0] === '{' && substr($trimmed, -1) === '}')) {
+            $decoded = json_decode($trimmed, true);
+            if (json_last_error() === JSON_ERROR_NONE) {
+                return $decoded;
+            }
+        }
+
+        return $value;
+    }
+
+    // Normalize a Question Eloquent model for API responses
+    private function normalizeQuestionPayload($question)
+    {
+        // Ensure options is decoded from outer JSON first
+        if (is_string($question->options)) {
+            $outer = json_decode($question->options, true);
+            if (json_last_error() === JSON_ERROR_NONE) {
+                $question->options = $outer;
+            }
+        }
+
+        // Normalize inner option values that might be JSON-like strings
+        if (is_array($question->options)) {
+            $question->options = array_map(function ($opt) {
+                return $this->decodeJsonIfNeeded($opt);
+            }, $question->options);
+        }
+
+        // Normalize correct_answer similarly
+        if (isset($question->correct_answer)) {
+            $question->correct_answer = $this->decodeJsonIfNeeded($question->correct_answer);
+        }
+
+        // Add image URL if exists
+        if (!empty($question->question_image)) {
+            $question->question_image_url = asset('storage/' . $question->question_image);
+        } else {
+            $question->question_image_url = null;
+        }
+
+        // Include metadata with KaTeX content if it exists
+        if (!empty($question->metadata)) {
+            $metadata = is_string($question->metadata)
+                ? json_decode($question->metadata, true)
+                : $question->metadata;
+            if (is_array($metadata)) {
+                $question->katex_content = $metadata['katex_content'] ?? null;
+            }
+        }
+
+        return $question;
+    }
+
+    // Normalize a raw DB row (stdClass) from query builder
+    private function normalizeRawQuestionPayload($row)
+    {
+        // Decode outer JSON for options
+        if (isset($row->options) && is_string($row->options)) {
+            $outer = json_decode($row->options, true);
+            if (json_last_error() === JSON_ERROR_NONE) {
+                $row->options = $outer;
+            }
+        }
+
+        if (isset($row->options) && is_array($row->options)) {
+            $row->options = array_map(function ($opt) {
+                return $this->decodeJsonIfNeeded($opt);
+            }, $row->options);
+        }
+
+        if (isset($row->correct_answer)) {
+            $row->correct_answer = $this->decodeJsonIfNeeded($row->correct_answer);
+        }
+
+        // Derived image URL if question_image exists
+        if (isset($row->question_image) && !empty($row->question_image)) {
+            $row->question_image_url = asset('storage/' . $row->question_image);
+        } else {
+            $row->question_image_url = null;
+        }
+
+        return $row;
     }
     
     // Helper: detect presence of common LaTeX/math markers in a string
