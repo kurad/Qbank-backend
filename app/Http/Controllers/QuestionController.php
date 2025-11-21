@@ -51,8 +51,28 @@ class QuestionController extends Controller
 
             // Handle options/correct_answer encoding for MCQ and matching
             if ($validated['question_type'] === 'mcq') {
-                // Only trim options, no duplicate or similarity checks
-                $validated['options'] = array_map('trim', $validated['options']);
+                // Normalize MCQ options: combine text options[] with optional option_images[] files
+                $textOptions = $validated['options'] ?? [];
+                $imageFiles = $request->file('option_images', []);
+
+                $normalizedOptions = [];
+
+                foreach ($textOptions as $index => $text) {
+                    $text = is_string($text) ? trim($text) : '';
+                    $imagePath = null;
+
+                    if (isset($imageFiles[$index]) && $imageFiles[$index]) {
+                        $imageFile = $imageFiles[$index];
+                        $imagePath = $imageFile->store('options', 'public');
+                    }
+
+                    $normalizedOptions[] = [
+                        'text' => $text !== '' ? $text : null,
+                        'image' => $imagePath,
+                    ];
+                }
+
+                $validated['options'] = $normalizedOptions;
             }
             if ($validated['question_type'] === 'matching') {
                 // Decode if the frontend sent JSON strings
@@ -134,9 +154,64 @@ class QuestionController extends Controller
 
         switch ($request->question_type) {
             case 'mcq':
-                $rules['options'] = 'required|array|min:2';
-                $rules['options.*'] = 'required|string';
-                $rules['correct_answer'] = 'required|string';
+                // Options can be text, image, or both. Ensure each index has at least one.
+                $rules['options'] = [
+                    'required',
+                    'array',
+                    'min:2',
+                    function ($attribute, $value, $fail) use ($request) {
+                        $imageFiles = $request->file('option_images', []);
+
+                        if (!is_array($value) || count($value) < 2) {
+                            return $fail('At least two options are required.');
+                        }
+
+                        foreach ($value as $index => $text) {
+                            $hasText = is_string($text) && trim($text) !== '';
+                            $hasImage = isset($imageFiles[$index]) && $imageFiles[$index];
+
+                            if (!$hasText && !$hasImage) {
+                                return $fail("Each option must have either text or an image.");
+                            }
+                        }
+                    }
+                ];
+
+                // Optional image per option, aligned by index with options[]
+                $rules['option_images'] = 'nullable|array';
+                $rules['option_images.*'] = 'nullable|image|mimes:jpeg,png,jpg,gif,svg|max:4096';
+
+                // Allow correct_answer as either index or option text (backwards compatible)
+                $rules['correct_answer'] = [
+                    'required',
+                    function ($attribute, $value, $fail) use ($request) {
+                        $options = $request->input('options', []);
+
+                        if (!is_array($options) || empty($options)) {
+                            return $fail('Options must be provided before selecting a correct answer.');
+                        }
+
+                        $valueStr = (string) $value;
+
+                        // If numeric, treat as index into options
+                        if (ctype_digit($valueStr)) {
+                            $index = (int) $valueStr;
+                            if (!array_key_exists($index, $options)) {
+                                return $fail('The selected correct answer index is invalid.');
+                            }
+                            return;
+                        }
+
+                        // Otherwise, treat as option text for backward compatibility
+                        $trimmedOptions = array_map(function ($opt) {
+                            return is_string($opt) ? trim($opt) : $opt;
+                        }, $options);
+
+                        if (!in_array($value, $trimmedOptions, true)) {
+                            return $fail('The selected correct answer does not match any option text.');
+                        }
+                    }
+                ];
                 break;
 
             case 'true_false':
@@ -707,7 +782,28 @@ class QuestionController extends Controller
 
         // Handle options/correct_answer encoding for MCQ and matching
         if ($validated['question_type'] === 'mcq') {
-            $validated['options'] = array_map('trim', $validated['options']);
+            // Normalize MCQ options: combine text options[] with optional option_images[] files
+            $textOptions = $validated['options'] ?? [];
+            $imageFiles = $request->file('option_images', []);
+
+            $normalizedOptions = [];
+
+            foreach ($textOptions as $index => $text) {
+                $text = is_string($text) ? trim($text) : '';
+                $imagePath = null;
+
+                if (isset($imageFiles[$index]) && $imageFiles[$index]) {
+                    $imageFile = $imageFiles[$index];
+                    $imagePath = $imageFile->store('options', 'public');
+                }
+
+                $normalizedOptions[] = [
+                    'text' => $text !== '' ? $text : null,
+                    'image' => $imagePath,
+                ];
+            }
+
+            $validated['options'] = $normalizedOptions;
         }
         // Handle image upload (optional, not expected from AI)
         if ($request->hasFile('question_image')) {
