@@ -21,6 +21,207 @@ class QuestionController extends Controller
         $this->groqAI = $groqAI;
     }
     public function store(Request $request)
+{
+    try {
+        Log::info('Creating new question', ['user_id' => auth()->id()]);
+
+        // ---------------------------------------
+        // Detect if parent has sub-questions
+        // ---------------------------------------
+        $hasSub = is_array($request->input('sub_questions')) 
+                  && count($request->input('sub_questions')) > 0;
+
+        if ($hasSub) {
+            // Convert the parent into a "container" question
+            $request->merge([
+                'question_type' => 'parent',
+                'options' => null,
+                'correct_answer' => null,
+                'marks' => null,
+                'multiple_answers' => false,
+                'is_required' => false,
+                'is_math' => false,
+                'is_chemistry' => false,
+            ]);
+        }
+
+        // Validate main question
+        $validated = $this->validateQuestionData($request);
+        $questionText = trim($validated['question']);
+        $validated['question'] = $questionText;
+
+        // Prevent duplicate questions ONLY for non-parent, non-matching
+        if (!$hasSub && $validated['question_type'] !== 'matching') {
+            $existingQuestions = Question::where('topic_id', $validated['topic_id'])
+                ->pluck('question')
+                ->map(fn($q) => trim($q))
+                ->toArray();
+
+            $exactMatch = collect($existingQuestions)->first(function ($existing) use ($questionText) {
+                return strtolower($existing) === strtolower($questionText);
+            });
+
+            if ($exactMatch) {
+                return response()->json([
+                    'error' => 'This exact question already exists in this topic.',
+                    'duplicate_question' => $exactMatch
+                ], 422);
+            }
+        }
+
+        // ---------------------------------------
+        // Handle MCQ normalization (only if not parent)
+        // ---------------------------------------
+        if (!$hasSub && $validated['question_type'] === 'mcq') {
+            $textOptions = $validated['options'] ?? [];
+            $imageFiles = $request->file('option_images', []);
+
+            $normalizedOptions = [];
+
+            foreach ($textOptions as $index => $text) {
+                $text = is_string($text) ? trim($text) : '';
+                $imagePath = null;
+
+                if (isset($imageFiles[$index]) && $imageFiles[$index]) {
+                    $imagePath = $imageFiles[$index]->store('options', 'public');
+                }
+
+                $normalizedOptions[] = [
+                    'text' => $text !== '' ? $text : null,
+                    'image' => $imagePath,
+                ];
+            }
+
+            $validated['options'] = $normalizedOptions;
+        }
+
+        // ---------------------------------------
+        // Matching question processing
+        // ---------------------------------------
+        if (!$hasSub && $validated['question_type'] === 'matching') {
+            if (is_string($validated['options'])) {
+                $validated['options'] = json_decode($validated['options'], true);
+            }
+            if (is_string($validated['correct_answer'])) {
+                $validated['correct_answer'] = json_decode($validated['correct_answer'], true);
+            }
+
+            $validated['options'] = json_encode($validated['options']);
+            $validated['correct_answer'] = json_encode($validated['correct_answer']);
+        }
+
+        // ---------------------------------------
+        // Handle parent-question overrides
+        // ---------------------------------------
+        if ($hasSub) {
+            $validated['options'] = null;
+            $validated['correct_answer'] = null;
+            $validated['marks'] = null;   // parent has no marks
+        }
+
+        // Image upload (works for both parent & normal)
+        if ($request->hasFile('question_image')) {
+            $validated['question_image'] = $this->handleQuestionImage($request);
+        }
+
+        // Auto-assign marks only for normal questions
+        if (!$hasSub && !in_array($validated['question_type'], ['matching','short_answer'], true)) {
+            if (!isset($validated['marks']) || $validated['marks'] === 0) {
+                $validated['marks'] = match ($validated['difficulty_level']) {
+                    'remembering', 'understanding' => 1,
+                    'analyzing' => 2,
+                    'applying', 'evaluating' => 3,
+                    'creating' => 4,
+                    default => 1,
+                };
+            }
+        }
+
+        $validated['created_by'] = auth()->id() ?? 1;
+
+        // ---------------------------------------
+        // Transaction: create parent + sub-questions
+        // ---------------------------------------
+        DB::beginTransaction();
+        try {
+            $question = Question::create($validated);
+
+            // SUB QUESTIONS
+            if ($hasSub) {
+                $baseForSub = [
+                    'topic_id' => $validated['topic_id'],
+                    'difficulty_level' => $validated['difficulty_level'],
+                    'is_math' => $validated['is_math'],
+                    'is_chemistry' => $validated['is_chemistry'],
+                    'multiple_answers' => $validated['multiple_answers'],
+                    'is_required' => $validated['is_required'],
+                    'parent_question_id' => $question->id,
+                ];
+
+                foreach ($request->input('sub_questions') as $subData) {
+                    if (!is_array($subData)) {
+                        continue;
+                    }
+
+                    $subRequest = new Request(array_merge($baseForSub, $subData));
+                    $subValidated = $this->validateQuestionData($subRequest);
+
+                    if ($subValidated['question_type'] === 'matching') {
+                        if (is_string($subValidated['options'])) {
+                            $subValidated['options'] = json_decode($subValidated['options'], true);
+                        }
+                        if (is_string($subValidated['correct_answer'])) {
+                            $subValidated['correct_answer'] = json_decode($subValidated['correct_answer'], true);
+                        }
+
+                        $subValidated['options'] = json_encode($subValidated['options']);
+                        $subValidated['correct_answer'] = json_encode($subValidated['correct_answer']);
+                    }
+
+                    if (!in_array($subValidated['question_type'], ['matching','short_answer'], true)) {
+                        if (!isset($subValidated['marks']) || $subValidated['marks'] === 0) {
+                            $subValidated['marks'] = match ($subValidated['difficulty_level']) {
+                                'remembering','understanding' => 1,
+                                'analyzing' => 2,
+                                'applying','evaluating' => 3,
+                                'creating' => 4,
+                                default => 1,
+                            };
+                        }
+                    }
+
+                    $subValidated['created_by'] = $validated['created_by'];
+
+                    Question::create($subValidated);
+                }
+            }
+
+            DB::commit();
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Question creation failed', ['error' => $e->getMessage()]);
+            throw $e;
+        }
+
+        $question->question_image_url = $question->question_image
+            ? asset('storage/' . $question->question_image)
+            : null;
+
+        return response()->json($question, 201);
+
+    } catch (\Exception $e) {
+        Log::error('Question creation error', [
+            'error' => $e->getMessage(),
+            'trace' => $e->getTraceAsString()
+        ]);
+        return response()->json([
+            'error' => 'Failed to create question',
+            'details' => $e->getMessage()
+        ], 500);
+    }
+}
+
+    public function store1(Request $request)
     {
         try {
             Log::info('Creating new question', ['user_id' => auth()->id()]);
@@ -109,10 +310,66 @@ class QuestionController extends Controller
             // Set creator
             $validated['created_by'] = auth()->id() ?? 1;
 
-            // Create question within transaction
+            // Create question within transaction (and optional sub-questions)
             DB::beginTransaction();
             try {
                 $question = Question::create($validated);
+
+                // Handle nested sub-questions if provided
+                $subQuestionsPayload = $request->input('sub_questions', []);
+
+                if (is_array($subQuestionsPayload) && count($subQuestionsPayload) > 0) {
+                    $baseForSub = [
+                        'topic_id' => $validated['topic_id'],
+                        'difficulty_level' => $validated['difficulty_level'],
+                        'is_math' => $validated['is_math'],
+                        'is_chemistry' => $validated['is_chemistry'],
+                        'multiple_answers' => $validated['multiple_answers'],
+                        'is_required' => $validated['is_required'],
+                        'parent_question_id' => $question->id,
+                    ];
+
+                    foreach ($subQuestionsPayload as $subData) {
+                        if (!is_array($subData)) {
+                            continue;
+                        }
+
+                        $subRequest = new Request(array_merge($baseForSub, $subData));
+                        $subValidated = $this->validateQuestionData($subRequest);
+
+                        // For matching type, mirror main question behaviour for JSON encoding
+                        if ($subValidated['question_type'] === 'matching') {
+                            if (is_string($subValidated['options'])) {
+                                $subValidated['options'] = json_decode($subValidated['options'], true);
+                            }
+                            if (is_string($subValidated['correct_answer'])) {
+                                $subValidated['correct_answer'] = json_decode($subValidated['correct_answer'], true);
+                            }
+
+                            $subValidated['options'] = json_encode($subValidated['options']);
+                            $subValidated['correct_answer'] = json_encode($subValidated['correct_answer']);
+                        }
+
+                        // Auto-assign marks for non-matching and non-short_answer if not provided
+                        if (!in_array($subValidated['question_type'], ['matching', 'short_answer'], true)) {
+                            if (!isset($subValidated['marks']) || $subValidated['marks'] === 0) {
+                                $subValidated['marks'] = match ($subValidated['difficulty_level']) {
+                                    'remembering', 'understanding' => 1,
+                                    'analyzing' => 2,
+                                    'applying', 'evaluating' => 3,
+                                    'creating' => 4,
+                                    default => 1,
+                                };
+                            }
+                        }
+
+                        // Ensure created_by matches parent
+                        $subValidated['created_by'] = $validated['created_by'];
+
+                        Question::create($subValidated);
+                    }
+                }
+
                 DB::commit();
             } catch (\Exception $e) {
                 DB::rollBack();
@@ -138,6 +395,93 @@ class QuestionController extends Controller
     }
 
     private function validateQuestionData(Request $request)
+{
+    $rules = [
+        'topic_id' => 'required|exists:topics,id',
+        'question' => 'required|string',
+        'question_type' => 'required|in:mcq,true_false,short_answer,matching,parent',
+        'marks' => 'numeric|min:0|nullable',
+        'difficulty_level' => 'required|in:remembering,understanding,applying,analyzing,evaluating,creating',
+        'is_math' => 'required|boolean',
+        'is_chemistry' => 'required|boolean',
+        'multiple_answers' => 'required|boolean',
+        'is_required' => 'required|boolean',
+        'explanation' => 'nullable|string',
+        'question_image' => 'nullable|image|mimes:jpeg,png,jpg,gif,svg|max:4096',
+        'parent_question_id' => 'nullable|exists:questions,id',
+    ];
+
+    // ---------------------------------------
+    // Parent question = no options, no answers
+    // ---------------------------------------
+    if ($request->question_type === 'parent') {
+        $rules['options'] = 'nullable';
+        $rules['correct_answer'] = 'nullable';
+        return $request->validate($rules);
+    }
+
+    // ---------------------------------------
+    // Normal question types
+    // ---------------------------------------
+    switch ($request->question_type) {
+        case 'mcq':
+            $rules['options'] = [
+                'required','array','min:2',
+                function ($attribute, $value, $fail) use ($request) {
+                    $imageFiles = $request->file('option_images', []);
+                    foreach ($value as $index => $text) {
+                        $hasText = is_string($text) && trim($text) !== '';
+                        $hasImage = isset($imageFiles[$index]);
+                        if (!$hasText && !$hasImage) {
+                            $fail("Each option must have text or image.");
+                        }
+                    }
+                }
+            ];
+            $rules['option_images'] = 'nullable|array';
+            $rules['option_images.*'] = 'nullable|image|mimes:jpeg,png,jpg,gif,svg|max:4096';
+            $rules['correct_answer'] = 'required';
+            break;
+
+        case 'true_false':
+            $rules['options'] = 'required|array|size:2';
+            $rules['options.*'] = 'required|string|in:true,false,True,False';
+            $rules['correct_answer'] = 'required|in:true,false,True,False';
+            break;
+
+        case 'short_answer':
+            $rules['options'] = 'nullable';
+            $rules['correct_answer'] = 'nullable';
+            break;
+
+        case 'matching':
+            $rules['options'] = [
+                'required',
+                function ($attribute, $value, $fail) {
+                    $data = is_string($value) ? json_decode($value, true) : $value;
+                    if (!isset($data['left']) || !isset($data['right'])) {
+                        $fail('Options must contain left and right arrays.');
+                    }
+                }
+            ];
+            $rules['correct_answer'] = [
+                'required',
+                function ($attribute, $value, $fail) {
+                    $pairs = is_string($value) ? json_decode($value, true) : $value;
+                    foreach ($pairs as $pair) {
+                        if (!isset($pair['left_index']) || !isset($pair['right_index'])) {
+                            $fail('Each pair must have left_index & right_index.');
+                        }
+                    }
+                }
+            ];
+            break;
+    }
+
+    return $request->validate($rules);
+}
+
+    private function validateQuestionData1(Request $request)
     {
         // Base rules
         $rules = [
@@ -152,6 +496,7 @@ class QuestionController extends Controller
             'is_required' => 'required|boolean',
             'explanation' => 'nullable|string',
             'question_image' => 'nullable|image|mimes:jpeg,png,jpg,gif,svg|max:4096',
+            'parent_question_id' => 'nullable|exists:questions,id',
         ];
 
         switch ($request->question_type) {
@@ -292,12 +637,26 @@ class QuestionController extends Controller
     {
         $pageSize = $request->input('page_size', 10); // Default to 10 per page
         $questions = Question::where('topic_id', $topicId)
-            ->with(['topic']) // Eager load relationships
+            ->whereNull('parent_question_id')
+            ->with(['topic', 'subQuestions']) // Eager load relationships and sub-questions
             ->paginate($pageSize);
 
-        // Normalize options/correct_answer for each question in the page
+        // Normalize options/correct_answer for each parent question and its sub-questions
         $normalizedItems = $questions->getCollection()->map(function ($question) {
-            return $this->normalizeQuestionPayload($question);
+            $parent = $this->normalizeQuestionPayload($question);
+
+            $parent->sub_questions = $question->subQuestions
+                ->map(function ($sub) {
+                    return $this->normalizeQuestionPayload($sub);
+                })
+                ->values();
+
+            // If this question has sub-questions, treat it as a container only in the API
+            if ($parent->sub_questions->count() > 0) {
+                $parent->question_type = null;
+            }
+
+            return $parent;
         })->values();
 
         return response()->json([
@@ -314,12 +673,26 @@ class QuestionController extends Controller
     public function byTopicNoPagination($topicId)
     {
         $questions = Question::where('topic_id', $topicId)
-            ->with('topic') // Eager load relationships
+            ->whereNull('parent_question_id')
+            ->with(['topic', 'subQuestions']) // Eager load relationships and sub-questions
             ->get();
 
-        // Normalize options/correct_answer for all questions
+        // Normalize options/correct_answer for all parent questions and their sub-questions
         $normalized = $questions->map(function ($question) {
-            return $this->normalizeQuestionPayload($question);
+            $parent = $this->normalizeQuestionPayload($question);
+
+            $parent->sub_questions = $question->subQuestions
+                ->map(function ($sub) {
+                    return $this->normalizeQuestionPayload($sub);
+                })
+                ->values();
+
+            // If this question has sub-questions, treat it as a container only in the API
+            if ($parent->sub_questions->count() > 0) {
+                $parent->question_type = null;
+            }
+
+            return $parent;
         })->values();
 
         return response()->json([
@@ -355,79 +728,50 @@ class QuestionController extends Controller
     {
         Log::info('Updating question with ID: ' . $id);
 
-        // Find the question or return 404
+        // Find the existing parent question
         $question = Question::findOrFail($id);
 
-        // Base validation rules
-        $rules = [
-            'topic_id' => 'sometimes|required|exists:topics,id',
-            'question' => 'sometimes|required|string',
-            'question_type' => 'sometimes|required|in:mcq,true_false,short_answer,matching',
-            // 'options' will be set per type below
-            'correct_answer' => 'sometimes|required|string',
-            'marks' => 'sometimes|required|numeric|min:0',
-            'difficulty_level' => 'sometimes|required|in:remembering,understanding,applying,analyzing,evaluating,creating',
-            'is_math' => 'sometimes|required|boolean',
-            'is_chemistry' => 'sometimes|required|boolean',
-            'multiple_answers' => 'sometimes|required|boolean',
-            'is_required' => 'sometimes|required|boolean',
-            'explanation' => 'nullable|string',
-            'question_image' => 'nullable|image|mimes:jpeg,png,jpg,gif,svg|max:4096',
-        ];
+        // Detect if this update payload includes sub-questions
+        $hasSub = is_array($request->input('sub_questions'))
+            && count($request->input('sub_questions')) > 0;
 
-        // Type-specific validation
-        switch ($request->question_type) {
-            case 'mcq':
-                $rules['options'] = 'sometimes|required|array|min:2';
-                $rules['correct_answer'] = 'sometimes|required|string';
-                break;
-            case 'true_false':
-                $rules['options'] = 'sometimes|required|array|min:2';
-                $rules['correct_answer'] = 'sometimes|required|in:true,false,True,False';
-                break;
-            case 'short_answer':
-                // No options required for short answer
-                $rules['correct_answer'] = 'nullable|string';
-                break;
-            case 'matching':
-                // No options required for matching
-                $rules['correct_answer'] = [
-                    'sometimes',
-                    'required',
-                    function ($attribute, $value, $fail) {
-                        $decoded = is_string($value) ? json_decode($value, true) : $value;
-                        if (!is_array($decoded)) {
-                            return $fail('The correct_answer must be a valid JSON array.');
-                        }
-                        foreach ($decoded as $pair) {
-                            if (!isset($pair['left_index']) || !isset($pair['right_index'])) {
-                                return $fail('Each matching pair must have left_index and right_index values.');
-                            }
-                            if (!is_int($pair['left_index']) || !is_int($pair['right_index'])) {
-                                return $fail('left_index and right_index must be integers.');
-                            }
-                        }
-                    }
-                ];
-                break;
+        if ($hasSub) {
+            // Force parent container semantics just like in store()
+            $request->merge([
+                'question_type' => 'parent',
+                'options' => null,
+                'correct_answer' => null,
+                'marks' => null,
+            ]);
         }
 
-        // Validate the request
-        $validated = $request->validate($rules);
+        // Validate using the same central rules as store()
+        $validated = $this->validateQuestionData($request);
 
-        // Set marks based on difficulty level if not explicitly provided (same as store)
-        // For matching and short_answer, always respect user-provided marks
-        $effectiveType = $validated['question_type'] ?? $question->question_type;
-        if (!in_array($effectiveType, ['matching', 'short_answer'], true)) {
-            if ((!isset($validated['marks']) || $validated['marks'] === 0) && isset($validated['difficulty_level'])) {
-                $validated['marks'] = match ($validated['difficulty_level']) {
-                    'remembering', 'understanding' => 1,
-                    'analyzing' => 2,
-                    'applying', 'evaluating' => 3,
-                    'creating' => 4,
-                    default => 1,
-                };
+        // Normalize question text if provided
+        if (isset($validated['question'])) {
+            $validated['question'] = trim($validated['question']);
+        }
+
+        // Only auto-assign marks for non-parent, non-matching, non-short_answer
+        if (!$hasSub) {
+            $effectiveType = $validated['question_type'] ?? $question->question_type;
+            if (!in_array($effectiveType, ['matching', 'short_answer', 'parent'], true)) {
+                if ((!isset($validated['marks']) || $validated['marks'] === 0) && isset($validated['difficulty_level'])) {
+                    $validated['marks'] = match ($validated['difficulty_level']) {
+                        'remembering', 'understanding' => 1,
+                        'analyzing' => 2,
+                        'applying', 'evaluating' => 3,
+                        'creating' => 4,
+                        default => 1,
+                    };
+                }
             }
+        } else {
+            // Parent container: no own marks/options/correct_answer
+            $validated['marks'] = null;
+            $validated['options'] = null;
+            $validated['correct_answer'] = null;
         }
 
         // Handle image upload
@@ -437,33 +781,26 @@ class QuestionController extends Controller
             }
             $validated['question_image'] = $request->file('question_image')->store('questions', 'public');
         }
-
-        // Encode arrays as JSON before saving
-        if (isset($validated['question_type']) && $validated['question_type'] === 'matching') {
-            // For matching, mirror the store() behaviour: options is an object {left,right},
-            // correct_answer is an array of {left_index,right_index}.
+        // Matching question JSON encoding for non-parent
+        if (!$hasSub && isset($validated['question_type']) && $validated['question_type'] === 'matching') {
             if (isset($validated['options'])) {
-                if (is_string($validated['options'])) {
-                    $decodedOptions = json_decode($validated['options'], true);
-                    if (json_last_error() === JSON_ERROR_NONE) {
-                        $validated['options'] = json_encode($decodedOptions);
-                    }
-                } else {
-                    $validated['options'] = json_encode($validated['options']);
+                $decodedOptions = is_string($validated['options'])
+                    ? json_decode($validated['options'], true)
+                    : $validated['options'];
+                if (is_array($decodedOptions)) {
+                    $validated['options'] = json_encode($decodedOptions);
                 }
             }
-
             if (isset($validated['correct_answer'])) {
-                if (is_string($validated['correct_answer'])) {
-                    $decodedCa = json_decode($validated['correct_answer'], true);
-                    if (json_last_error() === JSON_ERROR_NONE) {
-                        $validated['correct_answer'] = json_encode($decodedCa);
-                    }
-                } else {
-                    $validated['correct_answer'] = json_encode($validated['correct_answer']);
+                $decodedCa = is_string($validated['correct_answer'])
+                    ? json_decode($validated['correct_answer'], true)
+                    : $validated['correct_answer'];
+                if (is_array($decodedCa)) {
+                    $validated['correct_answer'] = json_encode($decodedCa);
                 }
             }
-        } else {
+        } elseif (!$hasSub) {
+            // Non-matching, non-parent: encode simple arrays if present
             if (isset($validated['options']) && is_array($validated['options'])) {
                 $validated['options'] = json_encode($validated['options']);
             }
@@ -471,11 +808,90 @@ class QuestionController extends Controller
                 $validated['correct_answer'] = json_encode($validated['correct_answer']);
             }
         }
+        DB::beginTransaction();
+        try {
+            // Update parent question first
+            $question->update($validated);
 
-        // Update the question
-        $question->update($validated);
+            // If there are sub-questions in the payload, upsert them
+            if ($hasSub) {
+                $subQuestionsPayload = $request->input('sub_questions', []);
 
-        // Reload and decode JSON for response
+                $baseForSub = [
+                    'topic_id' => $validated['topic_id'] ?? $question->topic_id,
+                    'difficulty_level' => $validated['difficulty_level'] ?? $question->difficulty_level,
+                    'is_math' => $validated['is_math'] ?? $question->is_math,
+                    'is_chemistry' => $validated['is_chemistry'] ?? $question->is_chemistry,
+                    'multiple_answers' => $validated['multiple_answers'] ?? $question->multiple_answers,
+                    'is_required' => $validated['is_required'] ?? $question->is_required,
+                    'parent_question_id' => $question->id,
+                ];
+
+                foreach ($subQuestionsPayload as $subData) {
+                    if (!is_array($subData)) {
+                        continue;
+                    }
+
+                    // Allow subData to include an id for existing sub-questions
+                    $subId = $subData['id'] ?? null;
+                    unset($subData['id']);
+
+                    $subRequest = new Request(array_merge($baseForSub, $subData));
+                    $subValidated = $this->validateQuestionData($subRequest);
+
+                    // Matching logic same as in store()
+                    if ($subValidated['question_type'] === 'matching') {
+                        if (is_string($subValidated['options'])) {
+                            $subValidated['options'] = json_decode($subValidated['options'], true);
+                        }
+                        if (is_string($subValidated['correct_answer'])) {
+                            $subValidated['correct_answer'] = json_decode($subValidated['correct_answer'], true);
+                        }
+
+                        $subValidated['options'] = json_encode($subValidated['options']);
+                        $subValidated['correct_answer'] = json_encode($subValidated['correct_answer']);
+                    }
+
+                    // Auto-assign marks for non-matching and non-short_answer
+                    if (!in_array($subValidated['question_type'], ['matching', 'short_answer'], true)) {
+                        if (!isset($subValidated['marks']) || $subValidated['marks'] === 0) {
+                            $subValidated['marks'] = match ($subValidated['difficulty_level']) {
+                                'remembering', 'understanding' => 1,
+                                'analyzing' => 2,
+                                'applying', 'evaluating' => 3,
+                                'creating' => 4,
+                                default => 1,
+                            };
+                        }
+                    }
+
+                    $subValidated['created_by'] = $question->created_by;
+
+                    if ($subId) {
+                        // Update existing sub-question
+                        $existingSub = Question::where('parent_question_id', $question->id)
+                            ->where('id', $subId)
+                            ->first();
+
+                        if ($existingSub) {
+                            $existingSub->update($subValidated);
+                            continue;
+                        }
+                    }
+
+                    // Create new sub-question
+                    Question::create($subValidated);
+                }
+            }
+
+            DB::commit();
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Question update failed', ['error' => $e->getMessage()]);
+            throw $e;
+        }
+
+        // Reload and normalize for response
         $question->refresh();
         $question->options = is_string($question->options) ? json_decode($question->options, true) : $question->options;
         $question->correct_answer = isset($question->correct_answer)
@@ -507,19 +923,40 @@ class QuestionController extends Controller
     public function myQuestions(Request $request)
     {
         $userId = auth()->id();
-        $questions = Question::with(['topic.gradeSubject.gradeLevel', 'topic.gradeSubject.subject'])
+
+        // Only load parent questions created by the user, with their sub-questions
+        $questions = Question::with([
+                'topic.gradeSubject.gradeLevel',
+                'topic.gradeSubject.subject',
+                'subQuestions'
+            ])
             ->where('created_by', $userId)
+            ->whereNull('parent_question_id')
             ->select('id', 'topic_id', 'question', 'options', 'question_type', 'difficulty_level', 'marks', 'correct_answer')
             ->paginate(10);
 
-        // Normalize question payloads before grouping
-        $normalizedCollection = $questions->getCollection()->map(function ($q) {
-            return $this->normalizeQuestionPayload($q);
+        // Normalize parent questions and include nested sub-questions
+        $normalizedCollection = $questions->getCollection()->map(function ($question) {
+            $parent = $this->normalizeQuestionPayload($question);
+
+            $parent->sub_questions = $question->subQuestions
+                ->map(function ($sub) {
+                    return $this->normalizeQuestionPayload($sub);
+                })
+                ->values();
+
+            // If this question has sub-questions, treat it as a container only in the API
+            if ($parent->sub_questions->count() > 0) {
+                $parent->question_type = null;
+            }
+
+            return $parent;
         });
 
         $grouped = $normalizedCollection->groupBy(function ($q) {
             return $q->topic->topic_name;
         });
+
         return response()->json([
             'data' => $grouped,
             'pagination' => [
@@ -583,7 +1020,8 @@ class QuestionController extends Controller
         $createdBy = $request->input('created_by');
         $pageSize = $request->input('page_size', 10);
 
-        $query = Question::with(['topic.gradeSubject.gradeLevel', 'topic.gradeSubject.subject']);
+        $query = Question::with(['topic.gradeSubject.gradeLevel', 'topic.gradeSubject.subject', 'subQuestions'])
+            ->whereNull('parent_question_id');
 
         if (!empty($search)) {
             $query->where('question', 'like', "%{$search}%");
@@ -619,8 +1057,22 @@ class QuestionController extends Controller
 
         $questions = $query->orderByDesc('id')->paginate($pageSize);
 
+        // Normalize parent questions and include nested sub-questions
         $normalizedItems = $questions->getCollection()->map(function ($question) {
-            return $this->normalizeQuestionPayload($question);
+            $parent = $this->normalizeQuestionPayload($question);
+
+            $parent->sub_questions = $question->subQuestions
+                ->map(function ($sub) {
+                    return $this->normalizeQuestionPayload($sub);
+                })
+                ->values();
+
+            // If this question has sub-questions, treat it as a container only in the API
+            if ($parent->sub_questions->count() > 0) {
+                $parent->question_type = null;
+            }
+
+            return $parent;
         })->values();
 
         return response()->json([

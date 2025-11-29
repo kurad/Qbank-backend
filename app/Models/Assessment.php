@@ -62,4 +62,8 @@ class Assessment extends Model
     {
         return $this->hasMany(QuestionUsage::class);
     }
+    public function sections()
+    {
+        return $this->hasMany(AssessmentSection::class)->orderBy('ordering');
+    }
 }

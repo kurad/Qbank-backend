@@ -30,6 +30,7 @@ class Question extends Model
         'explanation',
         'question_image',
         'created_by',
+        'parent_question_id',
     ];
 
     protected $casts = [
@@ -88,5 +89,13 @@ public function studentAnswers()
 public function usages()
 {
     return $this->hasMany(QuestionUsage::class);
+}
+public function parent()
+{
+    return $this->belongsTo(Question::class, 'parent_question_id');
+}
+public function subQuestions()
+{
+    return $this->hasMany(Question::class, 'parent_question_id');
 }
 }

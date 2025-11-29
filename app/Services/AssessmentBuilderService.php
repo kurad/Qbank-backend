@@ -25,8 +25,24 @@ class AssessmentBuilderService
      */
     public function createWithTopicsAndQuestions(array $assessmentData, array $topicIds, array $questionIds, int $creatorId)
     {
+        // Expand any selected parent questions into their sub-questions
+        $expandedQuestionIds = Question::whereIn('id', $questionIds)
+            ->with('subQuestions')
+            ->get()
+            ->flatMap(function ($q) {
+                // If this question has sub-questions, use their IDs instead of the parent ID
+                if ($q->subQuestions && $q->subQuestions->count() > 0) {
+                    return $q->subQuestions->pluck('id');
+                }
+
+                return [$q->id];
+            })
+            ->unique()
+            ->values()
+            ->all();
+
         // ---- STEP 1: Validate usage BEFORE creating an assessment ----
-        $usage = $this->countQuestionUsesByCreator($creatorId, $questionIds);
+        $usage = $this->countQuestionUsesByCreator($creatorId, $expandedQuestionIds);
 
         // Hard-stop if any question has been used 3 or more times
         $blocked = array_keys(array_filter($usage, fn($count) => $count >= 3));
@@ -47,7 +63,7 @@ class AssessmentBuilderService
         }
 
         // ---- STEP 2: Create assessment + attach data atomically ----
-        $result = DB::transaction(function () use ($assessmentData, $topicIds, $questionIds, $creatorId) {
+        $result = DB::transaction(function () use ($assessmentData, $topicIds, $expandedQuestionIds, $creatorId) {
 
             $now = now();
 
@@ -55,7 +71,7 @@ class AssessmentBuilderService
             $assessment = Assessment::create([
                 ...$assessmentData,
                 'creator_id' => $creatorId,
-                'question_count' => count($questionIds),
+                'question_count' => count($expandedQuestionIds),
             ]);
 
             // Attach topics
@@ -64,7 +80,7 @@ class AssessmentBuilderService
             }
 
             // Attach question pivots + log usage
-            foreach ($questionIds as $index => $qid) {
+            foreach ($expandedQuestionIds as $index => $qid) {
 
                 // Create entry in assessment_questions pivot
                 $assessment->assessmentQuestions()->create([

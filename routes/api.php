@@ -10,6 +10,7 @@ use App\Http\Controllers\SchoolController;
 use App\Http\Controllers\SubjectController;
 use App\Http\Controllers\QuestionController;
 use App\Http\Controllers\AssessmentController;
+use App\Http\Controllers\AssessmentSectionController;
 use App\Http\Controllers\GradeLevelController;
 use App\Http\Controllers\StudentAnswerController;
 use App\Http\Controllers\AssessmentBuilderController;
@@ -121,6 +122,12 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/refresh-token', [AuthController::class, 'refreshToken']);
     // Delete an assessment
     Route::delete('/assessments/{id}', [AssessmentController::class, 'destroy']);
+
+    // Section-based assessments
+    Route::get('/assessments/{id}/sections', [AssessmentSectionController::class, 'index']);
+    Route::post('/assessments/{id}/sections', [AssessmentSectionController::class, 'store']);
+    Route::put('/assessment-sections/{id}', [AssessmentSectionController::class, 'update']);
+    Route::post('/assessment-sections/{id}/questions', [AssessmentSectionController::class, 'addSectionQuestions']);
 
 
 

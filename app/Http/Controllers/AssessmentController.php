@@ -139,7 +139,13 @@ class AssessmentController extends Controller
     // Get assessment details (questions) for answering
     public function show($id)
     {
-    $assessment = Assessment::with(['questions.question', 'topics.gradeSubject.subject', 'topics.gradeSubject.gradeLevel', 'creator.school'])->findOrFail($id);
+        // Eager load each question and its sub-questions
+        $assessment = Assessment::with([
+            'questions.question.subQuestions',
+            'topics.gradeSubject.subject',
+            'topics.gradeSubject.gradeLevel',
+            'creator.school'
+        ])->findOrFail($id);
 
         // Get all subject/grade level pairs for the assessment's topics
         $subjectGradeLevels = $assessment->topics->map(function ($topic) {
@@ -206,9 +212,10 @@ class AssessmentController extends Controller
             return response()->json(['message' => 'Topic not found.', 404]);
         }
 
-
-        // Total questions available for the topic
-        $totalQuestions = Question::where('topic_id', $topic->id)->count();
+        // Total questions available for the topic (leaf questions only: no sub-questions)
+        $totalQuestions = Question::where('topic_id', $topic->id)
+            ->whereDoesntHave('subQuestions')
+            ->count();
 
         //Business rule: if <=10, force mode = all
 
@@ -216,8 +223,9 @@ class AssessmentController extends Controller
             $validated['mode'] = 'all';
             $validated['limit'] = null;
         }
-        // Build base query
-        $questionQuery = Question::where('topic_id', $topic->id);
+        // Build base query (leaf questions only)
+        $questionQuery = Question::where('topic_id', $topic->id)
+            ->whereDoesntHave('subQuestions');
 
 
         if ($validated['mode'] === 'unpracticed') {
@@ -236,8 +244,6 @@ class AssessmentController extends Controller
         if ($questions->isEmpty()) {
             return response()->json(['message' => 'No questions found for this topic.'], 404);
         }
-
-
 
         // Create the title suffix
         $titleSuffix = match ($validated['mode']) {
@@ -293,6 +299,7 @@ class AssessmentController extends Controller
             'due_date' => 'nullable|date|after_or_equal:start_time',
             'is_timed' => 'boolean',
             'time_limit' => 'nullable|integer|min:1',
+            'use_default_sections' => 'sometimes|boolean',
 
         ]);
         // Adjust field based on delivery mode
@@ -323,12 +330,27 @@ class AssessmentController extends Controller
         // Attach the provided topic via pivot
         $assessment->topics()->attach($validated['topic_id']);
 
+        // Optionally create default sections for "standard" assessments
+        if (!empty($validated['use_default_sections'])) {
+            $defaultSections = AssessmentDefaultSection::orderBy('ordering')->get();
+
+            foreach ($defaultSections as $default) {
+                AssessmentSection::create([
+                    'assessment_id' => $assessment->id,
+                    'title' => $default->title,
+                    'instruction' => $default->default_instruction,
+                    'ordering' => $default->ordering,
+                ]);
+            }
+        }
+
 
         return response()->json([
             'message' => 'Assessment created successfully',
             'assessment' => $assessment
         ], 201);
     }
+
     // Add questions to an assessment
     public function addQuestions(Request $request)
     {
@@ -564,9 +586,12 @@ class AssessmentController extends Controller
         $studentId = auth()->id(); // Assume authenticated student
 
         if ($mode === 'all') {
-            $questions = Question::where('topic_id', $topicId)->get();
+            $questions = Question::where('topic_id', $topicId)
+                ->whereDoesntHave('subQuestions')
+                ->get();
         } elseif ($mode === 'custom') {
             $questions = Question::where('topic_id', $topicId)
+                ->whereDoesntHave('subQuestions')
                 ->inRandomOrder()
                 ->take($request->limit)
                 ->get();
@@ -576,6 +601,7 @@ class AssessmentController extends Controller
                 ->pluck('question_id');
 
             $questions = Question::where('topic_id', $topicId)
+                ->whereDoesntHave('subQuestions')
                 ->whereNotIn('id', $practicedQuestionIds)
                 ->inRandomOrder()
                 ->take($request->limit)
