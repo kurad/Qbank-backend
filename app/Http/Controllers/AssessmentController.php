@@ -27,7 +27,7 @@ class AssessmentController extends Controller
     {
         $user = Auth::user();
         $assessments = Assessment::where('creator_id', $user->id)
-            ->with(['questions.question', 'subject'])
+            ->with(['questions.question', 'topics.gradeSubject.subject', 'topics.gradeSubject.gradeLevel'])
             ->latest()
             ->get();
 
@@ -36,6 +36,30 @@ class AssessmentController extends Controller
             $topicIds = $assessment->questions->pluck('question.topic_id')->unique()->filter();
             $topics = Topic::whereIn('id', $topicIds)->get();
             $assessment->topics = $topics;
+            //Compute subject/grade-level pairs from topics
+
+            $subjectGradeLevels = $assessment->topics->map(function ($topic) {
+        $gradeSubject = $topic->gradeSubject;
+        $subjectName = $gradeSubject?->subject?->name;
+        $gradeLevelName = $gradeSubject?->gradeLevel?->grade_name;
+
+        if ($subjectName && $gradeLevelName) {
+            return [
+                'subject' => $subjectName,
+                'grade_level' => $gradeLevelName,
+            ];
+        }
+        return null;
+    })->filter()->unique()->values();
+
+    // Optional: primary subject/grade for quick display
+    $assessment->primary_subject = $subjectGradeLevels->first()['subject'] ?? null;
+    $assessment->primary_grade_level = $subjectGradeLevels->first()['grade_level'] ?? null;
+
+    // All pairs if you need them on the frontend
+    $assessment->subject_grade_levels = $subjectGradeLevels;
+
+
             return $assessment;
         });
         return response()->json(['created_assessments' => $createdAssessments]);

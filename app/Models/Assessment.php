@@ -66,4 +66,8 @@ class Assessment extends Model
     {
         return $this->hasMany(AssessmentSection::class)->orderBy('ordering');
     }
+    public function gradeLevel()
+    {
+        return $this->belongsTo(GradeLevel::class);
+    }
 }
