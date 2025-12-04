@@ -114,6 +114,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/assessments/{id}/sections', [AssessmentSectionController::class, 'index']);
     Route::post('/assessments/{id}/sections', [AssessmentSectionController::class, 'store']);
     Route::put('/assessment-sections/{id}', [AssessmentSectionController::class, 'update']);
+    Route::delete('/assessment-sections/{id}', [AssessmentSectionController::class, 'destroy']);
     Route::post('/assessment-sections/{id}/questions', [AssessmentSectionController::class, 'addSectionQuestions']);
 
 

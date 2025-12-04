@@ -75,6 +75,32 @@ class AssessmentSectionController extends Controller
         return response()->json($section);
     }
 
+    public function destroy($id)
+    {
+        $section    = AssessmentSection::findOrFail($id);
+        $assessment = $section->assessment ?? Assessment::find($section->assessment_id);
+
+        $section->delete();
+
+        if ($assessment) {
+            $totalQuestions = AssessmentSectionQuestion::whereIn(
+                'assessment_section_id',
+                function ($q) use ($assessment) {
+                    $q->select('id')
+                      ->from('assessment_sections')
+                      ->where('assessment_id', $assessment->id);
+                }
+            )->count();
+
+            $assessment->question_count = $totalQuestions;
+            $assessment->save();
+        }
+
+        return response()->json([
+            'message' => 'Section deleted successfully',
+        ]);
+    }
+
     public function addSectionQuestions(Request $request, $id)
     {
         $validated = $request->validate([
