@@ -15,21 +15,7 @@ use App\Http\Controllers\GradeLevelController;
 use App\Http\Controllers\StudentAnswerController;
 use App\Http\Controllers\AssessmentBuilderController;
 
-/*
-|--------------------------------------------------------------------------
-| API Routes
-|--------------------------------------------------------------------------
-|
-| Here is where you can register API routes for your application. These
-| routes are loaded by the RouteServiceProvider and all of them will
-| be assigned to the "api" middleware group. Make something great!
-|
-*/
 
-
-
-// Public route for school creation
-// Public routes for school creation and update
 Route::post('/schools', [SchoolController::class, 'store']);
 Route::get('/schools', [SchoolController::class, 'index']);
 Route::match(['put', 'patch'], '/schools/{id}', [SchoolController::class, 'update']);
@@ -40,6 +26,8 @@ Route::post('/logout', [AuthController::class, 'logout']);
 Route::get('/users', [AuthController::class, 'index']);
 Route::put('/users/{id}', [AuthController::class, 'updateUser']);
 Route::delete('/users/{id}', [AuthController::class, 'deleteUser']);
+Route::post('/refresh-token', [AuthController::class, 'refreshToken']);
+
 
 
 Route::get('/subjects', [SubjectController::class, 'index']);
@@ -119,7 +107,6 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/student/assigned-assessments', [AssessmentController::class, 'assignedAssessments']);
     Route::get('/student/statistics', [HomeController::class, 'statistics']);
 
-    Route::post('/refresh-token', [AuthController::class, 'refreshToken']);
     // Delete an assessment
     Route::delete('/assessments/{id}', [AssessmentController::class, 'destroy']);
 
@@ -159,6 +146,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/groups/{id}/students', [GroupController::class, 'addStudents']); // Add students to group
     Route::delete('/groups/{id}/students/{studentId}', [GroupController::class, 'removeStudent']); // Remove one student
     Route::post('/assessments/{id}/assign-group', [AssessmentController::class, 'assignGroup']);
-    Route::post('/groups/join', [GroupController::class, 'joinClassByCode'])->middleware('auth:sanctum');
+    Route::post('/groups/join', [GroupController::class, 'joinClassByCode']);
+    Route::get('/my-groups', [GroupController::class, 'myGroups']);
 
 });

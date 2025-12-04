@@ -8,6 +8,7 @@ use Illuminate\Support\Str;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
+use Laravel\Sanctum\PersonalAccessToken;
 use Laravel\Socialite\Facades\Socialite;
 
 class AuthController extends Controller
@@ -15,7 +16,7 @@ class AuthController extends Controller
     // Admin: Update user
     public function updateUser(Request $request, $id)
     {
-      
+
         $user = User::findOrFail($id);
         $validated = $request->validate([
             'name' => 'sometimes|string|max:255',
@@ -102,10 +103,10 @@ class AuthController extends Controller
 
         // Create a token with expiry time of 1 hour
         $token = $user->createToken(
-            'auth_token', 
+            'auth_token',
             ['*'], //abilities
             now()->addMinutes(60) //expiry time
-            )->plainTextToken;
+        )->plainTextToken;
 
 
         return response()->json([
@@ -124,8 +125,8 @@ class AuthController extends Controller
         try {
             $googleUser = Socialite::driver('google')->stateless()->user();
             $user = User::where('email', $googleUser->email)
-                                ->orWhere('google_id', $googleUser->id)
-                                ->first();
+                ->orWhere('google_id', $googleUser->id)
+                ->first();
             if (!$user) {
                 $user = User::create([
                     'name' => $googleUser->name,
@@ -136,23 +137,23 @@ class AuthController extends Controller
                     'google_id' => $googleUser->id,
                 ]);
                 //$user->profile()->create();
-            }elseif(!$user->google_id) {
+            } elseif (!$user->google_id) {
                 $user->update(['google_id' => $googleUser->id]);
             }
             // Auth::login($user);
             $token = $user->createToken('auth_token')->plainTextToken;
-           // $user->load('profile');
+            // $user->load('profile');
             return redirect(env('FRONTEND_URL') . '/login/callback?' . http_build_query([
                 'token' => $token,
                 'user' => $user,
                 'user_role' => $user->role,
             ]));
-        }catch(\Exception $e) {
+        } catch (\Exception $e) {
             return redirect(env('FRONTEND_URL') . '/login?error=' . urlencode($e->getMessage()));
         }
-       
     }
-    public function getStudents(){
+    public function getStudents()
+    {
         $gradeLevelId = request('grade_level_id');
         $query = User::where('role', 'student');
         if ($gradeLevelId) {
@@ -168,29 +169,50 @@ class AuthController extends Controller
     }
 
     public function refreshToken(Request $request)
-{
-    $user = $request->user();
+    {
+        // 1. Check for bearer token in authorization header
+        $plainToken = $request->bearerToken();
+        if(!$plainToken){
+            return response()->json([
+                'message' => 'Authentication token is missing.'
+            ], 401);
+        }
 
-    if (!$user) {
-        return response()->json(['message' => 'Unauthenticated'], 401);
+        // 2. Fetch Token record (Even if expired)
+        $token = PersonalAccessToken::findToken($plainToken);
+        if(!$token){
+            return response()->json([
+                'message' => 'Invalid or Unknown token.'
+            ], 401);
+        }
+         
+        $user = $token->tokenable;
+
+        // 3. Check Refresh Grace period (Optional but recommended)
+        // Example: Allow refreshing up to 30 minutes after expiry
+        $gracePeriodMinutes = 30;
+        if($token->expires_at && $token->expires_at->copy()->addMinutes($gracePeriodMinutes)->isPast())
+        {
+            return response()->json([
+                'message' => 'Token refresh period has expired. Please log in again.'
+            ], 401);
+        }
+        
+        // 4. Revoke old token
+        $token->delete();
+
+        // 5. Issue new token
+        $ttlMinutes = 60; //Token validity in minutes
+
+        $newToken = $user->createToken('auth_token', ['*'], now()->addMinutes($ttlMinutes))->plainTextToken;
+
+        // 6. Return new token
+        return response()->json([
+            'message' =>'Token refreshed successfully.',
+            'token' => $newToken,
+            'user' =>$user,
+            'user_role' =>$user->role,
+            'expires_at' => now()->addMinutes($ttlMinutes)->toDateTimeString(),
+        ]);
     }
-
-    // Optional but safer: delete only the current token being used, not all
-    $currentAccessToken = $request->user()->currentAccessToken();
-    if ($currentAccessToken) {
-        $currentAccessToken->delete();
-    }
-
-    // Create a new token (you can also add expiry or abilities here)
-    $newToken = $user->createToken('auth_token', ['*'], now()->addMinutes(60))->plainTextToken;
-
-    return response()->json([
-        'token' => $newToken,
-        'user' => $user,
-        'user_role' => $user->role,
-        'expires_at' => now()->addMinutes(60)->toDateTimeString(),
-    ]);
-}
-
-
 }
