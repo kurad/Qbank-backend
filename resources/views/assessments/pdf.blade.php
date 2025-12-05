@@ -333,6 +333,12 @@
                                 <span>{!! nl2br(e($question['text'])) !!}</span>
                             </div>
 
+                            @if(!empty($question['image']) && file_exists($question['image']))
+                                <div class="question-image">
+                                    <img src="{{ $question['image'] }}" alt="Question Image" style="max-width: 100%; max-height: 200px; display: block; margin: 10px 0; border: 1px solid #ddd;" />
+                                </div>
+                            @endif
+
                             @foreach($question['sub_questions'] as $sub)
                                 <div style="margin-left:15px; margin-top:4px;">
                                     <strong>({{ $sub['label'] }})</strong>
@@ -439,6 +445,12 @@
                             <span class="question-number">Q{{ $question['number'] }}.</span>
                             <span>{!! nl2br(e($question['text'])) !!}</span>
                         </div>
+
+                        @if(!empty($question['image']) && file_exists($question['image']))
+                            <div class="question-image">
+                                <img src="{{ $question['image'] }}" alt="Question Image" style="max-width: 100%; max-height: 200px; display: block; margin: 10px 0; border: 1px solid #ddd;" />
+                            </div>
+                        @endif
 
                         @foreach($question['sub_questions'] as $sub)
                             <div style="margin-left:15px; margin-top:4px;">

@@ -474,11 +474,17 @@ class PaperGeneratorController extends Controller
                         continue;
                     }
 
-                    if (in_array($question->id, $parentIds, true) && is_null($question->parent_question_id)) {
-                        continue;
-                    }
-
                     $parentId = $question->parent_question_id;
+
+                    // Resolve question image path (if any)
+                    $imagePath = null;
+                    if ($question->question_image) {
+                        $relativePath = ltrim($question->question_image, '/');
+                        $imagePath = storage_path('app/public/' . $relativePath);
+                        if (!file_exists($imagePath)) {
+                            $imagePath = null;
+                        }
+                    }
 
                     $renderedText = $question->question;
                     if ($question->is_math) {
@@ -571,6 +577,7 @@ class PaperGeneratorController extends Controller
                             'text' => $renderedText,
                             'type' => $question->question_type,
                             'marks' => $question->marks ?? 1,
+                            'image' => $imagePath,
                             'options' => $options,
                         ];
 
@@ -585,6 +592,7 @@ class PaperGeneratorController extends Controller
                                 'number' => $questionNumber++,
                                 'text' => $parent ? $parent->question : $question->question,
                                 'type' => 'parent_group',
+                                'image' => $imagePath,
                                 'sub_questions' => [],
                             ];
                         }
@@ -689,6 +697,16 @@ class PaperGeneratorController extends Controller
 
                 $parentId = $question->parent_question_id;
 
+                // Resolve image path for non-section questions
+                $imagePath = null;
+                if ($question->question_image) {
+                    $relativePath = ltrim($question->question_image, '/');
+                    $imagePath = storage_path('app/public/' . $relativePath);
+                    if (!file_exists($imagePath)) {
+                        $imagePath = null;
+                    }
+                }
+
                 $renderedText = $question->question;
                 if ($question->is_math) {
                     $renderedText = preg_replace_callback('/\\((.*?)\\)/', function ($matches) {
@@ -780,6 +798,7 @@ class PaperGeneratorController extends Controller
                         'text' => $renderedText,
                         'type' => $question->question_type,
                         'marks' => $question->marks ?? 1,
+                        'image' => $imagePath,
                         'options' => $options,
                     ];
 
@@ -794,6 +813,7 @@ class PaperGeneratorController extends Controller
                             'number' => $questionNumber++,
                             'text' => $parent ? $parent->question : $question->question,
                             'type' => 'parent_group',
+                            'image' => $imagePath,
                             'sub_questions' => [],
                         ];
                     }
