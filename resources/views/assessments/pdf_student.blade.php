@@ -44,7 +44,6 @@
         <div class="assessment-title">{{ $title }}</div>
         <div class="assessment-meta">
             <div>Subject: {{ $subject ?? 'General' }}</div>
-            <div>Date: {{ $created_at ?? date('F j, Y') }}</div>
         </div>
     </div>
 

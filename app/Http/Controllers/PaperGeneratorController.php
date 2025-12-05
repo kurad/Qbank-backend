@@ -455,6 +455,7 @@ class PaperGeneratorController extends Controller
 
         $questionNumber = 1;
 
+        // With sections
         if ($assessment->sections && $assessment->sections->count() > 0) {
             foreach ($assessment->sections->sortBy('ordering') as $section) {
                 $sectionBlock = [
@@ -486,6 +487,7 @@ class PaperGeneratorController extends Controller
                         }
                     }
 
+                    // Render math/chemistry in stem
                     $renderedText = $question->question;
                     if ($question->is_math) {
                         $renderedText = preg_replace_callback('/\\((.*?)\\)/', function ($matches) {
@@ -498,90 +500,104 @@ class PaperGeneratorController extends Controller
                     }
 
                     if (empty($parentId)) {
-                        $options = [];
-                        if (in_array($question->question_type, ['mcq', 'true_false'])) {
-                            if ($question->question_type === 'true_false') {
-                                $options = [
-                                    ['text' => 'True'],
-                                    ['text' => 'False'],
-                                ];
-                            } else {
-                                $rawOptions = $question->options;
-                                if (is_string($rawOptions)) {
-                                    $decodedOptions = json_decode($rawOptions, true) ?? [];
-                                } elseif (is_array($rawOptions)) {
-                                    $decodedOptions = $rawOptions;
+                        // Parent has children -> create parent_group at this position
+                        if (in_array($question->id, $parentIds, true)) {
+                            $groups[$question->id] = count($questionsOut);
+
+                            $questionsOut[] = [
+                                'number' => $questionNumber++,
+                                'text' => $renderedText,
+                                'type' => 'parent_group',
+                                'image' => $imagePath,
+                                'sub_questions' => [],
+                            ];
+                        } else {
+                            // Standalone question (no children)
+                            $options = [];
+                            if (in_array($question->question_type, ['mcq', 'true_false'])) {
+                                if ($question->question_type === 'true_false') {
+                                    $options = [
+                                        ['text' => 'True'],
+                                        ['text' => 'False'],
+                                    ];
                                 } else {
-                                    $decodedOptions = [];
-                                }
-
-                                foreach ($decodedOptions as $opt) {
-                                    $baseText = is_array($opt) ? ($opt['text'] ?? '') : $opt;
-
-                                    $optText = $baseText;
-                                    if ($question->is_math) {
-                                        $optText = preg_replace_callback('/\\((.*?)\\)/', function ($m) {
-                                            return $this->renderKatex($m[1]);
-                                        }, $baseText);
-                                    } elseif ($question->is_chemistry) {
-                                        $optText = preg_replace_callback('/\\[(.*?)\\]/', function ($m) {
-                                            return $this->renderChemistry($m[1]);
-                                        }, $baseText);
+                                    $rawOptions = $question->options;
+                                    if (is_string($rawOptions)) {
+                                        $decodedOptions = json_decode($rawOptions, true) ?? [];
+                                    } elseif (is_array($rawOptions)) {
+                                        $decodedOptions = $rawOptions;
+                                    } else {
+                                        $decodedOptions = [];
                                     }
-                                    $options[] = ['text' => $optText];
-                                }
-                            }
-                        }
 
-                        if ($question->question_type === 'matching') {
-                            $rawOptions = $question->options ?? [];
-                            if (is_string($rawOptions)) {
-                                $rawOptions = json_decode($rawOptions, true) ?? [];
-                            }
+                                    foreach ($decodedOptions as $opt) {
+                                        $baseText = is_array($opt) ? ($opt['text'] ?? '') : $opt;
 
-                            $pairs = [];
-                            if (is_array($rawOptions)) {
-                                if (array_key_exists('left', $rawOptions) && array_key_exists('right', $rawOptions)) {
-                                    $lefts  = is_array($rawOptions['left']) ? $rawOptions['left'] : [];
-                                    $rights = is_array($rawOptions['right']) ? $rawOptions['right'] : [];
-                                    $max = max(count($lefts), count($rights));
-
-                                    for ($i = 0; $i < $max; $i++) {
-                                        $pairs[] = [
-                                            'left'  => $lefts[$i]  ?? '',
-                                            'right' => $rights[$i] ?? '',
-                                        ];
-                                    }
-                                } else {
-                                    foreach ($rawOptions as $pair) {
-                                        if (is_array($pair)) {
-                                            $left  = $pair['left']  ?? (array_values($pair)[0] ?? '');
-                                            $right = $pair['right'] ?? (array_values($pair)[1] ?? '');
-                                        } else {
-                                            $left  = (string) $pair;
-                                            $right = '';
+                                        $optText = $baseText;
+                                        if ($question->is_math) {
+                                            $optText = preg_replace_callback('/\\((.*?)\\)/', function ($m) {
+                                                return $this->renderKatex($m[1]);
+                                            }, $baseText);
+                                        } elseif ($question->is_chemistry) {
+                                            $optText = preg_replace_callback('/\\[(.*?)\\]/', function ($m) {
+                                                return $this->renderChemistry($m[1]);
+                                            }, $baseText);
                                         }
-                                        $pairs[] = [
-                                            'left'  => $left,
-                                            'right' => $right,
-                                        ];
+                                        $options[] = ['text' => $optText];
                                     }
                                 }
                             }
 
-                            $options = $pairs;
+                            if ($question->question_type === 'matching') {
+                                $rawOptions = $question->options ?? [];
+                                if (is_string($rawOptions)) {
+                                    $rawOptions = json_decode($rawOptions, true) ?? [];
+                                }
+
+                                $pairs = [];
+                                if (is_array($rawOptions)) {
+                                    if (array_key_exists('left', $rawOptions) && array_key_exists('right', $rawOptions)) {
+                                        $lefts  = is_array($rawOptions['left']) ? $rawOptions['left'] : [];
+                                        $rights = is_array($rawOptions['right']) ? $rawOptions['right'] : [];
+                                        $max = max(count($lefts), count($rights));
+
+                                        for ($i = 0; $i < $max; $i++) {
+                                            $pairs[] = [
+                                                'left'  => $lefts[$i]  ?? '',
+                                                'right' => $rights[$i] ?? '',
+                                            ];
+                                        }
+                                    } else {
+                                        foreach ($rawOptions as $pair) {
+                                            if (is_array($pair)) {
+                                                $left  = $pair['left']  ?? (array_values($pair)[0] ?? '');
+                                                $right = $pair['right'] ?? (array_values($pair)[1] ?? '');
+                                            } else {
+                                                $left  = (string) $pair;
+                                                $right = '';
+                                            }
+                                            $pairs[] = [
+                                                'left'  => $left,
+                                                'right' => $right,
+                                            ];
+                                        }
+                                    }
+                                }
+
+                                $options = $pairs;
+                            }
+
+                            $questionsOut[] = [
+                                'number' => $questionNumber++,
+                                'text' => $renderedText,
+                                'type' => $question->question_type,
+                                'marks' => $question->marks ?? 1,
+                                'image' => $imagePath,
+                                'options' => $options,
+                            ];
+
+                            $data['total_marks'] += $question->marks ?? 0;
                         }
-
-                        $questionsOut[] = [
-                            'number' => $questionNumber++,
-                            'text' => $renderedText,
-                            'type' => $question->question_type,
-                            'marks' => $question->marks ?? 1,
-                            'image' => $imagePath,
-                            'options' => $options,
-                        ];
-
-                        $data['total_marks'] += $question->marks ?? 0;
                     } else {
                         $parent = $question->parent;
 
@@ -678,9 +694,12 @@ class PaperGeneratorController extends Controller
                 }
 
                 $sectionBlock['questions'] = $questionsOut;
-                $data['sections'][] = $sectionBlock;
+                if (!empty($questionsOut)) {
+                    $data['sections'][] = $sectionBlock;
+                }
             }
         } else {
+            // No sections: preserve ordering and group parent/sub-questions
             $assessmentQuestions = $assessment->questions->sortBy('order')->map(function ($aq) {
                 return $aq->question;
             })->filter();
@@ -691,13 +710,9 @@ class PaperGeneratorController extends Controller
             $questionsOut = [];
 
             foreach ($assessmentQuestions as $question) {
-                if (in_array($question->id, $parentIds, true) && is_null($question->parent_question_id)) {
-                    continue;
-                }
-
                 $parentId = $question->parent_question_id;
 
-                // Resolve image path for non-section questions
+                // Resolve image path
                 $imagePath = null;
                 if ($question->question_image) {
                     $relativePath = ltrim($question->question_image, '/');
@@ -707,6 +722,7 @@ class PaperGeneratorController extends Controller
                     }
                 }
 
+                // Render math/chemistry in stem
                 $renderedText = $question->question;
                 if ($question->is_math) {
                     $renderedText = preg_replace_callback('/\\((.*?)\\)/', function ($matches) {
@@ -719,90 +735,104 @@ class PaperGeneratorController extends Controller
                 }
 
                 if (empty($parentId)) {
-                    $options = [];
-                    if (in_array($question->question_type, ['mcq', 'true_false'])) {
-                        if ($question->question_type === 'true_false') {
-                            $options = [
-                                ['text' => 'True'],
-                                ['text' => 'False'],
-                            ];
-                        } else {
-                            $rawOptions = $question->options;
-                            if (is_string($rawOptions)) {
-                                $decodedOptions = json_decode($rawOptions, true) ?? [];
-                            } elseif (is_array($rawOptions)) {
-                                $decodedOptions = $rawOptions;
+                    // Parent with children -> create parent_group at this position
+                    if (in_array($question->id, $parentIds, true)) {
+                        $groups[$question->id] = count($questionsOut);
+
+                        $questionsOut[] = [
+                            'number' => $questionNumber++,
+                            'text' => $renderedText,
+                            'type' => 'parent_group',
+                            'image' => $imagePath,
+                            'sub_questions' => [],
+                        ];
+                    } else {
+                        // Standalone question (no children)
+                        $options = [];
+                        if (in_array($question->question_type, ['mcq', 'true_false'])) {
+                            if ($question->question_type === 'true_false') {
+                                $options = [
+                                    ['text' => 'True'],
+                                    ['text' => 'False'],
+                                ];
                             } else {
-                                $decodedOptions = [];
-                            }
-
-                            foreach ($decodedOptions as $opt) {
-                                $baseText = is_array($opt) ? ($opt['text'] ?? '') : $opt;
-
-                                $optText = $baseText;
-                                if ($question->is_math) {
-                                    $optText = preg_replace_callback('/\\((.*?)\\)/', function ($m) {
-                                        return $this->renderKatex($m[1]);
-                                    }, $baseText);
-                                } elseif ($question->is_chemistry) {
-                                    $optText = preg_replace_callback('/\\[(.*?)\\]/', function ($m) {
-                                        return $this->renderChemistry($m[1]);
-                                    }, $baseText);
+                                $rawOptions = $question->options;
+                                if (is_string($rawOptions)) {
+                                    $decodedOptions = json_decode($rawOptions, true) ?? [];
+                                } elseif (is_array($rawOptions)) {
+                                    $decodedOptions = $rawOptions;
+                                } else {
+                                    $decodedOptions = [];
                                 }
-                                $options[] = ['text' => $optText];
-                            }
-                        }
-                    }
 
-                    if ($question->question_type === 'matching') {
-                        $rawOptions = $question->options ?? [];
-                        if (is_string($rawOptions)) {
-                            $rawOptions = json_decode($rawOptions, true) ?? [];
-                        }
+                                foreach ($decodedOptions as $opt) {
+                                    $baseText = is_array($opt) ? ($opt['text'] ?? '') : $opt;
 
-                        $pairs = [];
-                        if (is_array($rawOptions)) {
-                            if (array_key_exists('left', $rawOptions) && array_key_exists('right', $rawOptions)) {
-                                $lefts  = is_array($rawOptions['left']) ? $rawOptions['left'] : [];
-                                $rights = is_array($rawOptions['right']) ? $rawOptions['right'] : [];
-                                $max = max(count($lefts), count($rights));
-
-                                for ($i = 0; $i < $max; $i++) {
-                                    $pairs[] = [
-                                        'left'  => $lefts[$i]  ?? '',
-                                        'right' => $rights[$i] ?? '',
-                                    ];
-                                }
-                            } else {
-                                foreach ($rawOptions as $pair) {
-                                    if (is_array($pair)) {
-                                        $left  = $pair['left']  ?? (array_values($pair)[0] ?? '');
-                                        $right = $pair['right'] ?? (array_values($pair)[1] ?? '');
-                                    } else {
-                                        $left  = (string) $pair;
-                                        $right = '';
+                                    $optText = $baseText;
+                                    if ($question->is_math) {
+                                        $optText = preg_replace_callback('/\\((.*?)\\)/', function ($m) {
+                                            return $this->renderKatex($m[1]);
+                                        }, $baseText);
+                                    } elseif ($question->is_chemistry) {
+                                        $optText = preg_replace_callback('/\\[(.*?)\\]/', function ($m) {
+                                            return $this->renderChemistry($m[1]);
+                                        }, $baseText);
                                     }
-                                    $pairs[] = [
-                                        'left'  => $left,
-                                        'right' => $right,
-                                    ];
+                                    $options[] = ['text' => $optText];
                                 }
                             }
                         }
 
-                        $options = $pairs;
+                        if ($question->question_type === 'matching') {
+                            $rawOptions = $question->options ?? [];
+                            if (is_string($rawOptions)) {
+                                $rawOptions = json_decode($rawOptions, true) ?? [];
+                            }
+
+                            $pairs = [];
+                            if (is_array($rawOptions)) {
+                                if (array_key_exists('left', $rawOptions) && array_key_exists('right', $rawOptions)) {
+                                    $lefts  = is_array($rawOptions['left']) ? $rawOptions['left'] : [];
+                                    $rights = is_array($rawOptions['right']) ? $rawOptions['right'] : [];
+                                    $max = max(count($lefts), count($rights));
+
+                                    for ($i = 0; $i < $max; $i++) {
+                                        $pairs[] = [
+                                            'left'  => $lefts[$i]  ?? '',
+                                            'right' => $rights[$i] ?? '',
+                                        ];
+                                    }
+                                } else {
+                                    foreach ($rawOptions as $pair) {
+                                        if (is_array($pair)) {
+                                            $left  = $pair['left']  ?? (array_values($pair)[0] ?? '');
+                                            $right = $pair['right'] ?? (array_values($pair)[1] ?? '');
+                                        } else {
+                                            $left  = (string) $pair;
+                                            $right = '';
+                                        }
+                                        $pairs[] = [
+                                            'left'  => $left,
+                                            'right' => $right,
+                                        ];
+                                    }
+                                }
+                            }
+
+                            $options = $pairs;
+                        }
+
+                        $questionsOut[] = [
+                            'number' => $questionNumber++,
+                            'text' => $renderedText,
+                            'type' => $question->question_type,
+                            'marks' => $question->marks ?? 1,
+                            'image' => $imagePath,
+                            'options' => $options,
+                        ];
+
+                        $data['total_marks'] += $question->marks ?? 0;
                     }
-
-                    $questionsOut[] = [
-                        'number' => $questionNumber++,
-                        'text' => $renderedText,
-                        'type' => $question->question_type,
-                        'marks' => $question->marks ?? 1,
-                        'image' => $imagePath,
-                        'options' => $options,
-                    ];
-
-                    $data['total_marks'] += $question->marks ?? 0;
                 } else {
                     $parent = $question->parent;
 
@@ -884,6 +914,205 @@ class PaperGeneratorController extends Controller
                         $options = $pairs;
                     }
 
+                    $label = chr(ord('a') + count($subQuestions));
+
+                    $subQuestions[] = [
+                        'label' => $label,
+                        'text' => $childRendered,
+                        'type' => $question->question_type,
+                        'marks' => $question->marks ?? 1,
+                        'options' => $options,
+                    ];
+
+                    $data['total_marks'] += $question->marks ?? 0;
+                }
+            }
+
+            $data['questions'] = $questionsOut;
+        }
+
+        $pdf = Pdf::loadView('assessments.pdf_student', $data);
+        $pdf->setPaper('a4');
+        $pdf->setOption('margin-top', 20);
+        $pdf->setOption('margin-bottom', 20);
+        $pdf->setOption('margin-left', 15);
+        $pdf->setOption('margin-right', 15);
+
+        $filename = 'student-assessment-' . Str::slug($assessment->title) . '.pdf';
+        return $pdf->download($filename);
+    }
+        // Resolve image path for non-section questions
+        $imagePath = null;
+        if ($question->question_image) {
+            $relativePath = ltrim($question->question_image, '/');
+            $imagePath = storage_path('app/public/' . $relativePath);
+            if (!file_exists($imagePath)) {
+                $imagePath = null;
+            }
+        }
+
+        $renderedText = $question->question;
+        if ($question->is_math) {
+            $renderedText = preg_replace_callback('/\\((.*?)\\)/', function ($matches) {
+                return $this->renderKatex($matches[1]);
+            }, $question->question);
+        } elseif ($question->is_chemistry) {
+            $renderedText = preg_replace_callback('/\\[(.*?)\\]/', function ($matches) {
+                return $this->renderChemistry($matches[1]);
+            }, $question->question);
+        }
+
+        if (empty($parentId)) {
+            // Parent with children -> create parent_group at this position
+            if (in_array($question->id, $parentIds, true)) {
+                $groups[$question->id] = count($questionsOut);
+
+                $questionsOut[] = [
+                    'number' => $questionNumber++,
+                    'text' => $renderedText,
+                    'type' => 'parent_group',
+                    'image' => $imagePath,
+                    'sub_questions' => [],
+                ];
+            } else {
+                // Standalone question (no children)
+                $options = [];
+                if (in_array($question->question_type, ['mcq', 'true_false'])) {
+                    if ($question->question_type === 'true_false') {
+                        $options = [
+                            ['text' => 'True'],
+                            ['text' => 'False'],
+                        ];
+                    } else {
+                        $rawOptions = $question->options;
+                        if (is_string($rawOptions)) {
+                            $decodedOptions = json_decode($rawOptions, true) ?? [];
+                        } elseif (is_array($rawOptions)) {
+                            $decodedOptions = $rawOptions;
+                        } else {
+                            $decodedOptions = [];
+                        }
+
+                        foreach ($decodedOptions as $opt) {
+                            $baseText = is_array($opt) ? ($opt['text'] ?? '') : $opt;
+
+                            $optText = $baseText;
+                            if ($question->is_math) {
+                                $optText = preg_replace_callback('/\\((.*?)\\)/', function ($m) {
+                                    return $this->renderKatex($m[1]);
+                                }, $baseText);
+                            } elseif ($question->is_chemistry) {
+                                $optText = preg_replace_callback('/\\[(.*?)\\]/', function ($m) {
+                                    return $this->renderChemistry($m[1]);
+                                }, $baseText);
+                            }
+                            $options[] = ['text' => $optText];
+                        }
+                    }
+                }
+
+                if ($question->question_type === 'matching') {
+                    $rawOptions = $question->options ?? [];
+                    if (is_string($rawOptions)) {
+                        $rawOptions = json_decode($rawOptions, true) ?? [];
+                    }
+
+                    $pairs = [];
+                    if (is_array($rawOptions)) {
+                        if (array_key_exists('left', $rawOptions) && array_key_exists('right', $rawOptions)) {
+                            $lefts  = is_array($rawOptions['left']) ? $rawOptions['left'] : [];
+                            $rights = is_array($rawOptions['right']) ? $rawOptions['right'] : [];
+                            $max = max(count($lefts), count($rights));
+
+                            for ($i = 0; $i < $max; $i++) {
+                                $pairs[] = [
+                                    'left'  => $lefts[$i]  ?? '',
+                                    'right' => $rights[$i] ?? '',
+                                ];
+                            }
+                        } else {
+                            foreach ($rawOptions as $pair) {
+                                if (is_array($pair)) {
+                                    $left  = $pair['left']  ?? (array_values($pair)[0] ?? '');
+                                    $right = $pair['right'] ?? (array_values($pair)[1] ?? '');
+                                } else {
+                                    $left  = (string) $pair;
+                                    $right = '';
+                                }
+                                $pairs[] = [
+                                    'left'  => $left,
+                                    'right' => $right,
+                                ];
+                            }
+                        }
+                    }
+
+                    $options = $pairs;
+                }
+
+                $questionsOut[] = [
+                    'number' => $questionNumber++,
+                    'text' => $renderedText,
+                    'type' => $question->question_type,
+                    'marks' => $question->marks ?? 1,
+                    'image' => $imagePath,
+                    'options' => $options,
+                ];
+
+                $data['total_marks'] += $question->marks ?? 0;
+            }
+        } else {
+            $parent = $question->parent;
+
+            if (!isset($groups[$parentId])) {
+                $groups[$parentId] = count($questionsOut);
+
+                $questionsOut[] = [
+                    'number' => $questionNumber++,
+                    'text' => $parent ? $parent->question : $question->question,
+                    'type' => 'parent_group',
+                    'image' => $imagePath,
+                    'sub_questions' => [],
+                ];
+            }
+
+            $groupIndex = $groups[$parentId];
+            $subQuestions = &$questionsOut[$groupIndex]['sub_questions'];
+
+            $childRendered = $renderedText;
+
+            $options = [];
+            if (in_array($question->question_type, ['mcq', 'true_false'])) {
+                if ($question->question_type === 'true_false') {
+                    $options = [
+                        ['text' => 'True'],
+                        ['text' => 'False'],
+                    ];
+                } else {
+                    $rawOptions = $question->options;
+                    if (is_string($rawOptions)) {
+                        $decodedOptions = json_decode($rawOptions, true) ?? [];
+                    } elseif (is_array($rawOptions)) {
+                        $decodedOptions = $rawOptions;
+                    } else {
+                        $decodedOptions = [];
+                    }
+
+                    foreach ($decodedOptions as $opt) {
+                        $baseText = is_array($opt) ? ($opt['text'] ?? '') : $opt;
+
+                        $optText = $baseText;
+                        if ($question->is_math) {
+                            $optText = preg_replace_callback('/\\((.*?)\\)/', function ($m) {
+                                return $this->renderKatex($m[1]);
+                            }, $baseText);
+                        } elseif ($question->is_chemistry) {
+                            $optText = preg_replace_callback('/\\[(.*?)\\]/', function ($m) {
+                                return $this->renderChemistry($m[1]);
+                            }, $baseText);
+                        }
+                        $options[] = ['text' => $optText];
+                    }
                     $label = chr(ord('a') + count($subQuestions));
 
                     $subQuestions[] = [
