@@ -127,7 +127,6 @@
         
         .question {
             margin-bottom: 6px;
-            page-break-inside: avoid;
             border: 1px solid #e0e0e0;
             padding: 5px 7px 4px 7px;
             border-radius: 3px;
@@ -314,51 +313,234 @@
 
     <!-- Questions Section -->
     <div class="questions-container">
-        @foreach($questions as $index => $question)
-            <div class="question">
-                <div class="question-text">
-                    <span class="question-number">Q{{ $question['number'] }}.</span>
-                    <span>{!! nl2br(e($question['text'])) !!}</span>
-                    <span class="marks">{{ $question['marks'] }} mark{{ $question['marks'] > 1 ? 's' : '' }}</span>
-                </div>
-                
-                @if(!empty($question['image']) && file_exists($question['image']))
-                    <div class="question-image">
-                        <img src="{{ $question['image'] }}" alt="Question Image" style="max-width: 100%; max-height: 200px; display: block; margin: 10px 0; border: 1px solid #ddd;" />
-                    </div>
+        @if(!empty($sections))
+            @foreach($sections as $section)
+                <h3 style="margin:8px 0 4px 0; font-size:11pt; color:#2c3e50;">
+                    {{ $section['title'] }}
+                </h3>
+                @if(!empty($section['instruction']))
+                    <p style="font-size:9pt; color:#555; margin:2px 0 6px 0;">
+                        {{ $section['instruction'] }}
+                    </p>
                 @endif
-                
-                @if(!empty($question['options']))
-                    <div class="options">
-                        @foreach($question['options'] as $optionIndex => $option)
-                            <div class="option {{ isset($option['is_correct']) && $option['is_correct'] ? 'correct-answer' : '' }}">
-                                {{ $option['text'] }}
+
+                @foreach($section['questions'] as $index => $question)
+                    <div class="question">
+                        @if(!empty($question['sub_questions']))
+                            {{-- Parent question with sub-questions --}}
+                            <div class="question-text">
+                                <span class="question-number">Q{{ $question['number'] }}.</span>
+                                <span>{!! nl2br(e($question['text'])) !!}</span>
+                            </div>
+
+                            @foreach($question['sub_questions'] as $sub)
+                                <div style="margin-left:15px; margin-top:4px;">
+                                    <strong>({{ $sub['label'] }})</strong>
+                                    <span>{!! nl2br(e($sub['text'])) !!}</span>
+                                    <span class="marks">{{ $sub['marks'] }} mark{{ $sub['marks'] > 1 ? 's' : '' }}</span>
+                                </div>
+
+                                @if($sub['type'] === 'matching' && !empty($sub['options']))
+                                    <table style="width:100%; border-collapse:collapse; margin:4px 0 6px 20px; font-size:9pt;">
+                                        <colgroup>
+                                            <col style="width:40%">
+                                            <col style="width:60%">
+                                        </colgroup>
+                                        <thead>
+                                            <tr>
+                                                <th style="text-align:left; padding:4px; border-bottom:1px solid #ccc;">Left Column</th>
+                                                <th style="text-align:left; padding:4px; border-bottom:1px solid #ccc;">Right Column</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            @foreach($sub['options'] as $i => $pair)
+                                                <tr>
+                                                    <td style="padding:3px 4px; vertical-align:top;">{{ $i + 1 }}. {!! $pair['left'] ?? '' !!}</td>
+                                                    <td style="padding:3px 4px; vertical-align:top;">{{ chr(65 + $i) }}. {!! $pair['right'] ?? '' !!}</td>
+                                                </tr>
+                                            @endforeach
+                                        </tbody>
+                                    </table>
+                                @elseif(!empty($sub['options']))
+                                    <div class="options" style="margin-left:25px;">
+                                        @foreach($sub['options'] as $optionIndex => $option)
+                                            <div class="option {{ isset($option['is_correct']) && $option['is_correct'] ? 'correct-answer' : '' }}">
+                                                {{ $option['text'] }}
+                                            </div>
+                                        @endforeach
+                                    </div>
+                                @endif
+
+                                <div class="marking-notes" style="margin-top:4px;">
+                                    <div><strong>Marking Guide ({{ $sub['label'] }}):</strong></div>
+                                    <div class="marking-points">
+                                        @if($sub['type'] === 'true_false' && !empty($sub['options']))
+                                            <div>• Correct answer: <strong>{{ $sub['options'][0]['is_correct'] ? 'True' : 'False' }}</strong></div>
+                                        @elseif($sub['type'] === 'mcq' && !empty($sub['options']))
+                                            @php
+                                                $correctOption = collect($sub['options'])->firstWhere('is_correct', true);
+                                                $correctAnswer = $correctOption ? $correctOption['text'] : 'No correct answer specified';
+                                            @endphp
+                                            <div>• Correct answer: <strong>{{ $correctAnswer }}</strong></div>
+                                        @endif
+                                        <div>• Marks: <strong>{{ $sub['marks'] }} mark{{ $sub['marks'] > 1 ? 's' : '' }}</strong></div>
+                                    </div>
+                                </div>
+                            @endforeach
+                        @else
+                            {{-- Standalone question (no sub-questions) --}}
+                            <div class="question-text">
+                                <span class="question-number">Q{{ $question['number'] }}.</span>
+                                <span>{!! nl2br(e($question['text'])) !!}</span>
+                                <span class="marks">{{ $question['marks'] }} mark{{ $question['marks'] > 1 ? 's' : '' }}</span>
+                            </div>
+
+                            @if(!empty($question['image']) && file_exists($question['image']))
+                                <div class="question-image">
+                                    <img src="{{ $question['image'] }}" alt="Question Image" style="max-width: 100%; max-height: 200px; display: block; margin: 10px 0; border: 1px solid #ddd;" />
+                                </div>
+                            @endif
+
+                            @if(!empty($question['options']))
+                                <div class="options">
+                                    @foreach($question['options'] as $optionIndex => $option)
+                                        <div class="option {{ isset($option['is_correct']) && $option['is_correct'] ? 'correct-answer' : '' }}">
+                                            {{ $option['text'] }}
+                                        </div>
+                                    @endforeach
+                                </div>
+                            @endif
+
+                            <div class="marking-notes">
+                                <div><strong>Marking Guide:</strong></div>
+                                <div class="marking-points">
+                                    @if($question['type'] === 'true_false' && !empty($question['options']))
+                                        <div>• Correct answer: <strong>{{ $question['options'][0]['is_correct'] ? 'True' : 'False' }}</strong></div>
+                                    @elseif($question['type'] === 'mcq' && !empty($question['options']))
+                                        @php
+                                            $correctOption = collect($question['options'])->firstWhere('is_correct', true);
+                                            $correctAnswer = $correctOption ? $correctOption['text'] : 'No correct answer specified';
+                                        @endphp
+                                        <div>• Correct answer: <strong>{{ $correctAnswer }}</strong></div>
+                                    @endif
+                                    <div>• Marks: <strong>{{ $question['marks'] }} mark{{ $question['marks'] > 1 ? 's' : '' }}</strong></div>
+                                </div>
+                            </div>
+                        @endif
+                    </div>
+                @endforeach
+            @endforeach
+        @else
+            @foreach($questions as $index => $question)
+                <div class="question">
+                    @if(!empty($question['sub_questions']))
+                        {{-- Parent question with sub-questions --}}
+                        <div class="question-text">
+                            <span class="question-number">Q{{ $question['number'] }}.</span>
+                            <span>{!! nl2br(e($question['text'])) !!}</span>
+                        </div>
+
+                        @foreach($question['sub_questions'] as $sub)
+                            <div style="margin-left:15px; margin-top:4px;">
+                                <strong>({{ $sub['label'] }})</strong>
+                                <span>{!! nl2br(e($sub['text'])) !!}</span>
+                                <span class="marks">{{ $sub['marks'] }} mark{{ $sub['marks'] > 1 ? 's' : '' }}</span>
+                            </div>
+
+                            @if($sub['type'] === 'matching' && !empty($sub['options']))
+                                <table style="width:100%; border-collapse:collapse; margin:4px 0 6px 20px; font-size:9pt;">
+                                    <colgroup>
+                                        <col style="width:40%">
+                                        <col style="width:60%">
+                                    </colgroup>
+                                    <thead>
+                                        <tr>
+                                            <th style="text-align:left; padding:4px; border-bottom:1px solid #ccc;">Left Column</th>
+                                            <th style="text-align:left; padding:4px; border-bottom:1px solid #ccc;">Right Column</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach($sub['options'] as $i => $pair)
+                                            <tr>
+                                                <td style="padding:3px 4px; vertical-align:top;">{{ $i + 1 }}. {!! $pair['left'] ?? '' !!}</td>
+                                                <td style="padding:3px 4px; vertical-align:top;">{{ chr(65 + $i) }}. {!! $pair['right'] ?? '' !!}</td>
+                                            </tr>
+                                        @endforeach
+                                    </tbody>
+                                </table>
+                            @elseif(!empty($sub['options']))
+                                <div class="options" style="margin-left:25px;">
+                                    @foreach($sub['options'] as $optionIndex => $option)
+                                        <div class="option {{ isset($option['is_correct']) && $option['is_correct'] ? 'correct-answer' : '' }}">
+                                            {{ $option['text'] }}
+                                        </div>
+                                    @endforeach
+                                </div>
+                            @endif
+
+                            <div class="marking-notes" style="margin-top:4px;">
+                                <div><strong>Marking Guide ({{ $sub['label'] }}):</strong></div>
+                                <div class="marking-points">
+                                    @if($sub['type'] === 'true_false' && !empty($sub['options']))
+                                        <div>• Correct answer: <strong>{{ $sub['options'][0]['is_correct'] ? 'True' : 'False' }}</strong></div>
+                                    @elseif($sub['type'] === 'mcq' && !empty($sub['options']))
+                                        @php
+                                            $correctOption = collect($sub['options'])->firstWhere('is_correct', true);
+                                            $correctAnswer = $correctOption ? $correctOption['text'] : 'No correct answer specified';
+                                        @endphp
+                                        <div>• Correct answer: <strong>{{ $correctAnswer }}</strong></div>
+                                    @endif
+                                    <div>• Marks: <strong>{{ $sub['marks'] }} mark{{ $sub['marks'] > 1 ? 's' : '' }}</strong></div>
+                                </div>
                             </div>
                         @endforeach
-                    </div>
-                @endif
-                
-                <div class="marking-notes">
-                    <div><strong>Marking Guide:</strong></div>
-                    <div class="marking-points">
-                        @if($question['type'] === 'true_false')
-                            <div>• Correct answer: <strong>{{ $question['options'][0]['is_correct'] ? 'True' : 'False' }}</strong></div>
-                        @elseif($question['type'] === 'mcq' && !empty($question['options']))
-                            @php
-                                $correctOption = collect($question['options'])->firstWhere('is_correct', true);
-                                $correctAnswer = $correctOption ? $correctOption['text'] : 'No correct answer specified';
-                            @endphp
-                            <div>• Correct answer: <strong>{{ $correctAnswer }}</strong></div>
+                    @else
+                        {{-- Standalone question (no sub-questions) --}}
+                        <div class="question-text">
+                            <span class="question-number">Q{{ $question['number'] }}.</span>
+                            <span>{!! nl2br(e($question['text'])) !!}</span>
+                            <span class="marks">{{ $question['marks'] }} mark{{ $question['marks'] > 1 ? 's' : '' }}</span>
+                        </div>
+
+                        @if(!empty($question['image']) && file_exists($question['image']))
+                            <div class="question-image">
+                                <img src="{{ $question['image'] }}" alt="Question Image" style="max-width: 100%; max-height: 200px; display: block; margin: 10px 0; border: 1px solid #ddd;" />
+                            </div>
                         @endif
-                        <div>• Marks: <strong>{{ $question['marks'] }} mark{{ $question['marks'] > 1 ? 's' : '' }}</strong></div>
-                    </div>
+
+                        @if(!empty($question['options']))
+                            <div class="options">
+                                @foreach($question['options'] as $optionIndex => $option)
+                                    <div class="option {{ isset($option['is_correct']) && $option['is_correct'] ? 'correct-answer' : '' }}">
+                                        {{ $option['text'] }}
+                                    </div>
+                                @endforeach
+                            </div>
+                        @endif
+
+                        <div class="marking-notes">
+                            <div><strong>Marking Guide:</strong></div>
+                            <div class="marking-points">
+                                @if($question['type'] === 'true_false' && !empty($question['options']))
+                                    <div>• Correct answer: <strong>{{ $question['options'][0]['is_correct'] ? 'True' : 'False' }}</strong></div>
+                                @elseif($question['type'] === 'mcq' && !empty($question['options']))
+                                    @php
+                                        $correctOption = collect($question['options'])->firstWhere('is_correct', true);
+                                        $correctAnswer = $correctOption ? $correctOption['text'] : 'No correct answer specified';
+                                    @endphp
+                                    <div>• Correct answer: <strong>{{ $correctAnswer }}</strong></div>
+                                @endif
+                                <div>• Marks: <strong>{{ $question['marks'] }} mark{{ $question['marks'] > 1 ? 's' : '' }}</strong></div>
+                            </div>
+                        </div>
+                    @endif
                 </div>
-            </div>
-            
-            @if(($index + 1) % 3 === 0 && !$loop->last)
-                <div class="page-break"></div>
-            @endif
-        @endforeach
+
+                @if(($index + 1) % 3 === 0 && !$loop->last)
+                    <div class="page-break"></div>
+                @endif
+            @endforeach
+        @endif
     </div>
 
     <!-- Footer -->

@@ -11,6 +11,7 @@ use App\Http\Controllers\SubjectController;
 use App\Http\Controllers\QuestionController;
 use App\Http\Controllers\AssessmentController;
 use App\Http\Controllers\AssessmentSectionController;
+use App\Http\Controllers\PaperGeneratorController;
 use App\Http\Controllers\GradeLevelController;
 use App\Http\Controllers\StudentAnswerController;
 use App\Http\Controllers\AssessmentBuilderController;
@@ -91,8 +92,8 @@ Route::middleware('auth:sanctum')->group(function () {
     // 6. Reorder questions in an assessment
     Route::patch('/assessments/{id}', [AssessmentController::class, 'updateTitle']);
     Route::put('/assessments/{id}/reorder', [AssessmentController::class, 'reorderQuestions']);
-    Route::get('/assessments/{id}/pdf', [AssessmentController::class, 'generatePdf']);
-    Route::get('/assessments/{id}/pdf/student', [AssessmentController::class, 'generatePdfStudent']);
+    Route::get('/assessments/{id}/pdf', [PaperGeneratorController::class, 'generatePdf']);
+    Route::get('/assessments/{id}/pdf/student', [PaperGeneratorController::class, 'generatePdfStudent']);
     
     Route::post('/assessments/assign', [AssessmentController::class, 'assign']);
     Route::post('/assessments/start-practice', [AssessmentController::class, 'startPractice']);

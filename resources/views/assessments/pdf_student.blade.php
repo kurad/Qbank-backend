@@ -11,7 +11,7 @@
         .school-details { font-size: 11px; color: #555; margin-bottom: 5px; }
         .assessment-title { font-size: 16px; font-weight: bold; text-align: center; margin: 15px 0; text-transform: uppercase; }
         .assessment-meta { display:flex; justify-content:space-between; margin-bottom:15px; font-size:11px; }
-        .question { margin-bottom:20px; page-break-inside: avoid; }
+        .question { margin-bottom:20px; }
         .question-text { margin-bottom: 10px; font-weight:bold; }
         .question-number { font-weight:bold; margin-right:5px; }
         .options { margin-left:20px; margin-bottom:10px; }
@@ -56,9 +56,6 @@
         <div class="student-info-row">
             <div class="student-info-label">Class/Grade:<div class="answer-space" style="width:200px;"></div></div>
         </div>
-        <div class="student-info-row">
-            <div class="student-info-label">Date:<div class="answer-space" style="width:200px;"></div></div>
-        </div>
     </div>
 
     <!-- Instructions -->
@@ -69,56 +66,279 @@
             <li>Answer all questions in the spaces provided.</li>
             <li>For multiple choice questions, circle the correct answer.</li>
             <li>Show all working where necessary.</li>
-            <li>Total marks: {{ $total_marks ?? 'N/A' }}</li>
         </ul>
     </div>
 
     <!-- Questions -->
-    @foreach($questions as $q)
-        <div class="question">
-            <div class="question-text">
-                <span class="question-number">{{ $q['number'] }}.</span>
-                @if(!empty($q['image']))
-                    <div><img src="{{ $q['image'] }}" style="max-width:350px; max-height:180px;"></div>
-                @endif
-                {!! $q['text'] !!}
-                <span class="marks">[{{ $q['marks'] }} mark{{ $q['marks'] > 1 ? 's' : '' }}]</span>
-            </div>
-
-            @if(!empty($q['options']))
-                <div class="options">
-                    @foreach($q['options'] as $i => $opt)
-                        <div class="option">
-                            <div class="option-label">{{ chr(65 + $i) }}.</div>
-                                <div class="option-text">
-                                @if(!empty($opt['image']))
-                                    <img src="{{ $opt['image'] }}" style="max-height:50px;">
-                                @else
-                                    {!! $opt['text'] !!}
-                                @endif
-                                </div>
-                        </div>
-                    @endforeach
-                </div>
-            @elseif($q['type'] === 'short_answer')
-                <div style="margin-top:10px;">
-                    <div style="font-size:11px; color:#555; margin-bottom:3px;">Working space & answer:</div>
-                    @for($i=0;$i<5;$i++)
-                        <div class="answer-space" style="width:100%; min-height:20px; margin-bottom:6px;"></div>
-                    @endfor
-                </div>
-            @else
-                <div style="margin-top:10px; min-height:50px;">
-                    <div class="answer-space" style="width:100%; min-height:50px;"></div>
-                </div>
+    @if(!empty($sections))
+        @foreach($sections as $section)
+            <h3 style="margin:10px 0 4px 0; font-size:14px;">
+                {{ $section['title'] }}
+            </h3>
+            @if(!empty($section['instruction']))
+                <p style="font-size:11px; color:#555; margin:2px 0 8px 0;">
+                    {{ $section['instruction'] }}
+                </p>
             @endif
-        </div>
-    @endforeach
 
-    <div class="total-marks">Total: {{ $total_marks ?? 'N/A' }} marks</div>
+            @foreach($section['questions'] as $q)
+                <div class="question">
+                    @if(!empty($q['sub_questions']))
+                        {{-- Parent question with sub-questions --}}
+                        <div class="question-text">
+                            <span class="question-number">{{ $q['number'] }}.</span>
+                            {!! $q['text'] !!}
+                        </div>
 
+                        @foreach($q['sub_questions'] as $sub)
+                            <div class="question-text" style="margin-left:15px; margin-top:4px;">
+                                <span class="question-number">({{ $sub['label'] }})</span>
+                                {!! $sub['text'] !!}
+                                <span class="marks">[{{ $sub['marks'] }} mark{{ $sub['marks'] > 1 ? 's' : '' }}]</span>
+                            </div>
+
+                            @if($sub['type'] === 'matching' && !empty($sub['options']))
+                                <table style="width:100%; border-collapse:collapse; margin-top:4px; font-size:11px; margin-left:15px;">
+                                    <colgroup>
+                                        <col style="width:40%">
+                                        <col style="width:60%">
+                                    </colgroup>
+                                    <thead>
+                                        <tr>
+                                            <th style="text-align:left; padding:4px; border-bottom:1px solid #ccc;">Left Column</th>
+                                            <th style="text-align:left; padding:4px; border-bottom:1px solid #ccc;">Right Column</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach($sub['options'] as $i => $pair)
+                                            <tr>
+                                                <td style="padding:3px 4px; vertical-align:top;">{{ $i + 1 }}. {!! $pair['left'] ?? '' !!}</td>
+                                                <td style="padding:3px 4px; vertical-align:top;">{{ chr(65 + $i) }}. {!! $pair['right'] ?? '' !!}</td>
+                                            </tr>
+                                        @endforeach
+                                    </tbody>
+                                </table>
+                            @elseif(!empty($sub['options']))
+                                <div class="options" style="margin-left:20px;">
+                                    @foreach($sub['options'] as $i => $opt)
+                                        <div class="option">
+                                            <div class="option-label">{{ chr(65 + $i) }}.</div>
+                                            <div class="option-text">
+                                                @if(!empty($opt['image']))
+                                                    <img src="{{ $opt['image'] }}" style="max-height:50px;">
+                                                @else
+                                                    {!! $opt['text'] !!}
+                                                @endif
+                                            </div>
+                                        </div>
+                                    @endforeach
+                                </div>
+                            @elseif($sub['type'] === 'short_answer')
+                                <div style="margin-top:10px; margin-left:15px;">
+                                    <div style="font-size:11px; color:#555; margin-bottom:3px;">Working space & answer:</div>
+                                    @for($i=0;$i<5;$i++)
+                                        <div class="answer-space" style="width:100%; min-height:20px; margin-bottom:6px;"></div>
+                                    @endfor
+                                </div>
+                            @else
+                                <div style="margin-top:10px; min-height:50px; margin-left:15px;">
+                                    <div class="answer-space" style="width:100%; min-height:50px;"></div>
+                                </div>
+                            @endif
+                        @endforeach
+                    @else
+                        <div class="question-text">
+                            <span class="question-number">{{ $q['number'] }}.</span>
+                            @if(!empty($q['image']))
+                                <div><img src="{{ $q['image'] }}" style="max-width:350px; max-height:180px;"></div>
+                            @endif
+                            {!! $q['text'] !!}
+                            <span class="marks">[{{ $q['marks'] }} mark{{ $q['marks'] > 1 ? 's' : '' }}]</span>
+                        </div>
+
+                        @if($q['type'] === 'matching' && !empty($q['options']))
+                            {{-- Matching: show left/right pairs --}}
+                            <table style="width:100%; border-collapse:collapse; margin-top:8px; font-size:11px;">
+                                <colgroup>
+                                    <col style="width:40%">
+                                    <col style="width:60%">
+                                </colgroup>
+                                <thead>
+                                    <tr>
+                                        <th style="text-align:left; padding:4px; border-bottom:1px solid #ccc;">Left Column</th>
+                                        <th style="text-align:left; padding:4px; border-bottom:1px solid #ccc;">Right Column</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach($q['options'] as $i => $pair)
+                                        <tr>
+                                            <td style="padding:3px 4px; vertical-align:top;">{{ $i + 1 }}. {!! $pair['left'] ?? '' !!}</td>
+                                            <td style="padding:3px 4px; vertical-align:top;">{{ chr(65 + $i) }}. {!! $pair['right'] ?? '' !!}</td>
+                                        </tr>
+                                    @endforeach
+                                </tbody>
+                            </table>
+                        @elseif(!empty($q['options']))
+                            <div class="options">
+                                @foreach($q['options'] as $i => $opt)
+                                    <div class="option">
+                                        <div class="option-label">{{ chr(65 + $i) }}.</div>
+                                            <div class="option-text">
+                                            @if(!empty($opt['image']))
+                                                <img src="{{ $opt['image'] }}" style="max-height:50px;">
+                                            @else
+                                                {!! $opt['text'] !!}
+                                            @endif
+                                            </div>
+                                    </div>
+                                @endforeach
+                            </div>
+                        @elseif($q['type'] === 'short_answer')
+                            <div style="margin-top:10px;">
+                                <div style="font-size:11px; color:#555; margin-bottom:3px;">Working space & answer:</div>
+                                @for($i=0;$i<5;$i++)
+                                    <div class="answer-space" style="width:100%; min-height:20px; margin-bottom:6px;"></div>
+                                @endfor
+                            </div>
+                        @else
+                            <div style="margin-top:10px; min-height:50px;">
+                                <div class="answer-space" style="width:100%; min-height:50px;"></div>
+                            </div>
+                        @endif
+                    @endif
+                </div>
+            @endforeach
+        @endforeach
+    @else
+        @foreach($questions as $q)
+            <div class="question">
+                @if(!empty($q['sub_questions']))
+                    {{-- Parent question with sub-questions --}}
+                    <div class="question-text">
+                        <span class="question-number">{{ $q['number'] }}.</span>
+                        {!! $q['text'] !!}
+                    </div>
+
+                    @foreach($q['sub_questions'] as $sub)
+                        <div class="question-text" style="margin-left:15px; margin-top:4px;">
+                            <span class="question-number">({{ $sub['label'] }})</span>
+                            {!! $sub['text'] !!}
+                            <span class="marks">[{{ $sub['marks'] }} mark{{ $sub['marks'] > 1 ? 's' : '' }}]</span>
+                        </div>
+
+                        @if($sub['type'] === 'matching' && !empty($sub['options']))
+                            <table style="width:100%; border-collapse:collapse; margin-top:4px; font-size:11px; margin-left:15px;">
+                                <colgroup>
+                                    <col style="width:40%">
+                                    <col style="width:60%">
+                                </colgroup>
+                                <thead>
+                                    <tr>
+                                        <th style="text-align:left; padding:4px; border-bottom:1px solid #ccc;">Left Column</th>
+                                        <th style="text-align:left; padding:4px; border-bottom:1px solid #ccc;">Right Column</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach($sub['options'] as $i => $pair)
+                                        <tr>
+                                            <td style="padding:3px 4px; vertical-align:top;">{{ $i + 1 }}. {!! $pair['left'] ?? '' !!}</td>
+                                            <td style="padding:3px 4px; vertical-align:top;">{{ chr(65 + $i) }}. {!! $pair['right'] ?? '' !!}</td>
+                                        </tr>
+                                    @endforeach
+                                </tbody>
+                            </table>
+                        @elseif(!empty($sub['options']))
+                            <div class="options" style="margin-left:20px;">
+                                @foreach($sub['options'] as $i => $opt)
+                                    <div class="option">
+                                        <div class="option-label">{{ chr(65 + $i) }}.</div>
+                                        <div class="option-text">
+                                            @if(!empty($opt['image']))
+                                                <img src="{{ $opt['image'] }}" style="max-height:50px;">
+                                            @else
+                                                {!! $opt['text'] !!}
+                                            @endif
+                                        </div>
+                                    </div>
+                                @endforeach
+                            </div>
+                        @elseif($sub['type'] === 'short_answer')
+                            <div style="margin-top:10px; margin-left:15px;">
+                                <div style="font-size:11px; color:#555; margin-bottom:3px;">Working space & answer:</div>
+                                @for($i=0;$i<5;$i++)
+                                    <div class="answer-space" style="width:100%; min-height:20px; margin-bottom:6px;"></div>
+                                @endfor
+                            </div>
+                        @else
+                            <div style="margin-top:10px; min-height:50px; margin-left:15px;">
+                                <div class="answer-space" style="width:100%; min-height:50px;"></div>
+                            </div>
+                        @endif
+                    @endforeach
+                @else
+                    <div class="question-text">
+                        <span class="question-number">{{ $q['number'] }}.</span>
+                        @if(!empty($q['image']))
+                            <div><img src="{{ $q['image'] }}" style="max-width:350px; max-height:180px;"></div>
+                        @endif
+                        {!! $q['text'] !!}
+                        <span class="marks">[{{ $q['marks'] }} mark{{ $q['marks'] > 1 ? 's' : '' }}]</span>
+                    </div>
+
+                    @if($q['type'] === 'matching' && !empty($q['options']))
+                        <table style="width:100%; border-collapse:collapse; margin-top:8px; font-size:11px;">
+                            <colgroup>
+                                <col style="width:40%">
+                                <col style="width:60%">
+                            </colgroup>
+                            <thead>
+                                <tr>
+                                    <th style="text-align:left; padding:4px; border-bottom:1px solid #ccc;">Left Column</th>
+                                    <th style="text-align:left; padding:4px; border-bottom:1px solid #ccc;">Right Column</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach($q['options'] as $i => $pair)
+                                    <tr>
+                                        <td style="padding:3px 4px; vertical-align:top;">{{ $i + 1 }}. {!! $pair['left'] ?? '' !!}</td>
+                                        <td style="padding:3px 4px; vertical-align:top;">{{ chr(65 + $i) }}. {!! $pair['right'] ?? '' !!}</td>
+                                    </tr>
+                                @endforeach
+                            </tbody>
+                        </table>
+                    @elseif(!empty($q['options']))
+                        <div class="options">
+                            @foreach($q['options'] as $i => $opt)
+                                <div class="option">
+                                    <div class="option-label">{{ chr(65 + $i) }}.</div>
+                                        <div class="option-text">
+                                        @if(!empty($opt['image']))
+                                            <img src="{{ $opt['image'] }}" style="max-height:50px;">
+                                        @else
+                                            {!! $opt['text'] !!}
+                                        @endif
+                                        </div>
+                                </div>
+                            @endforeach
+                        </div>
+                    @elseif($q['type'] === 'short_answer')
+                        <div style="margin-top:10px;">
+                            <div style="font-size:11px; color:#555; margin-bottom:3px;">Working space & answer:</div>
+                            @for($i=0;$i<5;$i++)
+                                <div class="answer-space" style="width:100%; min-height:20px; margin-bottom:6px;"></div>
+                            @endfor
+                        </div>
+                    @else
+                        <div style="margin-top:10px; min-height:50px;">
+                            <div class="answer-space" style="width:100%; min-height:50px;"></div>
+                        </div>
+                    @endif
+                @endif
+            </div>
+        @endforeach
+    @endif
     <div class="footer">
-        {{ $school['school_name'] ?? 'School Name' }} | {{ $title }} | Page <span class="page-number">{{ $page ?? 1 }}</span> | | {{ date('F j, Y') }}
+        {{ $school['school_name'] ?? 'School Name' }} | {{ $title }} | {{ date('F j, Y') }}
     </div>
 
     <script>
