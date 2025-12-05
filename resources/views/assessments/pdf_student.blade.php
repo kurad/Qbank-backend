@@ -149,11 +149,11 @@
                     @else
                         <div class="question-text">
                             <span class="question-number">{{ $q['number'] }}.</span>
+                            {!! $q['text'] !!}
+                            <span class="marks">[{{ $q['marks'] }} mark{{ $q['marks'] > 1 ? 's' : '' }}]</span>
                             @if(!empty($q['image']))
                                 <div><img src="{{ $q['image'] }}" style="max-width:350px; max-height:180px;"></div>
                             @endif
-                            {!! $q['text'] !!}
-                            <span class="marks">[{{ $q['marks'] }} mark{{ $q['marks'] > 1 ? 's' : '' }}]</span>
                         </div>
 
                         @if($q['type'] === 'matching' && !empty($q['options']))
@@ -278,11 +278,11 @@
                 @else
                     <div class="question-text">
                         <span class="question-number">{{ $q['number'] }}.</span>
+                        {!! $q['text'] !!}
+                        <span class="marks">[{{ $q['marks'] }} mark{{ $q['marks'] > 1 ? 's' : '' }}]</span>
                         @if(!empty($q['image']))
                             <div><img src="{{ $q['image'] }}" style="max-width:350px; max-height:180px;"></div>
                         @endif
-                        {!! $q['text'] !!}
-                        <span class="marks">[{{ $q['marks'] }} mark{{ $q['marks'] > 1 ? 's' : '' }}]</span>
                     </div>
 
                     @if($q['type'] === 'matching' && !empty($q['options']))
