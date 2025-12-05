@@ -63,7 +63,7 @@
         <strong>Instructions:</strong>
         <ul style="margin:5px 0 0 20px; padding:0;">
             <li>Write your name and class/grade in the spaces provided above.</li>
-            <li>Answer all questions in the spaces provided.</li>
+            <li>Answer all questions in the spaces provided. Answer sheets can be used if the space is not enough.</li>
             <li>For multiple choice questions, circle the correct answer.</li>
             <li>Show all working where necessary.</li>
         </ul>
