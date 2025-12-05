@@ -75,10 +75,6 @@ class PaperGeneratorController extends Controller
                         continue;
                     }
 
-                    if (in_array($question->id, $parentIds, true) && is_null($question->parent_question_id)) {
-                        continue;
-                    }
-
                     $parentId = $question->parent_question_id;
 
                     $imagePath = null;
@@ -91,48 +87,63 @@ class PaperGeneratorController extends Controller
                     }
 
                     if (empty($parentId)) {
-                        $formattedQuestion = [
-                            'number' => $questionNumber++,
-                            'text' => $question->question,
-                            'marks' => $question->marks ?? 1,
-                            'type' => $question->question_type,
-                            'image' => $imagePath,
-                            'options' => [],
-                        ];
+                        // Parent has children -> create parent_group at this position
+                        if (in_array($question->id, $parentIds, true)) {
+                            $groups[$question->id] = count($questionsOut);
 
-                        if ($question->question_type === 'true_false') {
-                            $formattedQuestion['options'] = [
-                                ['text' => 'True', 'is_correct' => $question->correct_answer === 'True'],
-                                ['text' => 'False', 'is_correct' => $question->correct_answer === 'False'],
+                            $questionsOut[] = [
+                                'number' => $questionNumber++,
+                                'text' => $question->question,
+                                'type' => 'parent_group',
+                                'image' => $imagePath,
+                                'sub_questions' => [],
                             ];
                         } else {
-                            try {
-                                $rawOptions = $question->options;
-                                if (is_string($rawOptions)) {
-                                    $options = json_decode($rawOptions, true) ?? [];
-                                } elseif (is_array($rawOptions)) {
-                                    $options = $rawOptions;
-                                } else {
-                                    $options = [];
+                            // Standalone question (no children)
+                            $formattedQuestion = [
+                                'number' => $questionNumber++,
+                                'text' => $question->question,
+                                'marks' => $question->marks ?? 1,
+                                'type' => $question->question_type,
+                                'image' => $imagePath,
+                                'options' => [],
+                            ];
+
+                            if ($question->question_type === 'true_false') {
+                                $formattedQuestion['options'] = [
+                                    ['text' => 'True', 'is_correct' => $question->correct_answer === 'True'],
+                                    ['text' => 'False', 'is_correct' => $question->correct_answer === 'False'],
+                                ];
+                            } else {
+                                try {
+                                    $rawOptions = $question->options;
+                                    if (is_string($rawOptions)) {
+                                        $options = json_decode($rawOptions, true) ?? [];
+                                    } elseif (is_array($rawOptions)) {
+                                        $options = $rawOptions;
+                                    } else {
+                                        $options = [];
+                                    }
+
+                                    $formattedQuestion['options'] = array_map(function ($option) use ($question) {
+                                        return [
+                                            'text' => is_array($option) ? ($option['text'] ?? '') : $option,
+                                            'is_correct' => $option === $question->correct_answer,
+                                        ];
+                                    }, $options);
+                                } catch (\Exception $e) {
+                                    $formattedQuestion['options'] = [];
                                 }
-
-                                $formattedQuestion['options'] = array_map(function ($option) use ($question) {
-                                    return [
-                                        'text' => is_array($option) ? ($option['text'] ?? '') : $option,
-                                        'is_correct' => $option === $question->correct_answer,
-                                    ];
-                                }, $options);
-                            } catch (\Exception $e) {
-                                $formattedQuestion['options'] = [];
                             }
-                        }
 
-                        $questionsOut[] = $formattedQuestion;
-                        $data['total_marks'] += $formattedQuestion['marks'];
+                            $questionsOut[] = $formattedQuestion;
+                            $data['total_marks'] += $formattedQuestion['marks'];
+                        }
                     } else {
                         $parent = $question->parent;
 
                         if (!isset($groups[$parentId])) {
+                            // Fallback: parent not in this section list, create group on first child
                             $groups[$parentId] = count($questionsOut);
 
                             $questionsOut[] = [
