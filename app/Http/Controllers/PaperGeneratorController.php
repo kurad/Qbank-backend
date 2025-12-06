@@ -7,16 +7,17 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Support\Str;
+use Spatie\Browsershot\Browsershot;
 
 class PaperGeneratorController extends Controller
 {
     /**
-     * Generate a PDF version of the assessment (teacher/full version)
+     * Generate a PDF version of the assessment (student paper).
      *
-     * @param int $id
-     * @return \Illuminate\Http\Response
+     * Chooses between the "normal" and "standard" layouts based on
+     * a "layout" query parameter: ?layout=normal|standard (default: normal).
      */
-    public function generatePdf($id)
+    public function generatePdf(Request $request, $id)
     {
         $assessment = Assessment::with([
             'questions.question.parent',
@@ -31,1120 +32,264 @@ class PaperGeneratorController extends Controller
             ], 403);
         }
 
-        $school = $assessment->creator->school ?? null;
-
-        $subjects = $assessment->topics->map(function ($topic) {
-            return $topic->gradeSubject?->subject?->name;
-        })->filter()->unique()->values();
-
-        $data = [
-            'title' => $assessment->title,
-            'subject' => $subjects->first() ?? 'General',
-            'topic' => $assessment->topic ? $assessment->topic->name : 'General',
-            'created_at' => $assessment->created_at->format('F j, Y'),
-            'school' => [
-                'school_name' => $school?->school_name ?? 'School Name',
-                'address' => $school?->address ?? 'School Address',
-                'phone' => $school?->phone ?? 'Phone Number',
-                'email' => $school?->email ?? 'school@example.com',
-                'logo' => $school && $school->logo_path ? storage_path('app/public/' . $school->logo_path) : null,
-            ],
-            'sections' => [],
-            'questions' => [],
-            'total_marks' => 0,
-        ];
-
+        $school = $assessment->creator->school;
+        $subjects = $assessment->topics->pluck('gradeSubject.subject.name')->filter()->unique();
         $questionNumber = 1;
 
-        if ($assessment->sections && $assessment->sections->count() > 0) {
+        //--------------------------------------
+        // BUILD MAIN DATA
+        //--------------------------------------
+        $data = [
+            'title'        => $assessment->title,
+            'subject'      => $subjects->first() ?? 'General',
+            'topic'        => $assessment->topics->pluck('name')->first() ?? 'General',
+            'created_at'   => $assessment->created_at->format('F j, Y'),
+            'school'       => [
+                'school_name' => $school->school_name ?? 'School Name',
+                'address'     => $school->address ?? 'School Address',
+                'phone'       => $school->phone ?? 'Phone Number',
+                'email'       => $school->email ?? 'school@example.com',
+                'logo'        => $school && $school->logo_path
+                    ? storage_path('app/public/' . $school->logo_path)
+                    : null,
+            ],
+            'sections'     => [],
+            'questions'    => [],
+            'total_marks'  => 0
+        ];
+
+        //--------------------------------------
+        // HANDLE SECTIONED ASSESSMENT
+        //--------------------------------------
+        if ($assessment->sections->count() > 0) {
+
             foreach ($assessment->sections->sortBy('ordering') as $section) {
                 $sectionBlock = [
-                    'title' => $section->title,
+                    'title'       => $section->title,
                     'instruction' => $section->instruction,
-                    'questions' => [],
+                    'questions'   => []
                 ];
 
-                $sectionQuestions = $section->questions;
-                $parentIds = $sectionQuestions->pluck('parent_question_id')->filter()->unique()->all();
+                $formatted = $this->formatQuestions(
+                    $section->questions,
+                    $questionNumber,
+                    $data['total_marks']
+                );
 
-                $groups = [];
-                $questionsOut = [];
+                $sectionBlock['questions'] = $formatted;
 
-                foreach ($sectionQuestions as $question) {
-                    if (!$question) {
-                        continue;
-                    }
-
-                    $parentId = $question->parent_question_id;
-
-                    $imagePath = null;
-                    if ($question->question_image) {
-                        $relativePath = ltrim($question->question_image, '/');
-                        $imagePath = storage_path('app/public/' . $relativePath);
-                        if (!file_exists($imagePath)) {
-                            $imagePath = null;
-                        }
-                    }
-
-                    if (empty($parentId)) {
-                        // Parent has children -> create parent_group at this position
-                        if (in_array($question->id, $parentIds, true)) {
-                            $groups[$question->id] = count($questionsOut);
-
-                            $questionsOut[] = [
-                                'number' => $questionNumber++,
-                                'text' => $question->question,
-                                'type' => 'parent_group',
-                                'image' => $imagePath,
-                                'sub_questions' => [],
-                            ];
-                        } else {
-                            // Standalone question (no children)
-                            $formattedQuestion = [
-                                'number' => $questionNumber++,
-                                'text' => $question->question,
-                                'marks' => $question->marks ?? 1,
-                                'type' => $question->question_type,
-                                'image' => $imagePath,
-                                'options' => [],
-                            ];
-
-                            if ($question->question_type === 'true_false') {
-                                $formattedQuestion['options'] = [
-                                    ['text' => 'True', 'is_correct' => $question->correct_answer === 'True'],
-                                    ['text' => 'False', 'is_correct' => $question->correct_answer === 'False'],
-                                ];
-                            } else {
-                                try {
-                                    $rawOptions = $question->options;
-                                    if (is_string($rawOptions)) {
-                                        $options = json_decode($rawOptions, true) ?? [];
-                                    } elseif (is_array($rawOptions)) {
-                                        $options = $rawOptions;
-                                    } else {
-                                        $options = [];
-                                    }
-
-                                    $formattedQuestion['options'] = array_map(function ($option) use ($question) {
-                                        return [
-                                            'text' => is_array($option) ? ($option['text'] ?? '') : $option,
-                                            'is_correct' => $option === $question->correct_answer,
-                                        ];
-                                    }, $options);
-                                } catch (\Exception $e) {
-                                    $formattedQuestion['options'] = [];
-                                }
-                            }
-
-                            $questionsOut[] = $formattedQuestion;
-                            $data['total_marks'] += $formattedQuestion['marks'];
-                        }
-                    } else {
-                        $parent = $question->parent;
-
-                        if (!isset($groups[$parentId])) {
-                            // Fallback: parent not in this section list, create group on first child
-                            $groups[$parentId] = count($questionsOut);
-
-                            $questionsOut[] = [
-                                'number' => $questionNumber++,
-                                'text' => $parent ? $parent->question : $question->question,
-                                'type' => 'parent_group',
-                                'image' => null,
-                                'sub_questions' => [],
-                            ];
-                        }
-
-                        $groupIndex = $groups[$parentId];
-                        $subQuestions = &$questionsOut[$groupIndex]['sub_questions'];
-
-                        $options = [];
-                        if ($question->question_type === 'true_false') {
-                            $options = [
-                                ['text' => 'True', 'is_correct' => $question->correct_answer === 'True'],
-                                ['text' => 'False', 'is_correct' => $question->correct_answer === 'False'],
-                            ];
-                        } elseif ($question->question_type === 'mcq') {
-                            try {
-                                $rawOptions = $question->options;
-                                if (is_string($rawOptions)) {
-                                    $rawOptions = json_decode($rawOptions, true) ?? [];
-                                }
-
-                                if (is_array($rawOptions)) {
-                                    foreach ($rawOptions as $opt) {
-                                        $options[] = [
-                                            'text' => is_array($opt) ? ($opt['text'] ?? '') : $opt,
-                                            'is_correct' => $opt === $question->correct_answer,
-                                        ];
-                                    }
-                                }
-                            } catch (\Exception $e) {
-                                $options = [];
-                            }
-                        } elseif ($question->question_type === 'matching') {
-                            $rawOptions = $question->options ?? [];
-                            if (is_string($rawOptions)) {
-                                $rawOptions = json_decode($rawOptions, true) ?? [];
-                            }
-
-                            $pairs = [];
-                            if (is_array($rawOptions)) {
-                                // Case 1: stored as { left: [...], right: [...] }
-                                if (array_key_exists('left', $rawOptions) && array_key_exists('right', $rawOptions)) {
-                                    $lefts  = is_array($rawOptions['left']) ? $rawOptions['left'] : [];
-                                    $rights = is_array($rawOptions['right']) ? $rawOptions['right'] : [];
-                                    $max = max(count($lefts), count($rights));
-
-                                    for ($i = 0; $i < $max; $i++) {
-                                        $pairs[] = [
-                                            'left'  => $lefts[$i]  ?? '',
-                                            'right' => $rights[$i] ?? '',
-                                        ];
-                                    }
-                                } else {
-                                    // Case 2: stored as array of pair objects
-                                    foreach ($rawOptions as $pair) {
-                                        if (is_array($pair)) {
-                                            $left  = $pair['left']  ?? (array_values($pair)[0] ?? '');
-                                            $right = $pair['right'] ?? (array_values($pair)[1] ?? '');
-                                        } else {
-                                            $left  = (string) $pair;
-                                            $right = '';
-                                        }
-                                        $pairs[] = [
-                                            'left'  => $left,
-                                            'right' => $right,
-                                        ];
-                                    }
-                                }
-                            }
-
-                            $options = $pairs;
-                        }
-
-                        $label = chr(ord('a') + count($subQuestions));
-
-                        $subQuestions[] = [
-                            'label' => $label,
-                            'text' => $question->question,
-                            'type' => $question->question_type,
-                            'marks' => $question->marks ?? 1,
-                            'options' => $options,
-                        ];
-
-                        $data['total_marks'] += $question->marks ?? 0;
-                    }
-                }
-
-                $sectionBlock['questions'] = $questionsOut;
-                if (!empty($questionsOut)) {
+                if (!empty($formatted)) {
                     $data['sections'][] = $sectionBlock;
                 }
             }
+
         } else {
-            $assessmentQuestions = $assessment->questions->sortBy('order')->map(function ($aq) {
-                return $aq->question;
-            })->filter();
-
-            $parentIds = $assessmentQuestions->pluck('parent_question_id')->filter()->unique()->all();
-
-            $groups = [];
-            $questionsOut = [];
-
-            foreach ($assessmentQuestions as $index => $question) {
-                if (in_array($question->id, $parentIds, true) && is_null($question->parent_question_id)) {
-                    continue;
-                }
-
-                $parentId = $question->parent_question_id;
-
-                $imagePath = null;
-                if ($question->question_image) {
-                    $relativePath = ltrim($question->question_image, '/');
-                    $imagePath = storage_path('app/public/' . $relativePath);
-                    if (!file_exists($imagePath)) {
-                        $imagePath = null;
-                    }
-                }
-
-                if (empty($parentId)) {
-                    $formattedQuestion = [
-                        'number' => $questionNumber++,
-                        'text' => $question->question,
-                        'marks' => $question->marks ?? 1,
-                        'type' => $question->question_type,
-                        'image' => $imagePath,
-                        'options' => [],
-                    ];
-
-                    if ($question->question_type === 'true_false') {
-                        $formattedQuestion['options'] = [
-                            ['text' => 'True', 'is_correct' => $question->correct_answer === 'True'],
-                            ['text' => 'False', 'is_correct' => $question->correct_answer === 'False'],
-                        ];
-                    } else {
-                        try {
-                            $rawOptions = $question->options;
-                            if (is_string($rawOptions)) {
-                                $options = json_decode($rawOptions, true) ?? [];
-                            } elseif (is_array($rawOptions)) {
-                                $options = $rawOptions;
-                            } else {
-                                $options = [];
-                            }
-
-                            $formattedQuestion['options'] = array_map(function ($option) use ($question) {
-                                return [
-                                    'text' => is_array($option) ? ($option['text'] ?? '') : $option,
-                                    'is_correct' => $option === $question->correct_answer,
-                                ];
-                            }, $options);
-                        } catch (\Exception $e) {
-                            $formattedQuestion['options'] = [];
-                        }
-                    }
-
-                    $questionsOut[] = $formattedQuestion;
-                    $data['total_marks'] += $formattedQuestion['marks'];
-                } else {
-                    $parent = $question->parent;
-
-                    if (!isset($groups[$parentId])) {
-                        $groups[$parentId] = count($questionsOut);
-
-                        $questionsOut[] = [
-                            'number' => $questionNumber++,
-                            'text' => $parent ? $parent->question : $question->question,
-                            'type' => 'parent_group',
-                            'image' => null,
-                            'sub_questions' => [],
-                        ];
-                    }
-
-                    $groupIndex = $groups[$parentId];
-                    $subQuestions = &$questionsOut[$groupIndex]['sub_questions'];
-
-                    $options = [];
-                    if ($question->question_type === 'true_false') {
-                        $options = [
-                            ['text' => 'True', 'is_correct' => $question->correct_answer === 'True'],
-                            ['text' => 'False', 'is_correct' => $question->correct_answer === 'False'],
-                        ];
-                    } elseif ($question->question_type === 'mcq') {
-                        try {
-                            $rawOptions = $question->options;
-                            if (is_string($rawOptions)) {
-                                $rawOptions = json_decode($rawOptions, true) ?? [];
-                            }
-
-                            if (is_array($rawOptions)) {
-                                foreach ($rawOptions as $opt) {
-                                    $options[] = [
-                                        'text' => is_array($opt) ? ($opt['text'] ?? '') : $opt,
-                                        'is_correct' => $opt === $question->correct_answer,
-                                    ];
-                                }
-                            }
-                        } catch (\Exception $e) {
-                            $options = [];
-                        }
-                    } elseif ($question->question_type === 'matching') {
-                        $rawOptions = $question->options ?? [];
-                        if (is_string($rawOptions)) {
-                            $rawOptions = json_decode($rawOptions, true) ?? [];
-                        }
-
-                        $pairs = [];
-                        if (is_array($rawOptions)) {
-                            if (array_key_exists('left', $rawOptions) && array_key_exists('right', $rawOptions)) {
-                                $lefts  = is_array($rawOptions['left']) ? $rawOptions['left'] : [];
-                                $rights = is_array($rawOptions['right']) ? $rawOptions['right'] : [];
-                                $max = max(count($lefts), count($rights));
-
-                                for ($i = 0; $i < $max; $i++) {
-                                    $pairs[] = [
-                                        'left'  => $lefts[$i]  ?? '',
-                                        'right' => $rights[$i] ?? '',
-                                    ];
-                                }
-                            } else {
-                                foreach ($rawOptions as $pair) {
-                                    if (is_array($pair)) {
-                                        $left  = $pair['left']  ?? (array_values($pair)[0] ?? '');
-                                        $right = $pair['right'] ?? (array_values($pair)[1] ?? '');
-                                    } else {
-                                        $left  = (string) $pair;
-                                        $right = '';
-                                    }
-                                    $pairs[] = [
-                                        'left'  => $left,
-                                        'right' => $right,
-                                    ];
-                                }
-                            }
-                        }
-
-                        $options = $pairs;
-                    }
-
-                    $label = chr(ord('a') + count($subQuestions));
-
-                    $subQuestions[] = [
-                        'label' => $label,
-                        'text' => $question->question,
-                        'type' => $question->question_type,
-                        'marks' => $question->marks ?? 1,
-                        'options' => $options,
-                    ];
-
-                    $data['total_marks'] += $question->marks ?? 0;
-                }
-            }
-
-            $data['questions'] = $questionsOut;
+            //--------------------------------------
+            // HANDLE NON-SECTION ASSESSMENT
+            //--------------------------------------
+            $data['questions'] = $this->formatQuestions(
+                $assessment->questions->sortBy('order'),
+                $questionNumber,
+                $data['total_marks']
+            );
         }
 
-        $pdf = Pdf::loadView('assessments.pdf', $data);
+        //--------------------------------------
+        // DETECT IF ANY QUESTION HAS MATH
+        //--------------------------------------
+        $containsMath = $assessment->questions
+            ->contains(fn($q) => $q->is_math == 1);
 
-        $filename = 'assessment-' . Str::slug($assessment->title) . '.pdf';
-        return $pdf->download($filename);
+        //--------------------------------------
+        // RENDER HTML (choose layout)
+        //--------------------------------------
+        $layout = $request->query('layout', 'normal');
+        $view   = $layout === 'standard' ? 'pdf.standard-paper' : 'pdf.normal-paper';
+
+        $html = view($view, $data)->render();
+        $filePath = storage_path('app/papers/assessment-' . Str::slug($assessment->title) . '.pdf');
+
+        //--------------------------------------
+        // IF MATH → USE BROWSERSHOT (MathJax)
+        //--------------------------------------
+        if ($containsMath) {
+
+            Browsershot::html($html)
+                ->format('A4')
+                ->margins(10, 10, 10, 10)
+                ->timeout(120)
+                ->waitUntilNetworkIdle()   // wait for MathJax to finish rendering
+                ->save($filePath);
+
+            return response()->download($filePath);
+        }
+
+        //--------------------------------------
+        // ELSE → USE DOMPDF (FAST)
+        //--------------------------------------
+        $pdf = Pdf::loadHTML($html)->setPaper('A4');
+        return $pdf->download('assessment-' . Str::slug($assessment->title) . '.pdf');
     }
+
 
     /**
-     * Generate a student version of the assessment PDF (without answers)
-     *
-     * @param int $id
-     * @return \Illuminate\Http\Response
+     * Format questions + parent/child structure
      */
-    public function generatePdfStudent($id)
+    private function formatQuestions($questions, &$questionNumber, &$totalMarks)
     {
-        $assessment = Assessment::with([
-            'questions.question.parent',
-            'sections.questions.parent',
-            'topics.gradeSubject.subject',
-            'creator.school',
-        ])->findOrFail($id);
+        $output = [];
+        $groups = [];
+        $parentIds = $questions->pluck('parent_question_id')->filter()->unique()->all();
 
-        $user = Auth::user();
-        if ($assessment->creator_id !== $user->id) {
-            return response()->json(['message' => 'Not authorized'], 403);
-        }
+        foreach ($questions as $q) {
 
-        $school = $assessment->creator->school ?? null;
+            if (!$q) continue;
 
-        $subjects = $assessment->topics->map(function ($topic) {
-            return $topic->gradeSubject?->subject?->name;
-        })->filter()->unique()->values();
+            $isParent = in_array($q->id, $parentIds);
+            $parentId = $q->parent_question_id;
 
-        $data = [
-            'title' => $assessment->title . ' - Question Paper',
-            'subject' => $subjects->first() ?? 'General',
-            'created_at' => $assessment->created_at->format('F j, Y'),
-            'school' => [
-                'school_name' => $school?->school_name ?? 'School Name',
-                'address' => $school?->address ?? 'School Address',
-                'phone' => $school?->phone ?? 'Phone Number',
-                'email' => $school?->email ?? 'school@example.com',
-                'logo' => $school && $school->logo_path ? storage_path('app/public/' . $school->logo_path) : null,
-            ],
-            'sections' => [],
-            'questions' => [],
-            'total_marks' => 0,
-        ];
+            //--------------------------------------
+            // IMAGE PATH
+            //--------------------------------------
+            $imagePath = null;
+            if ($q->question_image) {
+                $path = storage_path('app/public/' . ltrim($q->question_image, '/'));
+                $imagePath = file_exists($path) ? $path : null;
+            }
 
-        $questionNumber = 1;
+            //--------------------------------------
+            // MAIN PARENT QUESTION
+            //--------------------------------------
+            if (!$parentId && $isParent) {
 
-        // With sections
-        if ($assessment->sections && $assessment->sections->count() > 0) {
-            foreach ($assessment->sections->sortBy('ordering') as $section) {
-                $sectionBlock = [
-                    'title' => $section->title,
-                    'instruction' => $section->instruction,
-                    'questions' => [],
+                $groups[$q->id] = count($output);
+
+                $output[] = [
+                    'number'        => $questionNumber++,
+                    'text'          => $q->question,
+                    'type'          => 'parent_group',
+                    'is_math'       => $q->is_math,
+                    'image'         => $imagePath,
+                    'sub_questions' => []
+                ];
+                continue;
+            }
+
+            //--------------------------------------
+            // STANDALONE QUESTION
+            //--------------------------------------
+            if (!$parentId && !$isParent) {
+
+                $formatted = [
+                    'number'  => $questionNumber++,
+                    'text'    => $q->question,
+                    'marks'   => $q->marks ?? 1,
+                    'type'    => $q->question_type,
+                    'image'   => $imagePath,
+                    'is_math' => $q->is_math,
+                    'options' => $this->parseOptions($q)
                 ];
 
-                $sectionQuestions = $section->questions;
-                $parentIds = $sectionQuestions->pluck('parent_question_id')->filter()->unique()->all();
+                $totalMarks += $formatted['marks'];
+                $output[] = $formatted;
 
-                $groups = [];
-                $questionsOut = [];
-
-                foreach ($sectionQuestions as $question) {
-                    if (!$question) {
-                        continue;
-                    }
-
-                    $parentId = $question->parent_question_id;
-
-                    // Resolve question image path (if any)
-                    $imagePath = null;
-                    if ($question->question_image) {
-                        $relativePath = ltrim($question->question_image, '/');
-                        $imagePath = storage_path('app/public/' . $relativePath);
-                        if (!file_exists($imagePath)) {
-                            $imagePath = null;
-                        }
-                    }
-
-                    // Render math/chemistry in stem
-                    $renderedText = $question->question;
-                    if ($question->is_math) {
-                        $renderedText = preg_replace_callback('/\\((.*?)\\)/', function ($matches) {
-                            return $this->renderKatex($matches[1]);
-                        }, $question->question);
-                    } elseif ($question->is_chemistry) {
-                        $renderedText = preg_replace_callback('/\\[(.*?)\\]/', function ($matches) {
-                            return $this->renderChemistry($matches[1]);
-                        }, $question->question);
-                    }
-
-                    if (empty($parentId)) {
-                        // Parent has children -> create parent_group at this position
-                        if (in_array($question->id, $parentIds, true)) {
-                            $groups[$question->id] = count($questionsOut);
-
-                            $questionsOut[] = [
-                                'number' => $questionNumber++,
-                                'text' => $renderedText,
-                                'type' => 'parent_group',
-                                'image' => $imagePath,
-                                'sub_questions' => [],
-                            ];
-                        } else {
-                            // Standalone question (no children)
-                            $options = [];
-                            if (in_array($question->question_type, ['mcq', 'true_false'])) {
-                                if ($question->question_type === 'true_false') {
-                                    $options = [
-                                        ['text' => 'True'],
-                                        ['text' => 'False'],
-                                    ];
-                                } else {
-                                    $rawOptions = $question->options;
-                                    if (is_string($rawOptions)) {
-                                        $decodedOptions = json_decode($rawOptions, true) ?? [];
-                                    } elseif (is_array($rawOptions)) {
-                                        $decodedOptions = $rawOptions;
-                                    } else {
-                                        $decodedOptions = [];
-                                    }
-
-                                    foreach ($decodedOptions as $opt) {
-                                        $baseText = is_array($opt) ? ($opt['text'] ?? '') : $opt;
-
-                                        $optText = $baseText;
-                                        if ($question->is_math) {
-                                            $optText = preg_replace_callback('/\\((.*?)\\)/', function ($m) {
-                                                return $this->renderKatex($m[1]);
-                                            }, $baseText);
-                                        } elseif ($question->is_chemistry) {
-                                            $optText = preg_replace_callback('/\\[(.*?)\\]/', function ($m) {
-                                                return $this->renderChemistry($m[1]);
-                                            }, $baseText);
-                                        }
-                                        $options[] = ['text' => $optText];
-                                    }
-                                }
-                            }
-
-                            if ($question->question_type === 'matching') {
-                                $rawOptions = $question->options ?? [];
-                                if (is_string($rawOptions)) {
-                                    $rawOptions = json_decode($rawOptions, true) ?? [];
-                                }
-
-                                $pairs = [];
-                                if (is_array($rawOptions)) {
-                                    if (array_key_exists('left', $rawOptions) && array_key_exists('right', $rawOptions)) {
-                                        $lefts  = is_array($rawOptions['left']) ? $rawOptions['left'] : [];
-                                        $rights = is_array($rawOptions['right']) ? $rawOptions['right'] : [];
-                                        $max = max(count($lefts), count($rights));
-
-                                        for ($i = 0; $i < $max; $i++) {
-                                            $pairs[] = [
-                                                'left'  => $lefts[$i]  ?? '',
-                                                'right' => $rights[$i] ?? '',
-                                            ];
-                                        }
-                                    } else {
-                                        foreach ($rawOptions as $pair) {
-                                            if (is_array($pair)) {
-                                                $left  = $pair['left']  ?? (array_values($pair)[0] ?? '');
-                                                $right = $pair['right'] ?? (array_values($pair)[1] ?? '');
-                                            } else {
-                                                $left  = (string) $pair;
-                                                $right = '';
-                                            }
-                                            $pairs[] = [
-                                                'left'  => $left,
-                                                'right' => $right,
-                                            ];
-                                        }
-                                    }
-                                }
-
-                                $options = $pairs;
-                            }
-
-                            $questionsOut[] = [
-                                'number' => $questionNumber++,
-                                'text' => $renderedText,
-                                'type' => $question->question_type,
-                                'marks' => $question->marks ?? 1,
-                                'image' => $imagePath,
-                                'options' => $options,
-                            ];
-
-                            $data['total_marks'] += $question->marks ?? 0;
-                        }
-                    } else {
-                        $parent = $question->parent;
-
-                        if (!isset($groups[$parentId])) {
-                            $groups[$parentId] = count($questionsOut);
-
-                            $questionsOut[] = [
-                                'number' => $questionNumber++,
-                                'text' => $parent ? $parent->question : $question->question,
-                                'type' => 'parent_group',
-                                'image' => $imagePath,
-                                'sub_questions' => [],
-                            ];
-                        }
-
-                        $groupIndex = $groups[$parentId];
-                        $subQuestions = &$questionsOut[$groupIndex]['sub_questions'];
-
-                        $childRendered = $renderedText;
-
-                        $options = [];
-                        if (in_array($question->question_type, ['mcq', 'true_false'])) {
-                            if ($question->question_type === 'true_false') {
-                                $options = [
-                                    ['text' => 'True'],
-                                    ['text' => 'False'],
-                                ];
-                            } else {
-                                $rawOptions = $question->options;
-                                if (is_string($rawOptions)) {
-                                    $decodedOptions = json_decode($rawOptions, true) ?? [];
-                                } elseif (is_array($rawOptions)) {
-                                    $decodedOptions = $rawOptions;
-                                } else {
-                                    $decodedOptions = [];
-                                }
-
-                                foreach ($decodedOptions as $opt) {
-                                    $baseText = is_array($opt) ? ($opt['text'] ?? '') : $opt;
-
-                                    $optText = $baseText;
-                                    if ($question->is_math) {
-                                        $optText = preg_replace_callback('/\\((.*?)\\)/', function ($m) {
-                                            return $this->renderKatex($m[1]);
-                                        }, $baseText);
-                                    } elseif ($question->is_chemistry) {
-                                        $optText = preg_replace_callback('/\\[(.*?)\\]/', function ($m) {
-                                            return $this->renderChemistry($m[1]);
-                                        }, $baseText);
-                                    }
-                                    $options[] = ['text' => $optText];
-                                }
-                            }
-                        }
-
-                        if ($question->question_type === 'matching') {
-                            $rawOptions = $question->options ?? [];
-                            if (is_string($rawOptions)) {
-                                $rawOptions = json_decode($rawOptions, true) ?? [];
-                            }
-
-                            $pairs = [];
-                            if (is_array($rawOptions)) {
-                                foreach ($rawOptions as $pair) {
-                                    if (is_array($pair)) {
-                                        $left  = $pair['left']  ?? (array_values($pair)[0] ?? '');
-                                        $right = $pair['right'] ?? (array_values($pair)[1] ?? '');
-                                    } else {
-                                        $left  = (string) $pair;
-                                        $right = '';
-                                    }
-                                    $pairs[] = [
-                                        'left'  => $left,
-                                        'right' => $right,
-                                    ];
-                                }
-                            }
-
-                            $options = $pairs;
-                        }
-
-                        $label = chr(ord('a') + count($subQuestions));
-
-                        $subQuestions[] = [
-                            'label' => $label,
-                            'text' => $childRendered,
-                            'type' => $question->question_type,
-                            'marks' => $question->marks ?? 1,
-                            'options' => $options,
-                        ];
-
-                        $data['total_marks'] += $question->marks ?? 0;
-                    }
-                }
-
-                $sectionBlock['questions'] = $questionsOut;
-                if (!empty($questionsOut)) {
-                    $data['sections'][] = $sectionBlock;
-                }
-            }
-        } else {
-            // No sections: preserve ordering and group parent/sub-questions
-            $assessmentQuestions = $assessment->questions->sortBy('order')->map(function ($aq) {
-                return $aq->question;
-            })->filter();
-
-            $parentIds = $assessmentQuestions->pluck('parent_question_id')->filter()->unique()->all();
-
-            $groups = [];
-            $questionsOut = [];
-
-            foreach ($assessmentQuestions as $question) {
-                $parentId = $question->parent_question_id;
-
-                // Resolve image path
-                $imagePath = null;
-                if ($question->question_image) {
-                    $relativePath = ltrim($question->question_image, '/');
-                    $imagePath = storage_path('app/public/' . $relativePath);
-                    if (!file_exists($imagePath)) {
-                        $imagePath = null;
-                    }
-                }
-
-                // Render math/chemistry in stem
-                $renderedText = $question->question;
-                if ($question->is_math) {
-                    $renderedText = preg_replace_callback('/\\((.*?)\\)/', function ($matches) {
-                        return $this->renderKatex($matches[1]);
-                    }, $question->question);
-                } elseif ($question->is_chemistry) {
-                    $renderedText = preg_replace_callback('/\\[(.*?)\\]/', function ($matches) {
-                        return $this->renderChemistry($matches[1]);
-                    }, $question->question);
-                }
-
-                if (empty($parentId)) {
-                    // Parent with children -> create parent_group at this position
-                    if (in_array($question->id, $parentIds, true)) {
-                        $groups[$question->id] = count($questionsOut);
-
-                        $questionsOut[] = [
-                            'number' => $questionNumber++,
-                            'text' => $renderedText,
-                            'type' => 'parent_group',
-                            'image' => $imagePath,
-                            'sub_questions' => [],
-                        ];
-                    } else {
-                        // Standalone question (no children)
-                        $options = [];
-                        if (in_array($question->question_type, ['mcq', 'true_false'])) {
-                            if ($question->question_type === 'true_false') {
-                                $options = [
-                                    ['text' => 'True'],
-                                    ['text' => 'False'],
-                                ];
-                            } else {
-                                $rawOptions = $question->options;
-                                if (is_string($rawOptions)) {
-                                    $decodedOptions = json_decode($rawOptions, true) ?? [];
-                                } elseif (is_array($rawOptions)) {
-                                    $decodedOptions = $rawOptions;
-                                } else {
-                                    $decodedOptions = [];
-                                }
-
-                                foreach ($decodedOptions as $opt) {
-                                    $baseText = is_array($opt) ? ($opt['text'] ?? '') : $opt;
-
-                                    $optText = $baseText;
-                                    if ($question->is_math) {
-                                        $optText = preg_replace_callback('/\\((.*?)\\)/', function ($m) {
-                                            return $this->renderKatex($m[1]);
-                                        }, $baseText);
-                                    } elseif ($question->is_chemistry) {
-                                        $optText = preg_replace_callback('/\\[(.*?)\\]/', function ($m) {
-                                            return $this->renderChemistry($m[1]);
-                                        }, $baseText);
-                                    }
-                                    $options[] = ['text' => $optText];
-                                }
-                            }
-                        }
-
-                        if ($question->question_type === 'matching') {
-                            $rawOptions = $question->options ?? [];
-                            if (is_string($rawOptions)) {
-                                $rawOptions = json_decode($rawOptions, true) ?? [];
-                            }
-
-                            $pairs = [];
-                            if (is_array($rawOptions)) {
-                                if (array_key_exists('left', $rawOptions) && array_key_exists('right', $rawOptions)) {
-                                    $lefts  = is_array($rawOptions['left']) ? $rawOptions['left'] : [];
-                                    $rights = is_array($rawOptions['right']) ? $rawOptions['right'] : [];
-                                    $max = max(count($lefts), count($rights));
-
-                                    for ($i = 0; $i < $max; $i++) {
-                                        $pairs[] = [
-                                            'left'  => $lefts[$i]  ?? '',
-                                            'right' => $rights[$i] ?? '',
-                                        ];
-                                    }
-                                } else {
-                                    foreach ($rawOptions as $pair) {
-                                        if (is_array($pair)) {
-                                            $left  = $pair['left']  ?? (array_values($pair)[0] ?? '');
-                                            $right = $pair['right'] ?? (array_values($pair)[1] ?? '');
-                                        } else {
-                                            $left  = (string) $pair;
-                                            $right = '';
-                                        }
-                                        $pairs[] = [
-                                            'left'  => $left,
-                                            'right' => $right,
-                                        ];
-                                    }
-                                }
-                            }
-
-                            $options = $pairs;
-                        }
-
-                        $questionsOut[] = [
-                            'number' => $questionNumber++,
-                            'text' => $renderedText,
-                            'type' => $question->question_type,
-                            'marks' => $question->marks ?? 1,
-                            'image' => $imagePath,
-                            'options' => $options,
-                        ];
-
-                        $data['total_marks'] += $question->marks ?? 0;
-                    }
-                } else {
-                    $parent = $question->parent;
-
-                    if (!isset($groups[$parentId])) {
-                        $groups[$parentId] = count($questionsOut);
-
-                        $questionsOut[] = [
-                            'number' => $questionNumber++,
-                            'text' => $parent ? $parent->question : $question->question,
-                            'type' => 'parent_group',
-                            'image' => $imagePath,
-                            'sub_questions' => [],
-                        ];
-                    }
-
-                    $groupIndex = $groups[$parentId];
-                    $subQuestions = &$questionsOut[$groupIndex]['sub_questions'];
-
-                    $childRendered = $renderedText;
-
-                    $options = [];
-                    if (in_array($question->question_type, ['mcq', 'true_false'])) {
-                        if ($question->question_type === 'true_false') {
-                            $options = [
-                                ['text' => 'True'],
-                                ['text' => 'False'],
-                            ];
-                        } else {
-                            $rawOptions = $question->options;
-                            if (is_string($rawOptions)) {
-                                $decodedOptions = json_decode($rawOptions, true) ?? [];
-                            } elseif (is_array($rawOptions)) {
-                                $decodedOptions = $rawOptions;
-                            } else {
-                                $decodedOptions = [];
-                            }
-
-                            foreach ($decodedOptions as $opt) {
-                                $baseText = is_array($opt) ? ($opt['text'] ?? '') : $opt;
-
-                                $optText = $baseText;
-                                if ($question->is_math) {
-                                    $optText = preg_replace_callback('/\\((.*?)\\)/', function ($m) {
-                                        return $this->renderKatex($m[1]);
-                                    }, $baseText);
-                                } elseif ($question->is_chemistry) {
-                                    $optText = preg_replace_callback('/\\[(.*?)\\]/', function ($m) {
-                                        return $this->renderChemistry($m[1]);
-                                    }, $baseText);
-                                }
-                                $options[] = ['text' => $optText];
-                            }
-                        }
-                    }
-
-                    if ($question->question_type === 'matching') {
-                        $rawOptions = $question->options ?? [];
-                        if (is_string($rawOptions)) {
-                            $rawOptions = json_decode($rawOptions, true) ?? [];
-                        }
-
-                        $pairs = [];
-                        if (is_array($rawOptions)) {
-                            foreach ($rawOptions as $pair) {
-                                if (is_array($pair)) {
-                                    $left  = $pair['left']  ?? (array_values($pair)[0] ?? '');
-                                    $right = $pair['right'] ?? (array_values($pair)[1] ?? '');
-                                } else {
-                                    $left  = (string) $pair;
-                                    $right = '';
-                                }
-                                $pairs[] = [
-                                    'left'  => $left,
-                                    'right' => $right,
-                                ];
-                            }
-                        }
-
-                        $options = $pairs;
-                    }
-
-                    $label = chr(ord('a') + count($subQuestions));
-
-                    $subQuestions[] = [
-                        'label' => $label,
-                        'text' => $childRendered,
-                        'type' => $question->question_type,
-                        'marks' => $question->marks ?? 1,
-                        'options' => $options,
-                    ];
-
-                    $data['total_marks'] += $question->marks ?? 0;
-                }
+                continue;
             }
 
-            $data['questions'] = $questionsOut;
-        }
-
-        $pdf = Pdf::loadView('assessments.pdf_student', $data);
-        $pdf->setPaper('a4');
-        $pdf->setOption('margin-top', 20);
-        $pdf->setOption('margin-bottom', 20);
-        $pdf->setOption('margin-left', 15);
-        $pdf->setOption('margin-right', 15);
-
-        $filename = 'student-assessment-' . Str::slug($assessment->title) . '.pdf';
-        return $pdf->download($filename);
-    }
-        // Resolve image path for non-section questions
-        $imagePath = null;
-        if ($question->question_image) {
-            $relativePath = ltrim($question->question_image, '/');
-            $imagePath = storage_path('app/public/' . $relativePath);
-            if (!file_exists($imagePath)) {
-                $imagePath = null;
-            }
-        }
-
-        $renderedText = $question->question;
-        if ($question->is_math) {
-            $renderedText = preg_replace_callback('/\\((.*?)\\)/', function ($matches) {
-                return $this->renderKatex($matches[1]);
-            }, $question->question);
-        } elseif ($question->is_chemistry) {
-            $renderedText = preg_replace_callback('/\\[(.*?)\\]/', function ($matches) {
-                return $this->renderChemistry($matches[1]);
-            }, $question->question);
-        }
-
-        if (empty($parentId)) {
-            // Parent with children -> create parent_group at this position
-            if (in_array($question->id, $parentIds, true)) {
-                $groups[$question->id] = count($questionsOut);
-
-                $questionsOut[] = [
-                    'number' => $questionNumber++,
-                    'text' => $renderedText,
-                    'type' => 'parent_group',
-                    'image' => $imagePath,
-                    'sub_questions' => [],
-                ];
-            } else {
-                // Standalone question (no children)
-                $options = [];
-                if (in_array($question->question_type, ['mcq', 'true_false'])) {
-                    if ($question->question_type === 'true_false') {
-                        $options = [
-                            ['text' => 'True'],
-                            ['text' => 'False'],
-                        ];
-                    } else {
-                        $rawOptions = $question->options;
-                        if (is_string($rawOptions)) {
-                            $decodedOptions = json_decode($rawOptions, true) ?? [];
-                        } elseif (is_array($rawOptions)) {
-                            $decodedOptions = $rawOptions;
-                        } else {
-                            $decodedOptions = [];
-                        }
-
-                        foreach ($decodedOptions as $opt) {
-                            $baseText = is_array($opt) ? ($opt['text'] ?? '') : $opt;
-
-                            $optText = $baseText;
-                            if ($question->is_math) {
-                                $optText = preg_replace_callback('/\\((.*?)\\)/', function ($m) {
-                                    return $this->renderKatex($m[1]);
-                                }, $baseText);
-                            } elseif ($question->is_chemistry) {
-                                $optText = preg_replace_callback('/\\[(.*?)\\]/', function ($m) {
-                                    return $this->renderChemistry($m[1]);
-                                }, $baseText);
-                            }
-                            $options[] = ['text' => $optText];
-                        }
-                    }
-                }
-
-                if ($question->question_type === 'matching') {
-                    $rawOptions = $question->options ?? [];
-                    if (is_string($rawOptions)) {
-                        $rawOptions = json_decode($rawOptions, true) ?? [];
-                    }
-
-                    $pairs = [];
-                    if (is_array($rawOptions)) {
-                        if (array_key_exists('left', $rawOptions) && array_key_exists('right', $rawOptions)) {
-                            $lefts  = is_array($rawOptions['left']) ? $rawOptions['left'] : [];
-                            $rights = is_array($rawOptions['right']) ? $rawOptions['right'] : [];
-                            $max = max(count($lefts), count($rights));
-
-                            for ($i = 0; $i < $max; $i++) {
-                                $pairs[] = [
-                                    'left'  => $lefts[$i]  ?? '',
-                                    'right' => $rights[$i] ?? '',
-                                ];
-                            }
-                        } else {
-                            foreach ($rawOptions as $pair) {
-                                if (is_array($pair)) {
-                                    $left  = $pair['left']  ?? (array_values($pair)[0] ?? '');
-                                    $right = $pair['right'] ?? (array_values($pair)[1] ?? '');
-                                } else {
-                                    $left  = (string) $pair;
-                                    $right = '';
-                                }
-                                $pairs[] = [
-                                    'left'  => $left,
-                                    'right' => $right,
-                                ];
-                            }
-                        }
-                    }
-
-                    $options = $pairs;
-                }
-
-                $questionsOut[] = [
-                    'number' => $questionNumber++,
-                    'text' => $renderedText,
-                    'type' => $question->question_type,
-                    'marks' => $question->marks ?? 1,
-                    'image' => $imagePath,
-                    'options' => $options,
-                ];
-
-                $data['total_marks'] += $question->marks ?? 0;
-            }
-        } else {
-            $parent = $question->parent;
-
+            //--------------------------------------
+            // CHILD QUESTION
+            //--------------------------------------
             if (!isset($groups[$parentId])) {
-                $groups[$parentId] = count($questionsOut);
+                $parent = $q->parent;
 
-                $questionsOut[] = [
-                    'number' => $questionNumber++,
-                    'text' => $parent ? $parent->question : $question->question,
-                    'type' => 'parent_group',
-                    'image' => $imagePath,
-                    'sub_questions' => [],
+                $groups[$parentId] = count($output);
+
+                $output[] = [
+                    'number'        => $questionNumber++,
+                    'text'          => $parent ? $parent->question : $q->question,
+                    'type'          => 'parent_group',
+                    'is_math'       => $parent ? $parent->is_math : 0,
+                    'image'         => null,
+                    'sub_questions' => []
                 ];
             }
 
             $groupIndex = $groups[$parentId];
-            $subQuestions = &$questionsOut[$groupIndex]['sub_questions'];
+            $sub = &$output[$groupIndex]['sub_questions'];
+            $label = chr(ord('a') + count($sub));
 
-            $childRendered = $renderedText;
+            $sub[] = [
+                'label'    => $label,
+                'text'     => $q->question,
+                'type'     => $q->question_type,
+                'marks'    => $q->marks ?? 1,
+                'is_math'  => $q->is_math,
+                'options'  => $this->parseOptions($q)
+            ];
 
-            $options = [];
-            if (in_array($question->question_type, ['mcq', 'true_false'])) {
-                if ($question->question_type === 'true_false') {
-                    $options = [
-                        ['text' => 'True'],
-                        ['text' => 'False'],
+            $totalMarks += $q->marks ?? 0;
+        }
+
+        return $output;
+    }
+
+
+    /**
+     * Parse MCQ / True False / Matching options
+     */
+    private function parseOptions($q)
+    {
+        if ($q->question_type === 'true_false') {
+            return [
+                ['text' => 'True',  'is_correct' => $q->correct_answer === 'True'],
+                ['text' => 'False', 'is_correct' => $q->correct_answer === 'False'],
+            ];
+        }
+
+        if ($q->question_type === 'mcq') {
+            $raw = $q->options;
+
+            if (is_string($raw)) $raw = json_decode($raw, true) ?? [];
+            if (!is_array($raw)) $raw = [];
+
+            return array_map(function ($opt) use ($q) {
+                $text = is_array($opt) ? ($opt['text'] ?? '') : $opt;
+                return [
+                    'text'       => $text,
+                    'is_correct' => $opt === $q->correct_answer
+                ];
+            }, $raw);
+        }
+
+        if ($q->question_type === 'matching') {
+            $raw = $q->options;
+            if (is_string($raw)) $raw = json_decode($raw, true) ?? [];
+
+            $pairs = [];
+            if (isset($raw['left'], $raw['right'])) {
+                $lefts  = $raw['left'];
+                $rights = $raw['right'];
+                $max = max(count($lefts), count($rights));
+
+                for ($i = 0; $i < $max; $i++) {
+                    $pairs[] = [
+                        'left'  => $lefts[$i]  ?? '',
+                        'right' => $rights[$i] ?? ''
                     ];
-                } else {
-                    $rawOptions = $question->options;
-                    if (is_string($rawOptions)) {
-                        $decodedOptions = json_decode($rawOptions, true) ?? [];
-                    } elseif (is_array($rawOptions)) {
-                        $decodedOptions = $rawOptions;
-                    } else {
-                        $decodedOptions = [];
-                    }
-
-                    foreach ($decodedOptions as $opt) {
-                        $baseText = is_array($opt) ? ($opt['text'] ?? '') : $opt;
-
-                        $optText = $baseText;
-                        if ($question->is_math) {
-                            $optText = preg_replace_callback('/\\((.*?)\\)/', function ($m) {
-                                return $this->renderKatex($m[1]);
-                            }, $baseText);
-                        } elseif ($question->is_chemistry) {
-                            $optText = preg_replace_callback('/\\[(.*?)\\]/', function ($m) {
-                                return $this->renderChemistry($m[1]);
-                            }, $baseText);
-                        }
-                        $options[] = ['text' => $optText];
-                    }
-                    $label = chr(ord('a') + count($subQuestions));
-
-                    $subQuestions[] = [
-                        'label' => $label,
-                        'text' => $childRendered,
-                        'type' => $question->question_type,
-                        'marks' => $question->marks ?? 1,
-                        'options' => $options,
+                }
+            } else {
+                foreach ($raw as $pair) {
+                    $pairs[] = [
+                        'left'  => $pair['left']  ?? '',
+                        'right' => $pair['right'] ?? ''
                     ];
-
-                    $data['total_marks'] += $question->marks ?? 0;
                 }
             }
 
-            $data['questions'] = $questionsOut;
+            return $pairs;
         }
 
-        $pdf = Pdf::loadView('assessments.pdf_student', $data);
-        $pdf->setPaper('a4');
-        $pdf->setOption('margin-top', 20);
-        $pdf->setOption('margin-bottom', 20);
-        $pdf->setOption('margin-left', 15);
-        $pdf->setOption('margin-right', 15);
-
-        $filename = 'student-assessment-' . Str::slug($assessment->title) . '.pdf';
-        return $pdf->download($filename);
+        return [];
     }
 
-    protected function renderKatex($latex)
-    {
-        $latex = escapeshellarg($latex);
-        $html = shell_exec("katex --inline $latex 2>&1");
-        return $html ?: $latex;
-    }
 }
