@@ -114,9 +114,10 @@ class PaperGeneratorController extends Controller
         $filePath = storage_path('app/papers/assessment-' . Str::slug($assessment->title) . '.pdf');
 
         //--------------------------------------
-        // IF MATH OR IMAGES → USE BROWSERSHOT (MathJax and images)
+        // IF MATH → USE BROWSERSHOT (MathJax)
+        // ELSE → USE DOMPDF (faster, with base64 images)
         //--------------------------------------
-        if ($containsMath || $containsImages) {
+        if ($containsMath) {
 
             Browsershot::html($html)
                 ->format('A4')

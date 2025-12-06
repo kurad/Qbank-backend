@@ -83,8 +83,8 @@
                         <div class="question-text">
                             <span class="question-number">{{ $q['number'] }}.</span>
                             {!! $q['text'] !!}
-                            @if(!empty($q['image']))
-                                <div><img src="{{ asset($q['image']) }}" style="max-width:350px; max-height:180px;"></div>
+                            @if(!empty($q['image']) && file_exists(public_path($q['image'])))
+                                <div><img src="data:image/png;base64,{{ base64_encode(file_get_contents(public_path($q['image']))) }}" style="max-width:350px; max-height:180px;"></div>
                             @endif
                         </div>
 
@@ -152,8 +152,8 @@
                             <span class="question-number">{{ $q['number'] }}.</span>
                             {!! $q['text'] !!}
                             <span class="marks">[{{ $q['marks'] }} mark{{ $q['marks'] > 1 ? 's' : '' }}]</span>
-                            @if(!empty($q['image']))
-                                <div><img src="{{ asset($q['image']) }}" style="max-width:350px; max-height:180px;"></div>
+                            @if(!empty($q['image']) && file_exists(public_path($q['image'])))
+                                <div><img src="data:image/png;base64,{{ base64_encode(file_get_contents(public_path($q['image']))) }}" style="max-width:350px; max-height:180px;"></div>
                             @endif
                         </div>
 
@@ -218,8 +218,8 @@
                     <div class="question-text">
                         <span class="question-number">{{ $q['number'] }}.</span>
                         {!! $q['text'] !!}
-                        @if(!empty($q['image']))
-                            <div><img src="{{ asset($q['image']) }}" style="max-width:350px; max-height:180px;"></div>
+                        @if(!empty($q['image']) && file_exists(public_path($q['image'])))
+                            <div><img src="data:image/png;base64,{{ base64_encode(file_get_contents(public_path($q['image']))) }}" style="max-width:350px; max-height:180px;"></div>
                         @endif
                     </div>
 
