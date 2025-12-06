@@ -153,13 +153,13 @@ class PaperGeneratorController extends Controller
             $parentId = $q->parent_question_id;
 
             //--------------------------------------
-            // IMAGE PATH (public URL for PDF engines)
+            // IMAGE PATH (relative path for PDF views)
             //--------------------------------------
             $imagePath = null;
             if ($q->question_image) {
                 $img = $q->question_image;
 
-                // If already an absolute URL, use as-is
+                // If already an absolute URL, use as-is (but unlikely for stored images)
                 if (preg_match('#^https?://#', $img)) {
                     $imagePath = $img;
                 } else {
@@ -168,12 +168,12 @@ class PaperGeneratorController extends Controller
                     // 1) Check if file is directly under public/<relative>
                     $directPublicPath = public_path($relative);
                     if (file_exists($directPublicPath)) {
-                        $imagePath = asset($relative);
+                        $imagePath = $relative;
                     } else {
                         // 2) Fallback: treat as public/storage/<relative>
                         $storagePublicPath = public_path('storage/' . $relative);
                         if (file_exists($storagePublicPath)) {
-                            $imagePath = asset('storage/' . $relative);
+                            $imagePath = 'storage/' . $relative;
                         }
                     }
                 }

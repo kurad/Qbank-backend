@@ -124,7 +124,7 @@
                                             <div class="option-label">{{ chr(65 + $i) }}.</div>
                                             <div class="option-text">
                                                 @if(!empty($opt['image']))
-                                                    <img src="{{ $opt['image'] }}" style="max-height:50px;">
+                                                    <img src="{{ asset($opt['image']) }}" style="max-height:50px;">
                                                 @else
                                                     {!! $opt['text'] !!}
                                                 @endif
@@ -151,7 +151,7 @@
                             {!! $q['text'] !!}
                             <span class="marks">[{{ $q['marks'] }} mark{{ $q['marks'] > 1 ? 's' : '' }}]</span>
                             @if(!empty($q['image']))
-                                <div><img src="{{ $q['image'] }}" style="max-width:350px; max-height:180px;"></div>
+                                <div><img src="{{ asset($q['image']) }}" style="max-width:350px; max-height:180px;"></div>
                             @endif
                         </div>
 
@@ -184,7 +184,7 @@
                                         <div class="option-label">{{ chr(65 + $i) }}.</div>
                                             <div class="option-text">
                                             @if(!empty($opt['image']))
-                                                <img src="{{ $opt['image'] }}" style="max-height:50px;">
+                                                <img src="{{ asset($opt['image']) }}" style="max-height:50px;">
                                             @else
                                                 {!! $opt['text'] !!}
                                             @endif
@@ -217,7 +217,7 @@
                         <span class="question-number">{{ $q['number'] }}.</span>
                         {!! $q['text'] !!}
                         @if(!empty($q['image']))
-                            <div><img src="{{ $q['image'] }}" style="max-width:350px; max-height:180px;"></div>
+                            <div><img src="{{ asset($q['image']) }}" style="max-width:350px; max-height:180px;"></div>
                         @endif
                     </div>
 
@@ -256,7 +256,7 @@
                                         <div class="option-label">{{ chr(65 + $i) }}.</div>
                                         <div class="option-text">
                                             @if(!empty($opt['image']))
-                                                <img src="{{ $opt['image'] }}" style="max-height:50px;">
+                                                <img src="{{ asset($opt['image']) }}" style="max-height:50px;">
                                             @else
                                                 {!! $opt['text'] !!}
                                             @endif
@@ -283,7 +283,7 @@
                         {!! $q['text'] !!}
                         <span class="marks">[{{ $q['marks'] }} mark{{ $q['marks'] > 1 ? 's' : '' }}]</span>
                         @if(!empty($q['image']))
-                            <div><img src="{{ $q['image'] }}" style="max-width:350px; max-height:180px;"></div>
+                            <div><img src="{{ asset($q['image']) }}" style="max-width:350px; max-height:180px;"></div>
                         @endif
                     </div>
 
@@ -315,7 +315,7 @@
                                     <div class="option-label">{{ chr(65 + $i) }}.</div>
                                         <div class="option-text">
                                         @if(!empty($opt['image']))
-                                            <img src="{{ $opt['image'] }}" style="max-height:50px;">
+                                            <img src="{{ asset($opt['image']) }}" style="max-height:50px;">
                                         @else
                                             {!! $opt['text'] !!}
                                         @endif

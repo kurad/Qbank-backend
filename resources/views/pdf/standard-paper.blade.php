@@ -115,7 +115,7 @@
                             <span class="question-number">{{ $q['number'] }}.</span>
                             {!! $q['text'] !!}
                             @if(!empty($q['image']) && file_exists(public_path($q['image'])))
-                                <div><img src="data:image/png;base64,{{ base64_encode(file_get_contents(pubic_path($q['image']))) }}" style="max-width:350px; max-height:180px;"></div>
+                                <div><img src="data:image/png;base64,{{ base64_encode(file_get_contents(public_path($q['image']))) }}" style="max-width:350px; max-height:180px;"></div>
                             @endif
                         </div>
 
@@ -197,7 +197,7 @@
                         @endif -->
 
                          @if(!empty($q['image']) && file_exists(public_path($q['image'])))
-                                <div><img src="data:image/png;base64,{{ base64_encode(file_get_contents(pubic_path($q['image']))) }}" style="max-width:350px; max-height:180px;"></div>
+                                <div><img src="data:image/png;base64,{{ base64_encode(file_get_contents(public_path($q['image']))) }}" style="max-width:350px; max-height:180px;"></div>
                             @endif
                     </div>
 
