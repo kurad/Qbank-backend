@@ -149,12 +149,24 @@ class PaperGeneratorController extends Controller
             $parentId = $q->parent_question_id;
 
             //--------------------------------------
-            // IMAGE PATH
+            // IMAGE PATH (public URL for PDF engines)
             //--------------------------------------
             $imagePath = null;
             if ($q->question_image) {
-                $path = storage_path('app/public/' . ltrim($q->question_image, '/'));
-                $imagePath = file_exists($path) ? $path : null;
+                $img = $q->question_image;
+
+                // If already an absolute URL, use as-is
+                if (preg_match('#^https?://#', $img)) {
+                    $imagePath = $img;
+                } else {
+                    // Treat as relative path under public storage
+                    $relative = ltrim($img, '/');
+                    $publicPath = public_path('storage/' . $relative);
+
+                    if (file_exists($publicPath)) {
+                        $imagePath = asset('storage/' . $relative);
+                    }
+                }
             }
 
             //--------------------------------------
