@@ -115,7 +115,7 @@
                             <span class="question-number">{{ $q['number'] }}.</span>
                             {!! $q['text'] !!}
                             @if(!empty($q['image']))
-                                <div><img src="{{ $q['image'] }}" style="max-width:350px; max-height:180px;"></div>
+                                <div><img src="file://{{ public_path($q['image']) }}" style="max-width:350px; max-height:180px;"></div>
                             @endif
                         </div>
 
@@ -193,7 +193,7 @@
                         <span class="question-number">{{ $q['number'] }}.</span>
                         {!! $q['text'] !!}
                         @if(!empty($q['image']))
-                            <div><img src="{{ $q['image'] }}" style="max-width:350px; max-height:180px;"></div>
+                            <div><img src="file://{{ public_path($q['image']) }}" style="max-width:350px; max-height:180px;"></div>
                         @endif
                     </div>
 
