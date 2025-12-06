@@ -95,10 +95,14 @@ class PaperGeneratorController extends Controller
         }
 
         //--------------------------------------
-        // DETECT IF ANY QUESTION HAS MATH
+        // DETECT IF ANY QUESTION HAS MATH OR IMAGES
         //--------------------------------------
         $containsMath = $assessment->questions
             ->contains(fn($q) => $q->is_math == 1);
+
+        $containsImages = collect($data['questions'])
+            ->merge(collect($data['sections'])->pluck('questions')->flatten())
+            ->contains(fn($q) => !empty($q['image']));
 
         //--------------------------------------
         // RENDER HTML (choose layout)
@@ -110,9 +114,9 @@ class PaperGeneratorController extends Controller
         $filePath = storage_path('app/papers/assessment-' . Str::slug($assessment->title) . '.pdf');
 
         //--------------------------------------
-        // IF MATH → USE BROWSERSHOT (MathJax)
+        // IF MATH OR IMAGES → USE BROWSERSHOT (MathJax and images)
         //--------------------------------------
-        if ($containsMath) {
+        if ($containsMath || $containsImages) {
 
             Browsershot::html($html)
                 ->format('A4')
