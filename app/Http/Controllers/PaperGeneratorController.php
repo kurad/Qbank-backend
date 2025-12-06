@@ -159,12 +159,18 @@ class PaperGeneratorController extends Controller
                 if (preg_match('#^https?://#', $img)) {
                     $imagePath = $img;
                 } else {
-                    // Treat as relative path under public storage
                     $relative = ltrim($img, '/');
-                    $publicPath = public_path('storage/' . $relative);
 
-                    if (file_exists($publicPath)) {
-                        $imagePath = asset('storage/' . $relative);
+                    // 1) Check if file is directly under public/<relative>
+                    $directPublicPath = public_path($relative);
+                    if (file_exists($directPublicPath)) {
+                        $imagePath = asset($relative);
+                    } else {
+                        // 2) Fallback: treat as public/storage/<relative>
+                        $storagePublicPath = public_path('storage/' . $relative);
+                        if (file_exists($storagePublicPath)) {
+                            $imagePath = asset('storage/' . $relative);
+                        }
                     }
                 }
             }
