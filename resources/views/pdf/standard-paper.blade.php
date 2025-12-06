@@ -114,8 +114,8 @@
                         <div class="question-text">
                             <span class="question-number">{{ $q['number'] }}.</span>
                             {!! $q['text'] !!}
-                            @if(!empty($q['image']))
-                                <div><img src="{{ $q['image'] }}" style="max-width:350px; max-height:180px;"></div>
+                            @if(!empty($q['image']) && file_exists(public_path($q['image'])))
+                                <div><img src="data:image/png;base64,{{ base64_encode(file_get_contents(pubic_path($q['image']))) }}" style="max-width:350px; max-height:180px;"></div>
                             @endif
                         </div>
 
@@ -192,9 +192,13 @@
                     <div class="question-text">
                         <span class="question-number">{{ $q['number'] }}.</span>
                         {!! $q['text'] !!}
-                        @if(!empty($q['image']))
+                        <!-- @if(!empty($q['image']))
                             <div><img src="{{ $q['image'] }}" style="max-width:350px; max-height:180px;"></div>
-                        @endif
+                        @endif -->
+
+                         @if(!empty($q['image']) && file_exists(public_path($q['image'])))
+                                <div><img src="data:image/png;base64,{{ base64_encode(file_get_contents(pubic_path($q['image']))) }}" style="max-width:350px; max-height:180px;"></div>
+                            @endif
                     </div>
 
                     @foreach($q['sub_questions'] as $sub)
