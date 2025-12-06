@@ -124,6 +124,9 @@
                                 <span class="question-number">({{ $sub['label'] }})</span>
                                 {!! $sub['text'] !!}
                                 <span class="marks">[{{ $sub['marks'] }}]</span>
+                                @if(!empty($sub['image']) && file_exists(public_path($sub['image'])))
+                                    <div><img src="data:image/png;base64,{{ base64_encode(file_get_contents(public_path($sub['image']))) }}" style="max-width:350px; max-height:180px;"></div>
+                                @endif
                             </div>
 
                             {{-- Multiple Choice / options --}}
@@ -206,6 +209,9 @@
                             <span class="question-number">({{ $sub['label'] }})</span>
                             {!! $sub['text'] !!}
                             <span class="marks">[{{ $sub['marks'] }}]</span>
+                            @if(!empty($sub['image']) && file_exists(public_path($sub['image'])))
+                                <div><img src="data:image/png;base64,{{ base64_encode(file_get_contents(public_path($sub['image']))) }}" style="max-width:350px; max-height:180px;"></div>
+                            @endif
                         </div>
 
                         @if(!empty($sub['options']))

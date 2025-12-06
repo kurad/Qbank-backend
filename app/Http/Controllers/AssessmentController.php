@@ -11,10 +11,11 @@ use App\Models\Assessment;
 use Illuminate\Support\Str;
 use App\Models\GradeSubject;
 use Illuminate\Http\Request;
+use App\Models\QuestionUsage;
 use App\Models\StudentAnswer;
+use App\Models\AssessmentSection;
 use App\Models\StudentAssessment;
 use App\Models\AssessmentQuestion;
-use App\Models\QuestionUsage;
 use Illuminate\Support\Facades\DB;
 use App\Services\AssessmentAssigner;
 use Illuminate\Support\Facades\Auth;
@@ -356,7 +357,7 @@ class AssessmentController extends Controller
 
         // Optionally create default sections for "standard" assessments
         if (!empty($validated['use_default_sections'])) {
-            $defaultSections = AssessmentDefaultSection::orderBy('ordering')->get();
+            $defaultSections = AssessmentSection::orderBy('ordering')->get();
 
             foreach ($defaultSections as $default) {
                 AssessmentSection::create([

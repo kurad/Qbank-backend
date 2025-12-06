@@ -36,11 +36,7 @@
             <div><img src="{{ $school['logo'] }}" alt="Logo" style="max-height:80px;"></div>
         @endif
         <div class="school-name">{{ $school['school_name'] ?? 'School Name' }}</div>
-        <!-- <div class="school-details">
-            {{ $school['address'] ?? 'School Address' }} |
-            Tel: {{ $school['phone'] ?? 'Phone Number' }} |
-            Email: {{ $school['email'] ?? 'school@example.com' }}
-        </div> -->
+        
         <div class="assessment-title">{{ $title }}</div>
         <div class="assessment-meta">
             <div>Subject: {{ $subject ?? 'General' }}</div>
@@ -87,6 +83,9 @@
                         <div class="question-text">
                             <span class="question-number">{{ $q['number'] }}.</span>
                             {!! $q['text'] !!}
+                            @if(!empty($q['image']))
+                                <div><img src="{{ asset($q['image']) }}" style="max-width:350px; max-height:180px;"></div>
+                            @endif
                         </div>
 
                         @foreach($q['sub_questions'] as $sub)
@@ -94,6 +93,9 @@
                                 <span class="question-number">({{ $sub['label'] }})</span>
                                 {!! $sub['text'] !!}
                                 <span class="marks">[{{ $sub['marks'] }} mark{{ $sub['marks'] > 1 ? 's' : '' }}]</span>
+                                @if(!empty($sub['image']))
+                                    <div><img src="{{ asset($sub['image']) }}" style="max-width:350px; max-height:180px;"></div>
+                                @endif
                             </div>
 
                             @if($sub['type'] === 'matching' && !empty($sub['options']))
@@ -226,6 +228,9 @@
                             <span class="question-number">({{ $sub['label'] }})</span>
                             {!! $sub['text'] !!}
                             <span class="marks">[{{ $sub['marks'] }} mark{{ $sub['marks'] > 1 ? 's' : '' }}]</span>
+                            @if(!empty($sub['image']))
+                                <div><img src="{{ asset($sub['image']) }}" style="max-width:350px; max-height:180px;"></div>
+                            @endif
                         </div>
 
                         @if($sub['type'] === 'matching' && !empty($sub['options']))

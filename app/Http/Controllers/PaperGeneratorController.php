@@ -224,6 +224,22 @@ class PaperGeneratorController extends Controller
             if (!isset($groups[$parentId])) {
                 $parent = $q->parent;
 
+                // IMAGE PATH for parent
+                $parentImagePath = null;
+                if ($parent && $parent->question_image) {
+                    $img = $parent->question_image;
+                    $relative = ltrim($img, '/');
+                    $directPublicPath = public_path($relative);
+                    if (file_exists($directPublicPath)) {
+                        $parentImagePath = $relative;
+                    } else {
+                        $storagePublicPath = public_path('storage/' . $relative);
+                        if (file_exists($storagePublicPath)) {
+                            $parentImagePath = 'storage/' . $relative;
+                        }
+                    }
+                }
+
                 $groups[$parentId] = count($output);
 
                 $output[] = [
@@ -231,9 +247,25 @@ class PaperGeneratorController extends Controller
                     'text'          => $parent ? $parent->question : $q->question,
                     'type'          => 'parent_group',
                     'is_math'       => $parent ? $parent->is_math : 0,
-                    'image'         => null,
+                    'image'         => $parentImagePath,
                     'sub_questions' => []
                 ];
+            }
+
+            // IMAGE PATH for sub-question
+            $subImagePath = null;
+            if ($q->question_image) {
+                $img = $q->question_image;
+                $relative = ltrim($img, '/');
+                $directPublicPath = public_path($relative);
+                if (file_exists($directPublicPath)) {
+                    $subImagePath = $relative;
+                } else {
+                    $storagePublicPath = public_path('storage/' . $relative);
+                    if (file_exists($storagePublicPath)) {
+                        $subImagePath = 'storage/' . $relative;
+                    }
+                }
             }
 
             $groupIndex = $groups[$parentId];
@@ -246,6 +278,7 @@ class PaperGeneratorController extends Controller
                 'type'     => $q->question_type,
                 'marks'    => $q->marks ?? 1,
                 'is_math'  => $q->is_math,
+                'image'    => $subImagePath,
                 'options'  => $this->parseOptions($q)
             ];
 
