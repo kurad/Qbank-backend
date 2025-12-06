@@ -92,7 +92,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // 6. Reorder questions in an assessment
     Route::patch('/assessments/{id}', [AssessmentController::class, 'updateTitle']);
     Route::put('/assessments/{id}/reorder', [AssessmentController::class, 'reorderQuestions']);
-    Route::get('/assessments/{id}/pdf', [PaperGeneratorController::class, 'generatePdf']);
+    // Route::get('/assessments/{id}/pdf', [PaperGeneratorController::class, 'generatePdf']);
     Route::get('/assessments/{id}/pdf/student', [PaperGeneratorController::class, 'generatePdf']);
     
     Route::post('/assessments/assign', [AssessmentController::class, 'assign']);
