@@ -124,6 +124,11 @@ class QuestionController extends Controller
             $validated['question_image'] = $this->handleQuestionImage($request);
         }
 
+        // Correct answer image upload for short_answer
+        if (!$hasSub && $validated['question_type'] === 'short_answer' && $request->hasFile('correct_answer_image')) {
+            $validated['correct_answer_image'] = $request->file('correct_answer_image')->store('answers', 'public');
+        }
+
         // Auto-assign marks only for normal questions
         if (!$hasSub && !in_array($validated['question_type'], ['matching','short_answer'], true)) {
             if (!isset($validated['marks']) || $validated['marks'] === 0) {
@@ -294,6 +299,11 @@ class QuestionController extends Controller
                 $validated['question_image'] = $this->handleQuestionImage($request);
             }
 
+            // Correct answer image upload for short_answer
+            if ($validated['question_type'] === 'short_answer' && $request->hasFile('correct_answer_image')) {
+                $validated['correct_answer_image'] = $request->file('correct_answer_image')->store('answers', 'public');
+            }
+
             // Set marks based on difficulty level if not explicitly provided
             // For matching and short_answer, always respect user-provided marks
             if (!in_array($validated['question_type'], ['matching', 'short_answer'], true)) {
@@ -408,6 +418,7 @@ class QuestionController extends Controller
         'is_required' => 'required|boolean',
         'explanation' => 'nullable|string',
         'question_image' => 'nullable|image|mimes:jpeg,png,jpg,gif,svg|max:4096',
+        'correct_answer_image' => 'nullable|image|mimes:jpeg,png,jpg,gif,svg|max:4096',
         'parent_question_id' => 'nullable|exists:questions,id',
     ];
 
@@ -451,7 +462,7 @@ class QuestionController extends Controller
 
         case 'short_answer':
             $rules['options'] = 'nullable';
-            $rules['correct_answer'] = 'nullable';
+            $rules['correct_answer'] = 'nullable|string';
             break;
 
         case 'matching':
@@ -781,6 +792,17 @@ class QuestionController extends Controller
             }
             $validated['question_image'] = $request->file('question_image')->store('questions', 'public');
         }
+
+        // Handle correct answer image upload for short_answer
+        if (!$hasSub) {
+            $effectiveTypeForImage = $validated['question_type'] ?? $question->question_type;
+            if ($effectiveTypeForImage === 'short_answer' && $request->hasFile('correct_answer_image')) {
+                if ($question->correct_answer_image) {
+                    Storage::disk('public')->delete($question->correct_answer_image);
+                }
+                $validated['correct_answer_image'] = $request->file('correct_answer_image')->store('answers', 'public');
+            }
+        }
         // Matching question JSON encoding for non-parent
         if (!$hasSub && isset($validated['question_type']) && $validated['question_type'] === 'matching') {
             if (isset($validated['options'])) {
@@ -898,6 +920,7 @@ class QuestionController extends Controller
             ? (is_string($question->correct_answer) ? json_decode($question->correct_answer, true) : $question->correct_answer)
             : null;
         $question->question_image_url = $question->question_image ? asset('storage/' . $question->question_image) : null;
+        $question->correct_answer_image_url = $question->correct_answer_image ? asset('storage/' . $question->correct_answer_image) : null;
 
         return response()->json($question);
     }
@@ -932,7 +955,18 @@ class QuestionController extends Controller
             ])
             ->where('created_by', $userId)
             ->whereNull('parent_question_id')
-            ->select('id', 'topic_id', 'question', 'options', 'question_type', 'difficulty_level', 'marks', 'correct_answer')
+            ->select(
+                'id',
+                'topic_id',
+                'question',
+                'options',
+                'question_type',
+                'difficulty_level',
+                'marks',
+                'correct_answer',
+                'question_image',
+                'correct_answer_image'
+            )
             ->paginate(10);
 
         // Normalize parent questions and include nested sub-questions
@@ -983,7 +1017,9 @@ class QuestionController extends Controller
                     'options',
                     'correct_answer',
                     'marks',
-                    'difficulty_level'
+                    'difficulty_level',
+                    'question_image',
+                    'correct_answer_image'
                 );
             }])
             ->orderBy('topic_name')
@@ -1097,6 +1133,9 @@ class QuestionController extends Controller
         if ($question->question_image) {
             Storage::disk('public')->delete($question->question_image);
         }
+        if ($question->correct_answer_image) {
+            Storage::disk('public')->delete($question->correct_answer_image);
+        }
         $question->delete();
         return response()->json([
             'message' => 'Question deleted successfully'
@@ -1152,6 +1191,12 @@ class QuestionController extends Controller
             $question->question_image_url = asset('storage/' . $question->question_image);
         } else {
             $question->question_image_url = null;
+        }
+
+        if (!empty($question->correct_answer_image)) {
+            $question->correct_answer_image_url = asset('storage/' . $question->correct_answer_image);
+        } else {
+            $question->correct_answer_image_url = null;
         }
 
         // Include metadata with KaTeX content if it exists

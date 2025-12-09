@@ -19,6 +19,20 @@ class PaperGeneratorController extends Controller
      */
     public function generatePdf(Request $request, $id)
     {
+        $layout = $request->query('layout', 'normal');
+
+        if ($layout === 'standard') {
+            return $this->generateStandardPdf($request, $id);
+        } else {
+            return $this->generateNormalPdf($request, $id);
+        }
+    }
+
+    /**
+     * Generate normal PDF (handles both sectioned and non-sectioned assessments).
+     */
+    private function generateNormalPdf(Request $request, $id)
+    {
         $assessment = Assessment::with([
             'questions.question.parent',
             'sections.questions.parent',
@@ -105,10 +119,97 @@ class PaperGeneratorController extends Controller
             ->contains(fn($q) => !empty($q['image']));
 
         //--------------------------------------
-        // RENDER HTML (choose layout)
+        // RENDER HTML
         //--------------------------------------
-        $layout = $request->query('layout', 'normal');
-        $view   = $layout === 'standard' ? 'pdf.standard-paper' : 'pdf.normal-paper';
+        $view = 'pdf.normal-paper';
+
+        $html = view($view, $data)->render();
+        $filePath = storage_path('app/papers/assessment-' . Str::slug($assessment->title) . '.pdf');
+
+        //--------------------------------------
+        // IF MATH → USE BROWSERSHOT (MathJax)
+        // ELSE → USE DOMPDF (faster, with base64 images)
+        //--------------------------------------
+        if ($containsMath) {
+
+            Browsershot::html($html)
+                ->format('A4')
+                ->margins(10, 10, 10, 10)
+                ->timeout(120)
+                ->waitUntilNetworkIdle()   // wait for MathJax to finish rendering
+                ->save($filePath);
+
+            return response()->download($filePath);
+        }
+
+        //--------------------------------------
+        // ELSE → USE DOMPDF (FAST)
+        //--------------------------------------
+        $pdf = Pdf::loadHTML($html)->setPaper('A4');
+        return $pdf->download('assessment-' . Str::slug($assessment->title) . '.pdf');
+    }
+
+    /**
+     * Generate standard PDF (handles only non-sectioned assessments).
+     */
+    private function generateStandardPdf(Request $request, $id)
+    {
+        $assessment = Assessment::with([
+            'questions.question.parent',
+            'topics.gradeSubject.subject',
+            'creator.school',
+        ])->findOrFail($id);
+
+        if ($assessment->creator_id !== Auth::id()) {
+            return response()->json([
+                'message' => 'You are not authorized to view this assessment.',
+            ], 403);
+        }
+
+        $school = $assessment->creator->school;
+        $subjects = $assessment->topics->pluck('gradeSubject.subject.name')->filter()->unique();
+        $questionNumber = 1;
+        $totalMarks = 0;
+
+        //--------------------------------------
+        // BUILD MAIN DATA (only flat questions)
+        //--------------------------------------
+        $data = [
+            'title'        => $assessment->title,
+            'subject'      => $subjects->first() ?? 'General',
+            'topic'        => $assessment->topics->pluck('name')->first() ?? 'General',
+            'created_at'   => $assessment->created_at->format('F j, Y'),
+            'school'       => [
+                'school_name' => $school->school_name ?? 'School Name',
+                'address'     => $school->address ?? 'School Address',
+                'phone'       => $school->phone ?? 'Phone Number',
+                'email'       => $school->email ?? 'school@example.com',
+                'logo'        => $school && $school->logo_path
+                    ? storage_path('app/public/' . $school->logo_path)
+                    : null,
+            ],
+            'sections'     => [], // empty
+            'questions'    => $this->formatQuestions(
+                $assessment->questions->sortBy('order'),
+                $questionNumber,
+                $totalMarks
+            ),
+            'total_marks'  => $totalMarks
+        ];
+
+        //--------------------------------------
+        // DETECT IF ANY QUESTION HAS MATH OR IMAGES
+        //--------------------------------------
+        $containsMath = $assessment->questions
+            ->contains(fn($q) => $q->is_math == 1);
+
+        $containsImages = collect($data['questions'])
+            ->contains(fn($q) => !empty($q['image']));
+
+        //--------------------------------------
+        // RENDER HTML
+        //--------------------------------------
+        $view = 'pdf.standard-paper';
 
         $html = view($view, $data)->render();
         $filePath = storage_path('app/papers/assessment-' . Str::slug($assessment->title) . '.pdf');
@@ -154,28 +255,22 @@ class PaperGeneratorController extends Controller
             $parentId = $q->parent_question_id;
 
             //--------------------------------------
-            // IMAGE PATH (relative path for PDF views)
+            // IMAGE BASE64 for PDF views
             //--------------------------------------
-            $imagePath = null;
+            $imageBase64 = null;
             if ($q->question_image) {
                 $img = $q->question_image;
+                $relative = ltrim($img, '/');
 
-                // If already an absolute URL, use as-is (but unlikely for stored images)
-                if (preg_match('#^https?://#', $img)) {
-                    $imagePath = $img;
+                // 1) Check if file is directly under public/<relative>
+                $directPublicPath = public_path($relative);
+                if (file_exists($directPublicPath)) {
+                    $imageBase64 = 'data:image/png;base64,' . base64_encode(file_get_contents($directPublicPath));
                 } else {
-                    $relative = ltrim($img, '/');
-
-                    // 1) Check if file is directly under public/<relative>
-                    $directPublicPath = public_path($relative);
-                    if (file_exists($directPublicPath)) {
-                        $imagePath = $relative;
-                    } else {
-                        // 2) Fallback: treat as public/storage/<relative>
-                        $storagePublicPath = public_path('storage/' . $relative);
-                        if (file_exists($storagePublicPath)) {
-                            $imagePath = 'storage/' . $relative;
-                        }
+                    // 2) Fallback: treat as public/storage/<relative>
+                    $storagePublicPath = public_path('storage/' . $relative);
+                    if (file_exists($storagePublicPath)) {
+                        $imageBase64 = 'data:image/png;base64,' . base64_encode(file_get_contents($storagePublicPath));
                     }
                 }
             }
@@ -187,12 +282,16 @@ class PaperGeneratorController extends Controller
 
                 $groups[$q->id] = count($output);
 
+                $parentText = $this->extractQuestionText($q->question);
+
                 $output[] = [
                     'number'        => $questionNumber++,
-                    'text'          => $q->question,
+                    // Clean HTML / text for parent stem
+                    'clean_html'    => $parentText,
+                    'text'          => $parentText,
                     'type'          => 'parent_group',
                     'is_math'       => $q->is_math,
-                    'image'         => $imagePath,
+                    'image_base64'  => $imageBase64,
                     'sub_questions' => []
                 ];
                 continue;
@@ -203,14 +302,17 @@ class PaperGeneratorController extends Controller
             //--------------------------------------
             if (!$parentId && !$isParent) {
 
+                $standaloneText = $this->extractQuestionText($q->question);
+
                 $formatted = [
-                    'number'  => $questionNumber++,
-                    'text'    => $q->question,
-                    'marks'   => $q->marks ?? 1,
-                    'type'    => $q->question_type,
-                    'image'   => $imagePath,
-                    'is_math' => $q->is_math,
-                    'options' => $this->parseOptions($q)
+                    'number'       => $questionNumber++,
+                    'clean_html'   => $standaloneText,
+                    'text'         => $standaloneText,
+                    'marks'        => $q->marks ?? 1,
+                    'type'         => $q->question_type,
+                    'image_base64' => $imageBase64,
+                    'is_math'      => $q->is_math,
+                    'options'      => $this->parseOptions($q)
                 ];
 
                 $totalMarks += $formatted['marks'];
@@ -243,12 +345,16 @@ class PaperGeneratorController extends Controller
 
                 $groups[$parentId] = count($output);
 
+                $parentSource = $parent ? $parent->question : $q->question;
+                $parentStem   = $this->extractQuestionText($parentSource);
+
                 $output[] = [
                     'number'        => $questionNumber++,
-                    'text'          => $parent ? $parent->question : $q->question,
+                    'clean_html'    => $parentStem,
+                    'text'          => $parentStem,
                     'type'          => 'parent_group',
                     'is_math'       => $parent ? $parent->is_math : 0,
-                    'image'         => $parentImagePath,
+                    'image_base64'  => $parentImagePath,
                     'sub_questions' => []
                 ];
             }
@@ -273,14 +379,17 @@ class PaperGeneratorController extends Controller
             $sub = &$output[$groupIndex]['sub_questions'];
             $label = chr(ord('a') + count($sub));
 
+            $subText = $this->extractQuestionText($q->question);
+
             $sub[] = [
-                'label'    => $label,
-                'text'     => $q->question,
-                'type'     => $q->question_type,
-                'marks'    => $q->marks ?? 1,
-                'is_math'  => $q->is_math,
-                'image'    => $subImagePath,
-                'options'  => $this->parseOptions($q)
+                'label'        => $label,
+                'clean_html'   => $subText,
+                'text'         => $subText,
+                'type'         => $q->question_type,
+                'marks'        => $q->marks ?? 1,
+                'is_math'      => $q->is_math,
+                'image_base64' => $subImagePath,
+                'options'      => $this->parseOptions($q)
             ];
 
             $totalMarks += $q->marks ?? 0;
@@ -308,11 +417,26 @@ class PaperGeneratorController extends Controller
             if (is_string($raw)) $raw = json_decode($raw, true) ?? [];
             if (!is_array($raw)) $raw = [];
 
-            return array_map(function ($opt) use ($q) {
-                $text = is_array($opt) ? ($opt['text'] ?? '') : $opt;
+            // Normalize each option to an array with at least a 'text' key,
+            // preserving 'image' or other fields when present so that
+            // normal-paper.blade.php can safely access $opt['text'] / $opt['image'].
+            return array_map(function ($opt) {
+                if (is_array($opt)) {
+                    // Already in expected shape or similar
+                    if (array_key_exists('text', $opt) || array_key_exists('image', $opt)) {
+                        $opt['text'] = $opt['text'] ?? '';
+                        return $opt;
+                    }
+
+                    // Plain array value, wrap into text
+                    return [
+                        'text' => implode(' ', array_values($opt)),
+                    ];
+                }
+
+                // Scalar string/bool/number
                 return [
-                    'text'       => $text,
-                    'is_correct' => $opt === $q->correct_answer
+                    'text' => (string) $opt,
                 ];
             }, $raw);
         }
@@ -346,6 +470,62 @@ class PaperGeneratorController extends Controller
         }
 
         return [];
+    }
+
+    /**
+     * Safely extract the textual question content from various stored formats.
+     * - If already an array, prefer ['question'].
+     * - If a JSON string, decode and prefer ['question'].
+     * - Otherwise treat as a plain string.
+     */
+    private function extractQuestionText($raw)
+    {
+        // If this is an object (e.g. Eloquent Question model or pivot relation),
+        // try to tunnel into its 'question' attribute or array form first.
+        if (is_object($raw)) {
+            if (isset($raw->question)) {
+                return $this->extractQuestionText($raw->question);
+            }
+
+            if (method_exists($raw, 'toArray')) {
+                $asArray = $raw->toArray();
+                if (is_array($asArray) && array_key_exists('question', $asArray)) {
+                    return $this->extractQuestionText($asArray['question']);
+                }
+            }
+
+            // Fallback to string cast if we can't find a question field
+            $raw = (string) $raw;
+        }
+
+        if (is_array($raw)) {
+            return $raw['question'] ?? '';
+        }
+
+        if (is_string($raw)) {
+            $trimmed = ltrim($raw);
+
+            // Heuristic: looks like JSON object/array
+            if ($trimmed !== '' && ($trimmed[0] === '{' || $trimmed[0] === '[')) {
+                $decoded = json_decode($raw, true);
+                if (is_array($decoded)) {
+                    // Either direct question array or wrapped inside
+                    if (array_key_exists('question', $decoded)) {
+                        return $decoded['question'] ?? '';
+                    }
+
+                    // If it's a list of questions, take first element's question
+                    $first = reset($decoded);
+                    if (is_array($first) && array_key_exists('question', $first)) {
+                        return $first['question'] ?? '';
+                    }
+                }
+            }
+
+            return $raw;
+        }
+
+        return (string) $raw;
     }
 
 }

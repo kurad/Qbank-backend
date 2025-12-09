@@ -10,7 +10,7 @@
         body {
             font-family: DejaVu Sans, sans-serif;
             font-size: 12px;
-            line-height: 1.45;
+            line-height: 1.5;
             color: #333;
         }
 
@@ -21,31 +21,38 @@
             text-align:center;
         }
 
-        .school-name { font-size: 18px; font-weight: bold; margin-top: 10px; }
+        .school-name { font-size: 18px; font-weight: bold; }
         .assessment-title { font-size: 16px; font-weight: bold; margin: 15px 0; text-transform: uppercase; }
 
         .section-title {
             font-size: 15px;
             font-weight: bold;
             margin: 20px 0 5px 0;
-            padding: 5px 0;
             border-bottom: 1px solid #999;
         }
 
-        .section-instruction {
-            font-size: 11px;
-            margin-bottom: 10px;
-            color: #555;
+        .question { 
+            margin-bottom: 20px;
+            page-break-inside: avoid;
         }
 
-        .question { margin-bottom: 18px; }
-        .question-number { font-weight: bold; margin-right: 5px; }
-        .question-text { margin-bottom: 8px; }
+        .question-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 8px;
+        }
 
-        .options { margin-left: 20px; }
-        .option { display: table; margin-bottom: 4px; }
-        .option-label { display: table-cell; width: 20px; }
-        .option-text { display: table-cell; }
+        .sub-question-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-left: 20px;
+            margin-top: 10px;
+        }
+
+        .options { margin-left: 25px; margin-top: 5px; }
+        .option { margin-bottom: 4px; }
 
         .answer-space {
             border-bottom: 1px solid #333;
@@ -53,9 +60,25 @@
             margin-top: 6px;
         }
 
-        .marks { float: right; font-weight: bold; }
-        .footer { margin-top: 30px; text-align:center; font-size:10px; color:#777; border-top:1px solid #ddd; padding-top:8px; }
+        img {
+            max-width: 350px;
+            max-height: 200px;
+            margin-top: 8px;
+            page-break-inside: avoid;
+        }
 
+        ul, ol {
+            margin: 5px 0 5px 20px;
+        }
+
+        .footer {
+            margin-top: 40px;
+            text-align:center;
+            font-size:10px;
+            color:#777;
+            border-top:1px solid #ddd;
+            padding-top:8px;
+        }
     </style>
 </head>
 
@@ -63,16 +86,13 @@
 
     {{-- HEADER --}}
     <div class="header">
-        @if(!empty($school['logo']) && file_exists($school['logo']))
-            <img src="{{ $school['logo'] }}" style="max-height:80px;">
+        @if(!empty($school['logo']) && !empty($school['logo_base64']))
+            <img src="{{ $school['logo_base64'] }}" style="max-height:80px;">
         @endif
 
         <div class="school-name">{{ $school['school_name'] ?? '' }}</div>
         <div class="assessment-title">{{ $title }}</div>
-
-        <div style="font-size:12px;">
-            Subject: {{ $subject ?? 'General' }}
-        </div>
+        <div style="font-size:12px;">Subject: {{ $subject ?? 'General' }}</div>
     </div>
 
     {{-- STUDENT INFO --}}
@@ -82,189 +102,118 @@
     </div>
 
     {{-- INSTRUCTIONS --}}
-    <div style="padding:10px; background:#f5f5f5; border-left:4px solid #333; margin-bottom:20px;">
+    <div style="padding:10px; background:#f5f5f5; border-left:4px solid #333; margin-bottom:25px;">
         <strong>Instructions:</strong>
-        <ul style="margin:5px 0 0 20px; font-size:12px;">
+        <ul style="margin:5px 0 0 20px;">
             <li>Attempt all questions.</li>
             <li>Show all working where required.</li>
             <li>For multiple-choice questions, circle the correct answer.</li>
         </ul>
     </div>
 
-    {{-- ========== QUESTIONS (SECTIONS OR FLAT) ========== --}}
+    {{-- QUESTIONS --}}
+    @foreach($questions as $q)
+        <div class="question">
 
-    @if(!empty($sections))
-        @foreach($sections as $section)
+            {{-- MAIN QUESTION --}}
+            <div class="question-header">
+                <div>
+                    <strong>{{ $loop->iteration }}.</strong>
+                    <span>{!! $q['clean_html'] !!}</span>
 
-            <div class="section-title">
-                {{ $section['title'] }}
+                    @if($q['image_base64'])
+                        <br>
+                        <img src="{{ $q['image_base64'] }}">
+                    @endif
+                </div>          
+
+                @if($q['marks'])
+                    <div><strong>[{{ $q['marks'] }}]</strong></div>
+                @endif
             </div>
 
-            @if(!empty($section['instruction']))
-                <div class="section-instruction">{!! $section['instruction'] !!}</div>
-            @endif
+            {{-- SUB QUESTIONS --}}
+            @if(!empty($q['sub_questions']))
+                @foreach($q['sub_questions'] as $i => $sub)
+                    <div class="sub-question-row">
+                        <div>
+                            <strong>({{ chr(97 + $i) }})</strong>
+                            <span>{!! $sub['clean_html'] !!}</span>
 
-            {{-- QUESTIONS IN SECTION --}}
-            @foreach($section['questions'] as $q)
-                <div class="question">
-
-                    {{-- HAS SUB QUESTIONS --}}
-                    @if(!empty($q['sub_questions']))
-
-                        <div class="question-text">
-                            <span class="question-number">{{ $q['number'] }}.</span>
-                            {!! $q['text'] !!}
-                            @if(!empty($q['image']) && file_exists(public_path($q['image'])))
-                                <div><img src="data:image/png;base64,{{ base64_encode(file_get_contents(public_path($q['image']))) }}" style="max-width:350px; max-height:180px;"></div>
+                            @if($sub['image_base64'])
+                                <br>
+                                <img src="{{ $sub['image_base64'] }}">
                             @endif
-                        </div>
 
-                        @foreach($q['sub_questions'] as $sub)
-                            <div class="question-text" style="margin-left:15px;">
-                                <span class="question-number">({{ $sub['label'] }})</span>
-                                {!! $sub['text'] !!}
-                                <span class="marks">[{{ $sub['marks'] }}]</span>
-                                @if(!empty($sub['image']) && file_exists(public_path($sub['image'])))
-                                    <div><img src="data:image/png;base64,{{ base64_encode(file_get_contents(public_path($sub['image']))) }}" style="max-width:350px; max-height:180px;"></div>
-                                @endif
-                            </div>
-
-                            {{-- Multiple Choice / options --}}
+                            {{-- SUB OPTIONS --}}
                             @if(!empty($sub['options']))
-                                <div class="options" style="margin-left:25px;">
-                                    @foreach($sub['options'] as $i => $opt)
+                                <div class="options">
+                                    @foreach($sub['options'] as $x => $op)
                                         <div class="option">
-                                            <div class="option-label">{{ chr(65 + $i) }}.</div>
-                                            <div class="option-text">
-                                                {!! $opt['text'] ?? '' !!}
-                                            </div>
+                                            <strong>{{ chr(65 + $x) }}.</strong>
+                                            <span>{!! is_array($op) ? ($op['text'] ?? '') : $op !!}</span>
                                         </div>
                                     @endforeach
                                 </div>
                             @endif
 
-                            {{-- Written Answer --}}
-                            @if($sub['type'] === 'short_answer')
-                                @for($i=0; $i<4; $i++)
+                            {{-- SUB ANSWER SPACE --}}
+                            @if(($sub['type'] ?? null) === 'short_answer')
+                                @for($line=0; $line<4; $line++)
                                     <div class="answer-space"></div>
                                 @endfor
                             @endif
+                        </div>
 
+                        <div>
+                            <strong>[{{ $sub['marks'] }}]</strong>
+                        </div>
+                    </div>
+                @endforeach
+            @endif
+
+            {{-- MAIN QUESTION OPTIONS --}}
+            @if(($q['type'] ?? null) === 'matching' && !empty($q['options']))
+                <table style="width:100%; border-collapse:collapse; margin-top:8px; font-size:11px;">
+                    <colgroup>
+                        <col style="width:40%">
+                        <col style="width:60%">
+                    </colgroup>
+                    <thead>
+                        <tr>
+                            <th style="text-align:left; padding:4px; border-bottom:1px solid #ccc;">Left Column</th>
+                            <th style="text-align:left; padding:4px; border-bottom:1px solid #ccc;">Right Column</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach($q['options'] as $i => $pair)
+                            <tr>
+                                <td style="padding:3px 4px; vertical-align:top;">{{ $i + 1 }}. {!! $pair['left'] ?? '' !!}</td>
+                                <td style="padding:3px 4px; vertical-align:top;">{{ chr(65 + $i) }}. {!! $pair['right'] ?? '' !!}</td>
+                            </tr>
                         @endforeach
-
-                    @else
-                        {{-- SINGLE QUESTION --}}
-                        <div class="question-text">
-                            <span class="question-number">{{ $q['number'] }}.</span>
-                            {!! $q['text'] !!}
-                            <span class="marks">[{{ $q['marks'] }}]</span>
+                    </tbody>
+                </table>
+            @elseif(!empty($q['options']))
+                <div class="options">
+                    @foreach($q['options'] as $i => $opt)
+                        <div class="option">
+                            <strong>{{ chr(65 + $i) }}.</strong>
+                            <span>{!! is_array($opt) ? ($opt['text'] ?? '') : $opt !!}</span>
                         </div>
-
-                        {{-- Options --}}
-                        @if(!empty($q['options']))
-                            <div class="options">
-                                @foreach($q['options'] as $i => $opt)
-                                    <div class="option">
-                                        <div class="option-label">{{ chr(65 + $i) }}.</div>
-                                        <div class="option-text">
-                                            {!! $opt['text'] ?? '' !!}
-                                        </div>
-                                    </div>
-                                @endforeach
-                            </div>
-                        @endif
-
-                        {{-- Written answer --}}
-                        @if($q['type'] === 'short_answer')
-                            @for($i=0; $i<4; $i++)
-                                <div class="answer-space"></div>
-                            @endfor
-                        @endif
-
-                    @endif
-                </div>
-            @endforeach
-
-        @endforeach
-    @else
-        {{-- NO SECTIONS: USE FLAT QUESTIONS ARRAY --}}
-        @foreach($questions as $q)
-            <div class="question">
-                @if(!empty($q['sub_questions']))
-
-                    <div class="question-text">
-                        <span class="question-number">{{ $q['number'] }}.</span>
-                        {!! $q['text'] !!}
-                        <!-- @if(!empty($q['image']))
-                            <div><img src="{{ $q['image'] }}" style="max-width:350px; max-height:180px;"></div>
-                        @endif -->
-
-                         @if(!empty($q['image']) && file_exists(public_path($q['image'])))
-                                <div><img src="data:image/png;base64,{{ base64_encode(file_get_contents(public_path($q['image']))) }}" style="max-width:350px; max-height:180px;"></div>
-                            @endif
-                    </div>
-
-                    @foreach($q['sub_questions'] as $sub)
-                        <div class="question-text" style="margin-left:15px;">
-                            <span class="question-number">({{ $sub['label'] }})</span>
-                            {!! $sub['text'] !!}
-                            <span class="marks">[{{ $sub['marks'] }}]</span>
-                            @if(!empty($sub['image']) && file_exists(public_path($sub['image'])))
-                                <div><img src="data:image/png;base64,{{ base64_encode(file_get_contents(public_path($sub['image']))) }}" style="max-width:350px; max-height:180px;"></div>
-                            @endif
-                        </div>
-
-                        @if(!empty($sub['options']))
-                            <div class="options" style="margin-left:25px;">
-                                @foreach($sub['options'] as $i => $opt)
-                                    <div class="option">
-                                        <div class="option-label">{{ chr(65 + $i) }}.</div>
-                                        <div class="option-text">
-                                            {!! $opt['text'] ?? '' !!}
-                                        </div>
-                                    </div>
-                                @endforeach
-                            </div>
-                        @endif
-
-                        @if($sub['type'] === 'short_answer')
-                            @for($i=0; $i<4; $i++)
-                                <div class="answer-space"></div>
-                            @endfor
-                        @endif
-
                     @endforeach
+                </div>
+            @endif
 
-                @else
-                    <div class="question-text">
-                        <span class="question-number">{{ $q['number'] }}.</span>
-                        {!! $q['text'] !!}
-                        <span class="marks">[{{ $q['marks'] }}]</span>
-                    </div>
+            {{-- MAIN QUESTION SHORT ANSWER --}}
+            @if($q['type'] === 'short_answer')
+                @for($i=0; $i<4; $i++)
+                    <div class="answer-space"></div>
+                @endfor
+            @endif
 
-                    @if(!empty($q['options']))
-                        <div class="options">
-                            @foreach($q['options'] as $i => $opt)
-                                <div class="option">
-                                    <div class="option-label">{{ chr(65 + $i) }}.</div>
-                                    <div class="option-text">
-                                        {!! $opt['text'] ?? '' !!}
-                                    </div>
-                                </div>
-                            @endforeach
-                        </div>
-                    @endif
-
-                    @if($q['type'] === 'short_answer')
-                        @for($i=0; $i<4; $i++)
-                            <div class="answer-space"></div>
-                        @endfor
-                    @endif
-
-                @endif
-            </div>
-        @endforeach
-    @endif
+        </div>
+    @endforeach
 
     <div class="footer">
         {{ $school['school_name'] ?? '' }} | {{ $title }} | {{ date('F j, Y') }}

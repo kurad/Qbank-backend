@@ -23,6 +23,7 @@ class Question extends Model
         'question',
         'options',
         'correct_answer',
+        'correct_answer_image',
         'marks',
         'difficulty_level',
         'is_math',
@@ -43,7 +44,7 @@ class Question extends Model
         'multiple_answers' => 'boolean',
         'is_required' => 'boolean',
     ];
-    protected $appends = ['question_image_url'];
+    protected $appends = ['question_image_url', 'correct_answer_image_url'];
 
     protected function questionImageUrl(): Attribute
     {
@@ -65,6 +66,11 @@ class Question extends Model
      public function getQuestionImageUrlAttribute()
     {
         return $this->question_image ? asset('storage/' . $this->question_image) : null;
+    }
+
+    public function getCorrectAnswerImageUrlAttribute()
+    {
+        return $this->correct_answer_image ? asset('storage/' . $this->correct_answer_image) : null;
     }
 
     public function topic()
