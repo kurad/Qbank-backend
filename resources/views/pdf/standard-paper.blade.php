@@ -12,6 +12,7 @@
             font-size: 12px;
             line-height: 1.5;
             color: #333;
+            padding-bottom: 40px;
         }
 
         .header {
@@ -72,7 +73,10 @@
         }
 
         .footer {
-            margin-top: 40px;
+            position: fixed;
+            left: 0;
+            right: 0;
+            bottom: 10px;
             text-align:center;
             font-size:10px;
             color:#777;
@@ -92,7 +96,9 @@
 
         <div class="school-name">{{ $school['school_name'] ?? '' }}</div>
         <div class="assessment-title">{{ $title }}</div>
-        <div style="font-size:12px;">Subject: {{ $subject ?? 'General' }}</div>
+        <div style="font-size:12px;">
+            Subject: {{ $subject ?? 'General' }}@if(!empty($grade_level)) - Grade: {{ $grade_level }}@endif
+        </div>
     </div>
 
     {{-- STUDENT INFO --}}
@@ -105,9 +111,9 @@
     <div style="padding:10px; background:#f5f5f5; border-left:4px solid #333; margin-bottom:25px;">
         <strong>Instructions:</strong>
         <ul style="margin:5px 0 0 20px;">
-            <li>Attempt all questions.</li>
-            <li>Show all working where required.</li>
-            <li>For multiple-choice questions, circle the correct answer.</li>
+            @foreach(($instructions ?? []) as $line)
+                <li>{{ $line }}</li>
+            @endforeach
         </ul>
     </div>
 

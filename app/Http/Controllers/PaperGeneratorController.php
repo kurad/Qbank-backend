@@ -48,7 +48,26 @@ class PaperGeneratorController extends Controller
 
         $school = $assessment->creator->school;
         $subjects = $assessment->topics->pluck('gradeSubject.subject.name')->filter()->unique();
+        $gradeLevels = $assessment->topics
+            ->pluck('gradeSubject.gradeLevel.grade_name')
+            ->filter()
+            ->unique();
         $questionNumber = 1;
+
+        // Build instructions list (either custom per assessment or default set)
+        $instructions = [];
+        if (!empty($assessment->instructions)) {
+            $instructions = preg_split('/\r\n|\r|\n/', trim($assessment->instructions));
+            $instructions = array_values(array_filter($instructions, fn($line) => trim($line) !== ''));
+        }
+        if (empty($instructions)) {
+            $instructions = [
+                'Write your name and class/grade in the spaces provided above.',
+                'Answer all questions in the spaces provided. Answer sheets can be used if the space is not enough.',
+                'For multiple choice questions, circle the correct answer.',
+                'Show all working where necessary.',
+            ];
+        }
 
         //--------------------------------------
         // BUILD MAIN DATA
@@ -56,6 +75,7 @@ class PaperGeneratorController extends Controller
         $data = [
             'title'        => $assessment->title,
             'subject'      => $subjects->first() ?? 'General',
+            'grade_level'  => $gradeLevels->first() ?? null,
             'topic'        => $assessment->topics->pluck('name')->first() ?? 'General',
             'created_at'   => $assessment->created_at->format('F j, Y'),
             'school'       => [
@@ -67,6 +87,7 @@ class PaperGeneratorController extends Controller
                     ? storage_path('app/public/' . $school->logo_path)
                     : null,
             ],
+            'instructions' => $instructions,
             'sections'     => [],
             'questions'    => [],
             'total_marks'  => 0
@@ -168,8 +189,26 @@ class PaperGeneratorController extends Controller
 
         $school = $assessment->creator->school;
         $subjects = $assessment->topics->pluck('gradeSubject.subject.name')->filter()->unique();
+        $gradeLevels = $assessment->topics
+            ->pluck('gradeSubject.gradeLevel.grade_name')
+            ->filter()
+            ->unique();
         $questionNumber = 1;
         $totalMarks = 0;
+
+        // Build instructions list (either custom per assessment or default set)
+        $instructions = [];
+        if (!empty($assessment->instructions)) {
+            $instructions = preg_split('/\r\n|\r|\n/', trim($assessment->instructions));
+            $instructions = array_values(array_filter($instructions, fn($line) => trim($line) !== ''));
+        }
+        if (empty($instructions)) {
+            $instructions = [
+                'Attempt all questions.',
+                'Show all working where required.',
+                'For multiple-choice questions, circle the correct answer.',
+            ];
+        }
 
         //--------------------------------------
         // BUILD MAIN DATA (only flat questions)
@@ -177,6 +216,7 @@ class PaperGeneratorController extends Controller
         $data = [
             'title'        => $assessment->title,
             'subject'      => $subjects->first() ?? 'General',
+            'grade_level'  => $gradeLevels->first() ?? null,
             'topic'        => $assessment->topics->pluck('name')->first() ?? 'General',
             'created_at'   => $assessment->created_at->format('F j, Y'),
             'school'       => [
@@ -188,6 +228,7 @@ class PaperGeneratorController extends Controller
                     ? storage_path('app/public/' . $school->logo_path)
                     : null,
             ],
+            'instructions' => $instructions,
             'sections'     => [], // empty
             'questions'    => $this->formatQuestions(
                 $assessment->questions->sortBy('order'),

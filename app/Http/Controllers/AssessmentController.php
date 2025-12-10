@@ -376,6 +376,33 @@ class AssessmentController extends Controller
         ], 201);
     }
 
+    /**
+     * Update assessment instructions separately during the build phase.
+     */
+    public function updateInstructions(Request $request, $id)
+    {
+        $data = $request->validate([
+            'instructions' => 'nullable|string',
+        ]);
+
+        $assessment = Assessment::findOrFail($id);
+
+        // Only the creator can modify instructions
+        if ($assessment->creator_id !== Auth::id()) {
+            return response()->json([
+                'message' => 'You are not authorized to update instructions for this assessment.',
+            ], 403);
+        }
+
+        $assessment->instructions = $data['instructions'] ?? null;
+        $assessment->save();
+
+        return response()->json([
+            'message' => 'Instructions updated successfully',
+            'assessment' => $assessment,
+        ]);
+    }
+
     // Add questions to an assessment
     public function addQuestions(Request $request)
     {

@@ -117,21 +117,14 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::put('/assessment-sections/{id}', [AssessmentSectionController::class, 'update']);
     Route::delete('/assessment-sections/{id}', [AssessmentSectionController::class, 'destroy']);
     Route::post('/assessment-sections/{id}/questions', [AssessmentSectionController::class, 'addSectionQuestions']);
-
-
-
+    Route::put('/assessments/{id}/instructions', [AssessmentController::class, 'updateInstructions']);
 });
 Route::get('/topics/{id}/question-count', [QuestionController::class, 'getQuestionCount']);
 Route::get('/questions/{id}', [QuestionController::class, 'show']);
-
-
 Route::get('/subjects/overview', [HomeController::class, 'subjectsOverview']);
 Route::get('/subjects/{subject}/topics', [HomeController::class, 'subjectTopics']);
-    // Route::get('/topics/{topic}/questions', [HomeController::class, 'topicQuestions']);
-    // Reports
-    Route::get('/reports/questions-per-subject', [HomeController::class, 'questionsPerSubject']);
-
-    Route::middleware('auth:sanctum')->group(function () {
+Route::get('/reports/questions-per-subject', [HomeController::class, 'questionsPerSubject']);
+Route::middleware('auth:sanctum')->group(function () {
         Route::get('/questions/by-topics', [AssessmentBuilderController::class, 'questionsByTopics']);
         Route::post('/create-assessments', [AssessmentBuilderController::class, 'store']);
 });

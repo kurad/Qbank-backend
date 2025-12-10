@@ -20,6 +20,7 @@ class Assessment extends Model
         'due_date',
         'is_timed',
         'time_limit',
+        'instructions',
     ];
 
     public function creator()
