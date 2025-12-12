@@ -1,18 +1,12 @@
 <?php
 namespace App\Http\Controllers;
 
-use Log;
-use PDF;
-use App\Models\User;
 use App\Models\Group;
 use App\Models\Topic;
 use App\Models\Question;
 use App\Models\Assessment;
-use Illuminate\Support\Str;
-use App\Models\GradeSubject;
 use Illuminate\Http\Request;
 use App\Models\QuestionUsage;
-use App\Models\StudentAnswer;
 use App\Models\AssessmentSection;
 use App\Models\StudentAssessment;
 use App\Models\AssessmentQuestion;
@@ -86,6 +80,29 @@ class AssessmentController extends Controller
             $topicIds = $assessment->questions->pluck('question.topic_id')->unique()->filter();
             $topics = Topic::whereIn('id', $topicIds)->get();
             $assessment->topics = $topics;
+
+            // Compute subject/grade-level pairs from topics (subjects derived from topics)
+            $subjectGradeLevels = $assessment->topics->map(function ($topic) {
+                $gradeSubject = $topic->gradeSubject;
+                $subjectName = $gradeSubject?->subject?->name;
+                $gradeLevelName = $gradeSubject?->gradeLevel?->grade_name;
+
+                if ($subjectName && $gradeLevelName) {
+                    return [
+                        'subject' => $subjectName,
+                        'grade_level' => $gradeLevelName,
+                    ];
+                }
+                return null;
+            })->filter()->unique()->values();
+
+            // Optional: primary subject/grade for quick display
+            $assessment->primary_subject = $subjectGradeLevels->first()['subject'] ?? null;
+            $assessment->primary_grade_level = $subjectGradeLevels->first()['grade_level'] ?? null;
+
+            // All pairs if you need them on the frontend
+            $assessment->subject_grade_levels = $subjectGradeLevels;
+
             // Attach student_assessment details for this student
             $studentAssessment = $assessment->studentAssessments->first();
             $assessment->student_assessment = $studentAssessment;
@@ -120,6 +137,29 @@ class AssessmentController extends Controller
             $topicIds = $assessment->questions->pluck('question.topic_id')->unique()->filter();
             $topics = Topic::whereIn('id', $topicIds)->get();
             $assessment->topics = $topics;
+
+            // Compute subject/grade-level pairs from topics (subjects derived from topics)
+            $subjectGradeLevels = $assessment->topics->map(function ($topic) {
+                $gradeSubject = $topic->gradeSubject;
+                $subjectName = $gradeSubject?->subject?->name;
+                $gradeLevelName = $gradeSubject?->gradeLevel?->grade_name;
+
+                if ($subjectName && $gradeLevelName) {
+                    return [
+                        'subject' => $subjectName,
+                        'grade_level' => $gradeLevelName,
+                    ];
+                }
+                return null;
+            })->filter()->unique()->values();
+
+            // Optional: primary subject/grade for quick display
+            $assessment->primary_subject = $subjectGradeLevels->first()['subject'] ?? null;
+            $assessment->primary_grade_level = $subjectGradeLevels->first()['grade_level'] ?? null;
+
+            // All pairs if you need them on the frontend
+            $assessment->subject_grade_levels = $subjectGradeLevels;
+
             // Attach student_assessment details for this student
             $studentAssessment = $assessment->studentAssessments->first();
             $assessment->student_assessment = $studentAssessment;
@@ -251,8 +291,6 @@ class AssessmentController extends Controller
         // Build base query (leaf questions only)
         $questionQuery = Question::where('topic_id', $topic->id)
             ->whereDoesntHave('subQuestions');
-
-
         if ($validated['mode'] === 'unpracticed') {
             $practicedQuestionIds = StudentQuestionHistory::where('student_id', $student->id)
                 ->where('topic_id', $topic->id)

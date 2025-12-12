@@ -86,7 +86,7 @@
                     {{ $section['instruction'] }}
                 </p>
             @endif
-<hr style="margin:20px 0; border:0; border-top:1px solid #ccc;" />
+    <hr style="margin:20px 0; border:0; border-top:1px solid #ccc;" />
             @foreach($section['questions'] as $q)
                 <div class="question">
                     @if(!empty($q['sub_questions']))
