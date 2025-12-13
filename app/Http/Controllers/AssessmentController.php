@@ -648,15 +648,36 @@ class AssessmentController extends Controller
 
         foreach ($studentAnswers as $answer) {
             $question = $answer->question;
+
+            // Decode options if it's a JSON string
+            $options = $question->options;
+            if (is_string($options)) {
+                $options = json_decode($options, true);
+            }
+
+            // Add image URLs to options if they exist
+            if (is_array($options)) {
+                $options = array_map(function ($opt) {
+                    if (is_array($opt) && isset($opt['image']) && $opt['image']) {
+                        $opt['image_url'] = asset('storage/' . $opt['image']);
+                    }
+                    return $opt;
+                }, $options);
+            }
+
             $results['questions'][] = [
+                'question_id' => $question->id,
                 'question_text' => $question->question,
                 'question_type' => $question->question_type,
+                'options' => $options,
                 'student_answer' => $answer->answer,
                 'correct_answer' => $question->correct_answer,
                 'is_correct' => $answer->is_correct,
                 'points_earned' => $answer->points_earned,
                 'max_points' => $question->marks,
-                'explanation' => $question->explanation
+                'explanation' => $question->explanation,
+                'question_image' => $question->question_image_url,
+                'correct_answer_image' => $question->correct_answer_image_url
             ];
         }
 

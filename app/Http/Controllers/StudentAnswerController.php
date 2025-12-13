@@ -192,6 +192,68 @@ class StudentAnswerController extends Controller
             'completed_at' => $studentAssessment->completed_at
         ]);
     }
+
+    public function updateShortAnswerConfidence(Request $request)
+{
+    $request->validate([
+        'student_assessment_id' => 'required|exists:student_assessments,id',
+        'question_id' => 'required|exists:questions,id',
+        'confidence_score' => 'required|integer|in:0,1,3,4',
+    ]);
+
+    $studentAssessment = StudentAssessment::with('assessment')
+        ->findOrFail($request->student_assessment_id);
+
+    if ($studentAssessment->student_id !== Auth::id()) {
+        return response()->json(['error' => 'Unauthorized'], 403);
+    }
+
+    $question = Question::findOrFail($request->question_id);
+
+    // Only for practice short_answer
+    if (
+        $question->question_type !== 'short_answer' ||
+        $studentAssessment->assessment->type !== 'practice'
+    ) {
+        return response()->json(['error' => 'Not allowed for this question/assessment type'], 400);
+    }
+
+    $studentAnswer = StudentAnswer::where('student_assessment_id', $studentAssessment->id)
+        ->where('question_id', $question->id)
+        ->firstOrFail();
+
+    $confidence = $request->confidence_score;
+
+    $weights = [
+        0 => 0,
+        1 => 0.5,
+        3 => 0.75,
+        4 => 1,
+    ];
+
+    $weight = $weights[$confidence] ?? 0;
+
+    $oldPoints = $studentAnswer->points_earned ?? 0;
+    $newPoints = $question->marks * $weight;
+
+    $studentAnswer->points_earned = $newPoints;
+    $studentAnswer->confidence_score = $confidence;
+    $studentAnswer->is_correct = false; // still self-graded
+    $studentAnswer->save();
+
+    // Update total score; max_score unchanged
+    $studentAssessment->score = ($studentAssessment->score - $oldPoints) + $newPoints;
+    $studentAssessment->save();
+
+    return response()->json([
+        'message' => 'Confidence updated and score recalculated',
+        'question_id' => $question->id,
+        'confidence_score' => $confidence,
+        'points_earned' => $newPoints,
+        'total_score' => $studentAssessment->score,
+        'max_score' => $studentAssessment->max_score,
+    ]);
+}
 }
 
 
