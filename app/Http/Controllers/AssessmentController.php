@@ -248,6 +248,87 @@ class AssessmentController extends Controller
         // Get logo_path from creator's school if available
         $logoPath = $assessment->creator && $assessment->creator->school ? $assessment->creator->school->logo_path : null;
 
+        // Normalize questions: return parent questions with nested sub_questions
+        $normalizedQuestions = [];
+
+        // Ensure assessment questions are processed in stable order (AssessmentQuestion.order)
+        $assessmentQuestions = $assessment->questions->sortBy(function ($aq) {
+            return $aq->order ?? 0;
+        })->values();
+
+        foreach ($assessmentQuestions as $aq) {
+            $q = $aq->question;
+            if (! $q) {
+                continue;
+            }
+            // Skip child questions here; they will be nested under their parent
+            if ($q->parent_question_id) {
+                continue;
+            }
+
+            // Build base item and ensure option JSON is decoded
+            $item = $q->toArray();
+            $item['assessment_order'] = $aq->order ?? null;
+
+            // Normalize options (decode if string) and resolve option images
+            if (isset($item['options']) && is_string($item['options'])) {
+                $decoded = json_decode($item['options'], true);
+                if (json_last_error() === JSON_ERROR_NONE) {
+                    $item['options'] = $decoded;
+                }
+            }
+
+            if (is_array($item['options'] ?? null)) {
+                $item['options'] = array_map(function ($opt) {
+                    if (is_array($opt)) {
+                        if (!empty($opt['image'])) {
+                            $opt['image_url'] = asset('storage/' . $opt['image']);
+                        }
+                        if (isset($opt['text']) && is_string($opt['text'])) {
+                            $opt['text'] = $opt['text'];
+                        }
+                        return $opt;
+                    }
+                    return $opt;
+                }, $item['options']);
+            }
+
+            // Ensure question and correct answer image URLs are set
+            $item['question_image_url'] = $q->question_image ? asset('storage/' . $q->question_image) : null;
+            $item['correct_answer_image_url'] = $q->correct_answer_image ? asset('storage/' . $q->correct_answer_image) : null;
+
+            // Include any sub-questions (stable ordered by id)
+            $subQuestions = $q->subQuestions->sortBy('id')->values();
+            $item['sub_questions'] = $subQuestions->map(function ($sq) use ($aq) {
+                $sub = $sq->toArray();
+                // decode options for sub-question
+                if (isset($sub['options']) && is_string($sub['options'])) {
+                    $decoded = json_decode($sub['options'], true);
+                    if (json_last_error() === JSON_ERROR_NONE) {
+                        $sub['options'] = $decoded;
+                    }
+                }
+                if (is_array($sub['options'] ?? null)) {
+                    $sub['options'] = array_map(function ($opt) {
+                        if (is_array($opt) && !empty($opt['image'])) {
+                            $opt['image_url'] = asset('storage/' . $opt['image']);
+                        }
+                        return $opt;
+                    }, $sub['options']);
+                }
+                $sub['question_image_url'] = $sq->question_image ? asset('storage/' . $sq->question_image) : null;
+                $sub['correct_answer_image_url'] = $sq->correct_answer_image ? asset('storage/' . $sq->correct_answer_image) : null;
+                // reference parent's assessment order
+                $sub['assessment_order'] = $aq->order ?? null;
+                return $sub;
+            })->values();
+
+            $normalizedQuestions[] = $item;
+        }
+
+        // Replace the questions relation in the returned assessment with normalized structure
+        $assessment->questions = collect($normalizedQuestions);
+
         return response()->json([
             'assessment' => $assessment,
             'topic' => $topic,
@@ -666,18 +747,24 @@ class AssessmentController extends Controller
             }
 
             $results['questions'][] = [
+                'student_assessment_id' => $studentAssessment->id, // ✅ ADD THIS
                 'question_id' => $question->id,
                 'question_text' => $question->question,
                 'question_type' => $question->question_type,
                 'options' => $options,
-                'student_answer' => $answer->answer,
+                // Support multiple possible answer field names used across flows
+                'student_answer' => $answer->answer ?? $answer->answer_text ?? null,
                 'correct_answer' => $question->correct_answer,
-                'is_correct' => $answer->is_correct,
-                'points_earned' => $answer->points_earned,
-                'max_points' => $question->marks,
+                'is_correct' => (bool) ($answer->is_correct ?? false),
+                // Prefer stored answer points, fallback to alternative fields or zero
+                'points_earned' => $answer->points_earned ?? $answer->points ?? 0,
+                // Use per-answer max if set, otherwise fall back to question marks or legacy max_points
+                'max_points' => $answer->max_points ?? $question->marks ?? $question->max_points ?? 0,
                 'explanation' => $question->explanation,
                 'question_image' => $question->question_image_url,
-                'correct_answer_image' => $question->correct_answer_image_url
+                'correct_answer_image' => $question->correct_answer_image_url,
+                'confidence_score' => $answer->confidence_score ?? null,
+                'submitted_at' => $answer->submitted_at ?? $answer->created_at ?? null,
             ];
         }
 

@@ -16,6 +16,7 @@ class StudentAnswer extends Model
         'is_correct',
         'points_earned',
         'submitted_at',
+        'confidence_score',
     ];
 
     public function studentAssessment()

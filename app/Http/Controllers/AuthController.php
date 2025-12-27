@@ -8,6 +8,7 @@ use Illuminate\Support\Str;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
 use Laravel\Sanctum\PersonalAccessToken;
 use Laravel\Socialite\Facades\Socialite;
 
@@ -90,6 +91,7 @@ class AuthController extends Controller
         ]);
 
         if (!auth()->attempt($credentials)) {
+            Log::warning('Failed login attempt for email: ' . $credentials['email']);
             return response()->json(['message' => 'Invalid credentials'], 401);
         }
 

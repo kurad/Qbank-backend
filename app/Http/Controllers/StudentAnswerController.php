@@ -6,13 +6,14 @@ use App\Models\Question;
 use Illuminate\Http\Request;
 use App\Models\StudentAnswer;
 use App\Models\StudentAssessment;
+use Illuminate\Support\Facades\DB;
 use App\Http\Controllers\Controller;
 use Illuminate\Support\Facades\Auth;
 use App\Models\StudentQuestionHistory;
 
 class StudentAnswerController extends Controller
 {
- public function storeStudentAnswers(Request $request)
+    public function storeStudentAnswers(Request $request)
     {
         $request->validate([
             'student_assessment_id' => 'required|exists:student_assessments,id',
@@ -104,7 +105,7 @@ class StudentAnswerController extends Controller
                     if ($studentAssessment->assessment->type === 'practice') {
 
                         // For practice → student self-confirms performance
-                        $confidence = $ans['confidence_score'] ?? 0;
+                        $confidence = $ans['confidence_score'] ?? null;
 
                         $weights = [
                             0 => 0,
@@ -119,7 +120,6 @@ class StudentAnswerController extends Controller
                         $isCorrect = false; // not auto-graded
 
                         $confidenceScoreToSave = $confidence;
-
                     } else {
 
                         // Strict auto-grade for exams/homework
@@ -194,66 +194,96 @@ class StudentAnswerController extends Controller
     }
 
     public function updateShortAnswerConfidence(Request $request)
-{
-    $request->validate([
-        'student_assessment_id' => 'required|exists:student_assessments,id',
-        'question_id' => 'required|exists:questions,id',
-        'confidence_score' => 'required|integer|in:0,1,3,4',
-    ]);
+    {
+        $request->validate([
+            'student_assessment_id' => 'required|exists:student_assessments,id',
+            'question_id' => 'required|exists:questions,id',
+            // Allowed values match practice short_answer conventions (0-3)
+            'confidence_score' => 'required|integer|in:0,1,2,3',
+        ]);
 
-    $studentAssessment = StudentAssessment::with('assessment')
-        ->findOrFail($request->student_assessment_id);
+        $studentAssessment = StudentAssessment::with('assessment')
+            ->findOrFail($request->student_assessment_id);
 
-    if ($studentAssessment->student_id !== Auth::id()) {
-        return response()->json(['error' => 'Unauthorized'], 403);
+        if ($studentAssessment->student_id !== Auth::id()) {
+            return response()->json(['error' => 'Unauthorized'], 403);
+        }
+
+        if ($studentAssessment->assessment->type !== 'practice') {
+            return response()->json(['error' => 'Only allowed for practice assessments'], 400);
+        }
+
+        $question = Question::findOrFail($request->question_id);
+
+        // Only for practice short_answer
+        if ($question->question_type !== 'short_answer') {
+            return response()->json(['error' => 'Only short answer questions allowed'], 400);
+        }
+        // Ensure we have sensible max points value to use (use `marks` primarily)
+        $questionMax = $question->marks ?? $question->max_points ?? 0;
+
+        $studentAnswer = StudentAnswer::firstOrCreate(
+            [
+                'student_assessment_id' => $studentAssessment->id,
+                'question_id' => $question->id,
+            ],
+            [
+                'student_id' => Auth::id(),
+                'answer_text' => null,
+                'points_earned' => 0,
+                'max_points' => $questionMax,
+            ]
+        );
+        // Prevent re-grading
+        if ($studentAnswer->confidence_score !== null) {
+            return response()->json(['message' => 'Already graded'], 409);
+        }
+
+        // Use same weight mapping as `storeStudentAnswers` for practice short answers
+        $weights = [
+            0 => 0,
+            1 => 0.5,
+            2 => 0.75,
+            3 => 1,
+        ];
+
+        $confidence = (int) $request->confidence_score;
+        $weight = $weights[$confidence] ?? 0;
+
+        // Use studentAnswer->max_points if present, otherwise fall back to question max
+        $maxForCalculation = $studentAnswer->max_points ?? $questionMax ?? 0;
+        $oldPoints = $studentAnswer->points_earned ?? 0;
+        $newPoints = round($maxForCalculation * $weight, 2);
+
+        DB::transaction(function () use (
+            $studentAnswer,
+            $studentAssessment,
+            $oldPoints,
+            $newPoints,
+            $confidence,
+            $maxForCalculation
+        ) {
+            $studentAnswer->update([
+                'points_earned' => $newPoints,
+                'confidence_score' => $confidence,
+                'is_correct' => $newPoints === $maxForCalculation, // still self-graded
+            ]);
+            // Update total score; max_score unchanged
+            $studentAssessment->update([
+                'score' => ($studentAssessment->score - $oldPoints) + $newPoints,
+            ]);
+        });
+        // refresh models to ensure we return current DB values
+        $studentAnswer->refresh();
+        $studentAssessment->refresh();
+
+        return response()->json([
+            'message' => 'Confidence updated and score recalculated',
+            'question_id' => $question->id,
+            'confidence_score' => $confidence,
+            'points_earned' => $studentAnswer->points_earned,
+            'total_score' => $studentAssessment->score,
+            'max_score' => $studentAssessment->max_score,
+        ]);
     }
-
-    $question = Question::findOrFail($request->question_id);
-
-    // Only for practice short_answer
-    if (
-        $question->question_type !== 'short_answer' ||
-        $studentAssessment->assessment->type !== 'practice'
-    ) {
-        return response()->json(['error' => 'Not allowed for this question/assessment type'], 400);
-    }
-
-    $studentAnswer = StudentAnswer::where('student_assessment_id', $studentAssessment->id)
-        ->where('question_id', $question->id)
-        ->firstOrFail();
-
-    $confidence = $request->confidence_score;
-
-    $weights = [
-        0 => 0,
-        1 => 0.5,
-        3 => 0.75,
-        4 => 1,
-    ];
-
-    $weight = $weights[$confidence] ?? 0;
-
-    $oldPoints = $studentAnswer->points_earned ?? 0;
-    $newPoints = $question->marks * $weight;
-
-    $studentAnswer->points_earned = $newPoints;
-    $studentAnswer->confidence_score = $confidence;
-    $studentAnswer->is_correct = false; // still self-graded
-    $studentAnswer->save();
-
-    // Update total score; max_score unchanged
-    $studentAssessment->score = ($studentAssessment->score - $oldPoints) + $newPoints;
-    $studentAssessment->save();
-
-    return response()->json([
-        'message' => 'Confidence updated and score recalculated',
-        'question_id' => $question->id,
-        'confidence_score' => $confidence,
-        'points_earned' => $newPoints,
-        'total_score' => $studentAssessment->score,
-        'max_score' => $studentAssessment->max_score,
-    ]);
 }
-}
-
-
