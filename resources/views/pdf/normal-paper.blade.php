@@ -94,8 +94,8 @@
                         <div class="question-text">
                             <span class="question-number">{{ $q['number'] }}.</span>
                             {!! $q['text'] !!}
-                            @if(!empty($q['image']) && file_exists(public_path($q['image'])))
-                                <div><img src="data:image/png;base64,{{ base64_encode(file_get_contents(public_path($q['image']))) }}" style="max-width:350px; max-height:180px;"></div>
+                            @if(!empty($q['image']))
+                                <div><img src="{{ $q['image'] }}" style="max-width:350px; max-height:180px;"></div>
                             @endif
                         </div>
 
@@ -105,7 +105,7 @@
                                 {!! $sub['text'] !!}
                                 <span class="marks">[{{ $sub['marks'] }} mark{{ $sub['marks'] > 1 ? 's' : '' }}]</span>
                                 @if(!empty($sub['image']))
-                                    <div><img src="{{ asset($sub['image']) }}" style="max-width:350px; max-height:180px;"></div>
+                                    <div><img src="{{ $sub['image'] }}" style="max-width:350px; max-height:180px;"></div>
                                 @endif
                             </div>
 
@@ -136,11 +136,11 @@
                                         <div class="option">
                                             <div class="option-label">{{ chr(65 + $i) }}.</div>
                                             <div class="option-text">
-                                                @if(!empty($opt['image']))
-                                                    <img src="{{ asset($opt['image']) }}" style="max-height:50px;">
-                                                @else
-                                                    {!! $opt['text'] !!}
-                                                @endif
+                                            @if(!empty($opt['image']))
+                                                <img src="{{ $opt['image'] }}" style="max-height:50px;">
+                                            @else
+                                                {!! $opt['text'] !!}
+                                            @endif
                                             </div>
                                         </div>
                                     @endforeach
@@ -163,8 +163,8 @@
                             <span class="question-number">{{ $q['number'] }}.</span>
                             {!! $q['text'] !!}
                             <span class="marks">[{{ $q['marks'] }} mark{{ $q['marks'] > 1 ? 's' : '' }}]</span>
-                            @if(!empty($q['image']) && file_exists(public_path($q['image'])))
-                                <div><img src="data:image/png;base64,{{ base64_encode(file_get_contents(public_path($q['image']))) }}" style="max-width:350px; max-height:180px;"></div>
+                            @if(!empty($q['image']))
+                                <div><img src="{{ $q['image'] }}" style="max-width:350px; max-height:180px;"></div>
                             @endif
                         </div>
 
@@ -196,11 +196,11 @@
                                     <div class="option">
                                         <div class="option-label">{{ chr(65 + $i) }}.</div>
                                             <div class="option-text">
-                                            @if(!empty($opt['image']))
-                                                <img src="{{ asset($opt['image']) }}" style="max-height:50px;">
-                                            @else
-                                                {!! $opt['text'] !!}
-                                            @endif
+                                                @if(!empty($opt['image']))
+                                                    <img src="{{ $opt['image'] }}" style="max-height:50px;">
+                                                @else
+                                                    {!! $opt['text'] !!}
+                                                @endif
                                             </div>
                                     </div>
                                 @endforeach
@@ -231,8 +231,8 @@
                     <div class="question-text">
                         <span class="question-number">{{ $q['number'] }}.</span>
                         {!! $q['text'] !!}
-                        @if(!empty($q['image']) && file_exists(public_path($q['image'])))
-                            <div><img src="data:image/png;base64,{{ base64_encode(file_get_contents(public_path($q['image']))) }}" style="max-width:350px; max-height:180px;"></div>
+                        @if(!empty($q['image']))
+                            <div><img src="{{ $q['image'] }}" style="max-width:350px; max-height:180px;"></div>
                         @endif
                     </div>
 
@@ -242,7 +242,7 @@
                             {!! $sub['text'] !!}
                             <span class="marks">[{{ $sub['marks'] }} mark{{ $sub['marks'] > 1 ? 's' : '' }}]</span>
                             @if(!empty($sub['image']))
-                                <div><img src="{{ asset($sub['image']) }}" style="max-width:350px; max-height:180px;"></div>
+                                <div><img src="{{ $sub['image'] }}" style="max-width:350px; max-height:180px;"></div>
                             @endif
                         </div>
 
@@ -273,11 +273,11 @@
                                     <div class="option">
                                         <div class="option-label">{{ chr(65 + $i) }}.</div>
                                         <div class="option-text">
-                                            @if(!empty($opt['image']))
-                                                <img src="{{ asset($opt['image']) }}" style="max-height:50px;">
-                                            @else
-                                                {!! $opt['text'] !!}
-                                            @endif
+                                        @if(!empty($opt['image']))
+                                            <img src="{{ $opt['image'] }}" style="max-height:50px;">
+                                        @else
+                                            {!! $opt['text'] !!}
+                                        @endif
                                         </div>
                                     </div>
                                 @endforeach
@@ -301,7 +301,7 @@
                         {!! $q['text'] !!}
                         <span class="marks">[{{ $q['marks'] }} mark{{ $q['marks'] > 1 ? 's' : '' }}]</span>
                         @if(!empty($q['image']))
-                            <div><img src="{{ asset($q['image']) }}" style="max-width:350px; max-height:180px;"></div>
+                            <div><img src="{{ $q['image'] }}" style="max-width:350px; max-height:180px;"></div>
                         @endif
                     </div>
 

@@ -296,9 +296,9 @@ class PaperGeneratorController extends Controller
             $parentId = $q->parent_question_id;
 
             //--------------------------------------
-            // IMAGE BASE64 for PDF views
+            // IMAGE PATH for PDF views
             //--------------------------------------
-            $imageBase64 = null;
+            $imagePath = null;
             if ($q->question_image) {
                 $img = $q->question_image;
                 $relative = ltrim($img, '/');
@@ -306,12 +306,12 @@ class PaperGeneratorController extends Controller
                 // 1) Check if file is directly under public/<relative>
                 $directPublicPath = public_path($relative);
                 if (file_exists($directPublicPath)) {
-                    $imageBase64 = 'data:image/png;base64,' . base64_encode(file_get_contents($directPublicPath));
+                    $imagePath = $directPublicPath;
                 } else {
                     // 2) Fallback: treat as public/storage/<relative>
                     $storagePublicPath = public_path('storage/' . $relative);
                     if (file_exists($storagePublicPath)) {
-                        $imageBase64 = 'data:image/png;base64,' . base64_encode(file_get_contents($storagePublicPath));
+                        $imagePath = $storagePublicPath;
                     }
                 }
             }
@@ -332,7 +332,7 @@ class PaperGeneratorController extends Controller
                     'text'          => $parentText,
                     'type'          => 'parent_group',
                     'is_math'       => $q->is_math,
-                    'image_base64'  => $imageBase64,
+                    'image'         => $imagePath,
                     'sub_questions' => []
                 ];
                 continue;
@@ -351,7 +351,7 @@ class PaperGeneratorController extends Controller
                     'text'         => $standaloneText,
                     'marks'        => $q->marks ?? 1,
                     'type'         => $q->question_type,
-                    'image_base64' => $imageBase64,
+                    'image'        => $imagePath,
                     'is_math'      => $q->is_math,
                     'options'      => $this->parseOptions($q)
                 ];
@@ -375,11 +375,11 @@ class PaperGeneratorController extends Controller
                     $relative = ltrim($img, '/');
                     $directPublicPath = public_path($relative);
                     if (file_exists($directPublicPath)) {
-                        $parentImagePath = $relative;
+                        $parentImagePath = $directPublicPath;
                     } else {
                         $storagePublicPath = public_path('storage/' . $relative);
                         if (file_exists($storagePublicPath)) {
-                            $parentImagePath = 'storage/' . $relative;
+                            $parentImagePath = $storagePublicPath;
                         }
                     }
                 }
@@ -395,7 +395,7 @@ class PaperGeneratorController extends Controller
                     'text'          => $parentStem,
                     'type'          => 'parent_group',
                     'is_math'       => $parent ? $parent->is_math : 0,
-                    'image_base64'  => $parentImagePath,
+                    'image'         => $parentImagePath,
                     'sub_questions' => []
                 ];
             }
@@ -407,11 +407,11 @@ class PaperGeneratorController extends Controller
                 $relative = ltrim($img, '/');
                 $directPublicPath = public_path($relative);
                 if (file_exists($directPublicPath)) {
-                    $subImagePath = $relative;
+                    $subImagePath = $directPublicPath;
                 } else {
                     $storagePublicPath = public_path('storage/' . $relative);
                     if (file_exists($storagePublicPath)) {
-                        $subImagePath = 'storage/' . $relative;
+                        $subImagePath = $storagePublicPath;
                     }
                 }
             }
@@ -429,7 +429,7 @@ class PaperGeneratorController extends Controller
                 'type'         => $q->question_type,
                 'marks'        => $q->marks ?? 1,
                 'is_math'      => $q->is_math,
-                'image_base64' => $subImagePath,
+                'image'        => $subImagePath,
                 'options'      => $this->parseOptions($q)
             ];
 
@@ -466,6 +466,20 @@ class PaperGeneratorController extends Controller
                     // Already in expected shape or similar
                     if (array_key_exists('text', $opt) || array_key_exists('image', $opt)) {
                         $opt['text'] = $opt['text'] ?? '';
+                        // Convert image to absolute path if present
+                        if (!empty($opt['image'])) {
+                            $img = $opt['image'];
+                            $relative = ltrim($img, '/');
+                            $directPublicPath = public_path($relative);
+                            if (file_exists($directPublicPath)) {
+                                $opt['image'] = $directPublicPath;
+                            } else {
+                                $storagePublicPath = public_path('storage/' . $relative);
+                                if (file_exists($storagePublicPath)) {
+                                    $opt['image'] = $storagePublicPath;
+                                }
+                            }
+                        }
                         return $opt;
                     }
 
