@@ -102,6 +102,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // List all assessments created by the authenticated user
     Route::get('/assessments/created', [AssessmentController::class, 'listCreatedAssessments']);
     Route::get('/assessments/{id}/details', [AssessmentController::class, 'show']);
+    Route::get('/assessments/{id}/questions-for-practice', [AssessmentController::class, 'questionsForPractice']);
     // Route::post('/assessments/submit-answers', [AssessmentController::class, 'submitAnswers']);
     Route::post('/assessments/submit-answers', [StudentAnswerController::class, 'storeStudentAnswers']);
     Route::post('/assessments/update-short-answer-confidence',[StudentAnswerController::class, 'updateShortAnswerConfidence']

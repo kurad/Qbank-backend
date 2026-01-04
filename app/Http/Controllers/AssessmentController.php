@@ -202,6 +202,12 @@ class AssessmentController extends Controller
         return response()->json(['assessment' => $assessment], 200);
     }
     // Get assessment details (questions) for answering
+    public function questionsForPractice($id, AssessmentAssigner $assigner)
+    {
+        $data = $assigner->questionsForPractice($id);
+        return response()->json($data);
+    }
+
     public function show($id)
     {
         // Eager load each question and its sub-questions
