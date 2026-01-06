@@ -58,8 +58,6 @@ class GroupController extends Controller
     public function destroy($id)
     {
         $group = Group::findOrFail($id);
-        $this->authorize('delete', $group);
-
         $group->delete();
 
         return response()->json([
