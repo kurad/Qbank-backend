@@ -50,6 +50,7 @@ class AssessmentAssigner
         // Eager load each question and its sub-questions
         $assessment = Assessment::with([
             'questions.question.subQuestions',
+            'questions.question.parent',
             'topics.gradeSubject.subject',
             'topics.gradeSubject.gradeLevel',
             'creator.school'
@@ -99,25 +100,40 @@ class AssessmentAssigner
             return $aq->order ?? 0;
         })->values();
 
+        $seenParents = [];
         foreach ($assessmentQuestions as $aq) {
             $q = $aq->question;
-            if (! $q) {
+            if (! $q) continue;
+            // CASE 1: Parent question directely attached
+
+            if (!$q->parent_question_id) {
+                $item = $this->normalizeQuestion($q, $aq->order ?? null);
+
+                $item['sub_questions'] = $q->subQuestions
+                    ->sortBy('id')
+                    ->map(fn($sq) => $this->normalizeQuestion($sq, $aq->order ?? null))
+                    ->values();
+
+                $normalizedQuestions[] = $item;
+                $seenParents[$q->id] = true;
                 continue;
             }
-            // Skip child questions here; they will be nested under their parent
-            if ($q->parent_question_id) {
-                continue;
+
+            // CASE 2: Child attached but parent missing
+
+            $parent = $q->parentQuestion;
+
+            if ($parent && empty($seenParents[$parent->id])) {
+                $item = $this->normalizeQuestion($parent, $aq->order ?? null);
+
+                $item['sub_questions'] = $parent->subQuestions
+                    ->sortBy('id')
+                    ->map(fn($sq) => $this->normalizeQuestion($sq, $aq->order ?? null))
+                    ->values();
+
+                $normalizedQuestions[] = $item;
+                $seenParents[$parent->id] = true;
             }
-
-            // Build base item using helper
-            $item = $this->normalizeQuestion($q, $aq->order ?? null);
-
-            // Include any sub-questions (stable ordered by id)
-            $item['sub_questions'] = $q->subQuestions->sortBy('id')->map(function ($sq) use ($aq) {
-                return $this->normalizeQuestion($sq, $aq->order ?? null);
-            })->values();
-
-            $normalizedQuestions[] = $item;
         }
 
         // Replace the questions relation in the returned assessment with normalized structure
