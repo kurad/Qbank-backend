@@ -1,4 +1,5 @@
 <?php
+
 namespace App\Http\Controllers;
 
 use App\Models\Group;
@@ -34,25 +35,25 @@ class AssessmentController extends Controller
             //Compute subject/grade-level pairs from topics
 
             $subjectGradeLevels = $assessment->topics->map(function ($topic) {
-        $gradeSubject = $topic->gradeSubject;
-        $subjectName = $gradeSubject?->subject?->name;
-        $gradeLevelName = $gradeSubject?->gradeLevel?->grade_name;
+                $gradeSubject = $topic->gradeSubject;
+                $subjectName = $gradeSubject?->subject?->name;
+                $gradeLevelName = $gradeSubject?->gradeLevel?->grade_name;
 
-        if ($subjectName && $gradeLevelName) {
-            return [
-                'subject' => $subjectName,
-                'grade_level' => $gradeLevelName,
-            ];
-        }
-        return null;
-    })->filter()->unique()->values();
+                if ($subjectName && $gradeLevelName) {
+                    return [
+                        'subject' => $subjectName,
+                        'grade_level' => $gradeLevelName,
+                    ];
+                }
+                return null;
+            })->filter()->unique()->values();
 
-    // Optional: primary subject/grade for quick display
-    $assessment->primary_subject = $subjectGradeLevels->first()['subject'] ?? null;
-    $assessment->primary_grade_level = $subjectGradeLevels->first()['grade_level'] ?? null;
+            // Optional: primary subject/grade for quick display
+            $assessment->primary_subject = $subjectGradeLevels->first()['subject'] ?? null;
+            $assessment->primary_grade_level = $subjectGradeLevels->first()['grade_level'] ?? null;
 
-    // All pairs if you need them on the frontend
-    $assessment->subject_grade_levels = $subjectGradeLevels;
+            // All pairs if you need them on the frontend
+            $assessment->subject_grade_levels = $subjectGradeLevels;
 
 
             return $assessment;
@@ -188,7 +189,7 @@ class AssessmentController extends Controller
     public function updateTitle($id, Request $request)
     {
         $data = $request->validate([
-            'title' => ['required','string','max:255'],
+            'title' => ['required', 'string', 'max:255'],
         ]);
 
         $assessment = Assessment::find($id);
@@ -548,12 +549,12 @@ class AssessmentController extends Controller
         foreach (array_values($validated['question_ids']) as $order => $qid) {
             // Check usage by same user (limit = 3)
             $usageCount = QuestionUsage::where('question_id', $qid)
-                ->whereHas('assessment', function($q) use ($userId) {
+                ->whereHas('assessment', function ($q) use ($userId) {
                     $q->where('creator_id', $userId);
                 })->count();
-                if ($usageCount >= 3) {
-                    $warnings[] = "Question ID {$qid} has been used in 3 or more assessments created by you.";
-                }
+            if ($usageCount >= 3) {
+                $warnings[] = "Question ID {$qid} has been used in 3 or more assessments created by you.";
+            }
             // -------------------------------------------------------
             if (isset($existing[$qid])) {
                 // Update order for existing question
@@ -660,14 +661,14 @@ class AssessmentController extends Controller
         ]);
 
         $assessment = Assessment::findOrFail($assessmentId);
-        $group = Group::with('students')->findOrFail($validated['group_id']);
 
-        // Attach all group students to this assessment
-        foreach ($group->students as $student) {
-            $assessment->students()->syncWithoutDetaching([$student->id]);
-        }
+        // Attach group to the assessment
+        // Using syncWithoutDetaching in case you want to keep other groups attached
+        $assessment->groups()->syncWithoutDetaching([$validated['group_id']]);
 
-        return response()->json(['message' => 'Group assigned successfully']);
+
+
+        return response()->json(['message' => 'Assessment assigned successfully']);
     }
 
 
@@ -854,23 +855,29 @@ class AssessmentController extends Controller
 
     public function assignedAssessments(Request $request)
     {
-        $studentId = $request->user()->id;
-        // Only return assessments assigned to the student (not created by them)
-        $assignedAssessments = StudentAssessment::with([
-            'assessment' => function ($query) {
-                $query->select('id', 'type', 'title', 'subject_id', 'creator_id', 'due_date', 'time_limit')
-                    ->with('subject:id,name', 'creator:id,name');
-            }
+        $student = $request->user();
+
+        // Get all group IDs the student belongs to
+        $groupIds = $student->groups()->pluck('groups.id');
+
+        $assignedAssessments = Assessment::with([
+            'subject:id,name',
+            'creator:id,name',
+            'groups:id,group_name,class_code'
         ])
-            ->where('student_id', $studentId)
-            ->whereHas('assessment', function ($q) use ($studentId) {
-                $q->where('creator_id', '!=', $studentId);
+            // Only assessments assigned to the student's groups
+            ->whereHas('groups', function ($query) use ($groupIds) {
+                $query->whereIn('groups.id', $groupIds);
             })
-            ->orderByDesc('assigned_at')
-            ->paginate(5);
+            // Exclude assessments created by the student themselves
+            ->where('creator_id', '!=', $student->id)
+            ->orderByDesc('created_at')
+            ->get();
 
         return response()->json($assignedAssessments);
     }
+
+
     /**
      * Render chemistry equations using KaTeX with mhchem extension
      *
@@ -922,7 +929,7 @@ class AssessmentController extends Controller
 
         return response()->json($practiceAssessments);
     }
-        /**
+    /**
      * Delete an assessment by ID
      */
     public function destroy($id)

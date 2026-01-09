@@ -72,4 +72,18 @@ class Assessment extends Model
     {
         return $this->belongsTo(GradeLevel::class);
     }
+    public function groups()
+{
+    return $this->belongsToMany(
+        Group::class,
+        'assessment_groups',
+        'assessment_id',
+        'group_id'
+    );
+}
+public function students()
+    {
+        return $this->belongsToMany(User::class, 'group_students', 'group_id', 'student_id');
+    }
+
 }

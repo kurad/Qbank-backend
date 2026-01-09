@@ -10,11 +10,12 @@ use App\Http\Controllers\SchoolController;
 use App\Http\Controllers\SubjectController;
 use App\Http\Controllers\QuestionController;
 use App\Http\Controllers\AssessmentController;
-use App\Http\Controllers\AssessmentSectionController;
-use App\Http\Controllers\PaperGeneratorController;
 use App\Http\Controllers\GradeLevelController;
 use App\Http\Controllers\StudentAnswerController;
+use App\Http\Controllers\PaperGeneratorController;
 use App\Http\Controllers\AssessmentBuilderController;
+use App\Http\Controllers\AssessmentSectionController;
+use App\Http\Controllers\StudentAssessmentController;
 
 
 Route::post('/schools', [SchoolController::class, 'store']);
@@ -47,9 +48,9 @@ Route::get('/grade-levels/{gradeId}/subjects', [SubjectController::class, 'getSu
 Route::put('/questions/{id}', [QuestionController::class, 'update']);
 // Route::get('/questions/{topic}', [QuestionController::class, 'byTopic']);
 
-   Route::get('/auth/google', [AuthController::class, 'redirectToGoogle']);
-    Route::get('/auth/google/callback', [AuthController::class, 'handleGoogleCallback']);
-    
+Route::get('/auth/google', [AuthController::class, 'redirectToGoogle']);
+Route::get('/auth/google/callback', [AuthController::class, 'handleGoogleCallback']);
+
 
 Route::post('/grade-subjects', [TopicController::class, 'createOrGet']);
 
@@ -94,7 +95,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::put('/assessments/{id}/reorder', [AssessmentController::class, 'reorderQuestions']);
     // Route::get('/assessments/{id}/pdf', [PaperGeneratorController::class, 'generatePdf']);
     Route::get('/assessments/{id}/pdf/student', [PaperGeneratorController::class, 'generatePdf']);
-    
+
     Route::post('/assessments/assign', [AssessmentController::class, 'assign']);
     Route::post('/assessments/start-practice', [AssessmentController::class, 'startPractice']);
     Route::post('/assessments/practice-for-topic', [AssessmentController::class, 'createPracticeForTopic']);
@@ -105,8 +106,10 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/assessments/{id}/questions-for-practice', [AssessmentController::class, 'questionsForPractice']);
     // Route::post('/assessments/submit-answers', [AssessmentController::class, 'submitAnswers']);
     Route::post('/assessments/submit-answers', [StudentAnswerController::class, 'storeStudentAnswers']);
-    Route::post('/assessments/update-short-answer-confidence',[StudentAnswerController::class, 'updateShortAnswerConfidence']
-);
+    Route::post(
+        '/assessments/update-short-answer-confidence',
+        [StudentAnswerController::class, 'updateShortAnswerConfidence']
+    );
     Route::get('/student/assessment-results/{id}', [AssessmentController::class, 'showResults']);
     Route::get('/student/assigned-assessments', [AssessmentController::class, 'assignedAssessments']);
     Route::get('/student/statistics', [HomeController::class, 'statistics']);
@@ -128,8 +131,8 @@ Route::get('/subjects/overview', [HomeController::class, 'subjectsOverview']);
 Route::get('/subjects/{subject}/topics', [HomeController::class, 'subjectTopics']);
 Route::get('/reports/questions-per-subject', [HomeController::class, 'questionsPerSubject']);
 Route::middleware('auth:sanctum')->group(function () {
-        Route::get('/questions/by-topics', [AssessmentBuilderController::class, 'questionsByTopics']);
-        Route::post('/create-assessments', [AssessmentBuilderController::class, 'store']);
+    Route::get('/questions/by-topics', [AssessmentBuilderController::class, 'questionsByTopics']);
+    Route::post('/create-assessments', [AssessmentBuilderController::class, 'store']);
 });
 
 Route::middleware('auth:sanctum')->group(function () {
@@ -146,5 +149,26 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/assessments/{id}/assign-group', [AssessmentController::class, 'assignGroup']);
     Route::post('/groups/join', [GroupController::class, 'joinClassByCode']);
     Route::get('/my-groups', [GroupController::class, 'myGroups']);
+    Route::get('/groups/{group}/assignments', [GroupController::class, 'assignments']);
+    Route::get('/groups/{group}/assignments/{assessment}/submissions', [GroupController::class, 'assignmentSubmissions']);
 
+    // Assigned Assignments
+
+    // Start assessment
+    Route::post('/assessments/{assessment}/start', [StudentAssessmentController::class, 'startAssessment']);
+    // Save answer
+    Route::post('/answers', [StudentAssessmentController::class, 'saveAnswer']);
+
+    // Submit assessment
+    Route::post('/assessments/{studentAssessment}/submit', [StudentAssessmentController::class, 'submit']);
+
+    // View own assessments
+    Route::get('/assessments', [StudentAssessmentController::class, 'myAssessments']);
+    // View assessment result
+    Route::get('/assessments/{studentAssessment}',  [StudentAssessmentController::class, 'show']);
+    // Review individual answer
+    Route::put('/answers/{answer}', [StudentAssessmentController::class, 'reviewAnswer']);
+
+    // Finalize assessment
+    Route::post('/assessments/{studentAssessment}/finalize', [StudentAssessmentController::class, 'finalize']);
 });

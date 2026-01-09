@@ -61,11 +61,11 @@ class User extends Authenticatable
     }
     public function studentAssessments()
     {
-        return $this->hasMany(StudentAssessment::class);
+        return $this->hasMany(StudentAssessment::class, 'student_id');
     }
     public function studentAnswers()
     {
-        return $this->hasMany(StudentAnswer::class);
+        return $this->hasMany(StudentAnswer::class, 'student_id');
     }
     public function groups()
     {

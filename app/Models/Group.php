@@ -17,10 +17,19 @@ class Group extends Model
 
     public function students()
     {
-        return $this->belongsToMany(User::class, 'group_students','group_id','student_id');
+        return $this->belongsToMany(User::class, 'group_students', 'group_id', 'student_id');
     }
     public function creator()
     {
         return $this->belongsTo(User::class, 'created_by');
+    }
+    public function assessments()
+    {
+        return $this->belongsToMany(
+            Assessment::class,
+            'assessment_groups',
+            'group_id',
+            'assessment_id'
+        );
     }
 }

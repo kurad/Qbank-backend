@@ -10,9 +10,9 @@ class StudentAssessment extends Model
     use HasFactory;
 
     protected $fillable = [
-        'student_id',
-        'assessment_id',
-        'assigned_by',
+        'student_id', 'assessment_id', 'assigned_by',
+        'assigned_at', 'score', 'max_score',
+        'status', 'completed_at'
         
     ];
     public $timestamps = false;
@@ -30,5 +30,9 @@ class StudentAssessment extends Model
     public function studentAnswers()
     {
         return $this->hasMany(StudentAnswer::class);
+    }
+    public function group()
+    {
+        return $this->belongsTo(Group::class);
     }
 }

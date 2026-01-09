@@ -3,9 +3,10 @@
 namespace App\Http\Controllers;
 
 use App\Models\Group;
-use Illuminate\Validation\Rule;
 use Illuminate\Support\Str;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
+use App\Models\StudentAssessment;
 
 class GroupController extends Controller
 {
@@ -26,7 +27,7 @@ class GroupController extends Controller
                 'required',
                 'string',
                 'max:255',
-                Rule::unique('groups')->where(fn ($q) => $q->where('created_by', auth()->id())),
+                Rule::unique('groups')->where(fn($q) => $q->where('created_by', auth()->id())),
             ],
         ]);
 
@@ -126,12 +127,12 @@ class GroupController extends Controller
         $group = Group::where('class_code', $validated['class_code'])->firstOrFail();
 
         // Ensure only student can join
-        if(auth()->user()->role != 'student') {
+        if (auth()->user()->role != 'student') {
             return response()->json(['message' => 'Only students can join the class'], 403);
         }
         // Check if the student is already in the group
         $alreadyJoined = $group->students()->wherePivot('student_id', auth()->id())->exists();
-        if($alreadyJoined){
+        if ($alreadyJoined) {
             return response()->json(['message' => 'You have already joined this class.'], 409);
         }
 
@@ -140,7 +141,7 @@ class GroupController extends Controller
         $group->students()->attach(auth()->id());
         return response()->json([
             'message' => 'Successfully joined the class!',
-            'group' =>$group,
+            'group' => $group,
         ]);
     }
 
@@ -154,4 +155,218 @@ class GroupController extends Controller
 
         return response()->json($group);
     }
+    // GET /groups/{id}/assignments
+    public function assignments(Request $request, Group $group)
+    {
+        $user = $request->user();
+
+        // Students: must belong to the group
+        if ($user->role === 'student') {
+            abort_if(
+                ! $user->groups()->where('groups.id', $group->id)->exists(),
+                403,
+                'You are not a member of this class'
+            );
+        } else {
+            // Non-students (teachers/admins): only group creators or admins can view
+            if ($user->role !== 'admin' && $group->created_by !== $user->id) {
+                abort(403, 'Not allowed to view assignments for this group');
+            }
+        }
+
+        $query = $group->assessments()->with('creator:id,name');
+
+        // If teacher (non-admin), only return assessments created by the authenticated teacher
+        if ($user->role !== 'admin' && $user->role !== 'student') {
+            $query->where('assessments.creator_id', $user->id);
+        }
+
+        // For students include their studentAssessment data
+        if ($user->role === 'student') {
+            $query->with(['studentAssessments' => fn($q) => $q->where('student_id', $user->id)]);
+        }
+
+        $assignments = $query
+            ->select(
+                'assessments.id',
+                'assessments.type',
+                'assessments.title',
+                'assessments.creator_id',
+                'assessments.due_date',
+                'assessments.time_limit',
+                'assessments.created_at'
+            )
+            ->orderByDesc('assessments.created_at')
+            ->get()
+            ->map(function ($assessment) use ($user) {
+                $result = [
+                    'id' => $assessment->id,
+                    'title' => $assessment->title,
+                    'type' => $assessment->type,
+                    'due_date' => $assessment->due_date,
+                    'time_limit' => $assessment->time_limit,
+                    'creator' => $assessment->creator,
+                ];
+
+                if ($user->role === 'student') {
+                    $sa = $assessment->studentAssessments->first();
+                    $result['student_assessment'] = $sa ? [
+                        'id' => $sa->id,
+                        'status' => $sa->status,
+                        'score' => $sa->score,
+                        'completed_at' => $sa->completed_at,
+                    ] : null;
+                }
+
+                return $result;
+            });
+
+        return response()->json($assignments);
+    }
+
+    // GET /groups/{group}/assignments/{assessment}/submissions
+    public function assignmentSubmissions(Request $request, Group $group, $assessmentId)
+    {
+        $user = $request->user();
+
+        // Only admins or the group creator may view submissions
+        if ($user->role !== 'admin' && $group->created_by !== $user->id) {
+            abort(403, 'Not allowed to view submissions for this group');
+        }
+
+        $assessment = \App\Models\Assessment::findOrFail($assessmentId);
+
+        // If teacher (non-admin), ensure they created the assessment
+        if ($user->role !== 'admin' && $assessment->creator_id !== $user->id) {
+            abort(403, 'You did not create this assessment');
+        }
+
+        // Load group students and their studentAssessment (if any) for this assessment
+        $students = $group->students()->with(['studentAssessments' => function ($q) use ($assessmentId) {
+            $q->where('assessment_id', $assessmentId)->with(['studentAnswers.question']);
+        }])->get();
+
+        $result = $students->map(function ($student) {
+            $sa = $student->studentAssessments->first();
+            return [
+                'student' => [
+                    'id' => $student->id,
+                    'name' => $student->name ?? $student->email,
+                ],
+                'student_assessment' => $sa ? [
+                    'id' => $sa->id,
+                    'status' => $sa->status,
+                    'score' => $sa->score,
+                    'max_score' => $sa->max_score,
+                    'completed_at' => $sa->completed_at,
+                    'answers' => $sa->studentAnswers->map(function ($a) {
+                        $q = $a->question;
+                        $answerRaw = $a->answer;
+                        $decoded = null;
+                        if (is_string($answerRaw)) {
+                            $tmp = json_decode($answerRaw, true);
+                            if (json_last_error() === JSON_ERROR_NONE) {
+                                $decoded = $tmp;
+                            }
+                        } elseif (is_array($answerRaw)) {
+                            $decoded = $answerRaw;
+                        }
+
+                        $base = [
+                            'id' => $a->id,
+                            'question_id' => $a->question_id,
+                            'question_text' => $q?->question,
+                            'question_type' => $q?->question_type,
+                            'answer' => $a->answer,
+                            'is_correct' => $a->is_correct,
+                            'points_earned' => $a->points_earned,
+                        ];
+
+                        // Enrich matching-type answers with resolved left/right labels and pairs
+                        if ($q && $q->question_type === 'matching') {
+                            // Decode canonical correct_answer
+                            $canonical = null;
+                            if (is_string($q->correct_answer)) {
+                                $tmp = json_decode($q->correct_answer, true);
+                                if (json_last_error() === JSON_ERROR_NONE) {
+                                    $canonical = $tmp;
+                                }
+                            } elseif (is_array($q->correct_answer)) {
+                                $canonical = $q->correct_answer;
+                            }
+
+                            $left = $canonical['left'] ?? [];
+                            $right = $canonical['right'] ?? [];
+                            $canonicalPairs = $canonical['pairs'] ?? $canonical['matches'] ?? [];
+
+                            // Prepare a case-insensitive map of right labels -> index
+                            $rightMap = [];
+                            foreach ($right as $idx => $rlabel) {
+                                $key = mb_strtolower(trim(is_string($rlabel) ? $rlabel : (string)$rlabel));
+                                $rightMap[$key] = $idx;
+                            }
+
+                            $studentPairs = [];
+                            $studentRaw = [];
+
+                            if (is_array($decoded)) {
+                                if (array_key_exists('pairs', $decoded) || array_key_exists('raw', $decoded)) {
+                                    $studentRaw = $decoded['raw'] ?? [];
+                                    $studentPairs = $decoded['pairs'] ?? [];
+                                } elseif (!empty($decoded) && array_key_exists('left_index', reset($decoded) ?: [])) {
+                                    // already pairs
+                                    $studentPairs = $decoded;
+                                } else {
+                                    // array of right labels (raw)
+                                    $studentRaw = $decoded;
+                                }
+                            }
+
+                            // If we only have raw labels, map them to right indices
+                            if (empty($studentPairs) && !empty($studentRaw)) {
+                                foreach ($studentRaw as $li => $rlabel) {
+                                    $key = mb_strtolower(trim(is_string($rlabel) ? $rlabel : (string)$rlabel));
+                                    $ri = $rightMap[$key] ?? null;
+                                    $studentPairs[] = ['left_index' => (int)$li, 'right_index' => $ri, 'right_raw' => $rlabel];
+                                }
+                            }
+
+                            // If studentPairs exist but may lack right_raw, add readable texts
+                            $displayPairs = [];
+                            foreach ($studentPairs as $p) {
+                                $li = isset($p['left_index']) ? (int)$p['left_index'] : null;
+                                $ri = $p['right_index'] ?? ($p['right'] ?? null);
+                                $leftText = $left[$li] ?? null;
+                                $rightText = $right[$ri] ?? ($p['right_raw'] ?? null);
+                                $displayPairs[] = [
+                                    'left_index' => $li,
+                                    'left_text' => $leftText,
+                                    'right_index' => $ri,
+                                    'right_text' => $rightText,
+                                ];
+                            }
+
+                            $base['matching'] = [
+                                'left' => $left,
+                                'right' => $right,
+                                'pairs' => $displayPairs,
+                                'canonical_pairs' => $canonicalPairs,
+                            ];
+                        }
+
+                        return $base;
+                    }),
+                ] : null,
+            ];
+        });
+
+        return response()->json([
+            'assessment' => [
+                'id' => $assessment->id,
+                'title' => $assessment->title,
+            ],
+            'submissions' => $result,
+        ]);
+    }
+
 }
