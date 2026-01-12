@@ -380,10 +380,20 @@ class AssessmentController extends Controller
         $questionQuery = Question::where('topic_id', $topic->id)
             ->whereDoesntHave('subQuestions');
         if ($validated['mode'] === 'unpracticed') {
-            $practicedQuestionIds = StudentQuestionHistory::where('student_id', $student->id)
-                ->where('topic_id', $topic->id)
+            // StudentQuestionHistory doesn't store topic_id; find practiced question ids
+            // for this student, then filter those that belong to the requested topic.
+            $practicedIds = StudentQuestionHistory::where('student_id', $student->id)
                 ->pluck('question_id');
-            $questionQuery->whereNotIn('id', $practicedQuestionIds);
+
+            if ($practicedIds->isNotEmpty()) {
+                $topicPracticed = Question::where('topic_id', $topic->id)
+                    ->whereIn('id', $practicedIds)
+                    ->pluck('id');
+
+                if ($topicPracticed->isNotEmpty()) {
+                    $questionQuery->whereNotIn('id', $topicPracticed);
+                }
+            }
         }
 
         // Select questions
@@ -494,8 +504,6 @@ class AssessmentController extends Controller
                 ]);
             }
         }
-
-
         return response()->json([
             'message' => 'Assessment created successfully',
             'assessment' => $assessment

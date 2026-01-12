@@ -106,10 +106,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/assessments/{id}/questions-for-practice', [AssessmentController::class, 'questionsForPractice']);
     // Route::post('/assessments/submit-answers', [AssessmentController::class, 'submitAnswers']);
     Route::post('/assessments/submit-answers', [StudentAnswerController::class, 'storeStudentAnswers']);
-    Route::post(
-        '/assessments/update-short-answer-confidence',
-        [StudentAnswerController::class, 'updateShortAnswerConfidence']
-    );
+    Route::post('/assessments/update-short-answer-confidence', [StudentAnswerController::class, 'updateShortAnswerConfidence']);
     Route::get('/student/assessment-results/{id}', [AssessmentController::class, 'showResults']);
     Route::get('/student/assigned-assessments', [AssessmentController::class, 'assignedAssessments']);
     Route::get('/student/statistics', [HomeController::class, 'statistics']);

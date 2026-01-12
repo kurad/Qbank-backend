@@ -455,9 +455,40 @@ class QuestionController extends Controller
             break;
 
         case 'true_false':
-            $rules['options'] = 'required|array|size:2';
-            $rules['options.*'] = 'required|string|in:true,false,True,False';
-            $rules['correct_answer'] = 'required|in:true,false,True,False';
+            $rules['options'] = [
+                'required',
+                function ($attribute, $value, $fail) use ($request) {
+                    $data = is_string($value) ? json_decode($value, true) : $value;
+                    if (!is_array($data) || count($data) !== 2) {
+                        return $fail('The options field must contain 2 items.');
+                    }
+                    foreach ($data as $opt) {
+                        if (!is_string($opt) && !is_bool($opt)) {
+                            return $fail('Each option must be a string or boolean representing True/False.');
+                        }
+                        $val = is_bool($opt) ? ($opt ? 'true' : 'false') : strtolower(trim($opt));
+                        if (!in_array($val, ['true', 'false'], true)) {
+                            return $fail('Each option must be "True" or "False".');
+                        }
+                    }
+                }
+            ];
+
+            $rules['correct_answer'] = [
+                'required',
+                function ($attribute, $value, $fail) {
+                    if (is_bool($value)) {
+                        return;
+                    }
+                    if (!is_string($value)) {
+                        return $fail('The correct_answer must be True or False.');
+                    }
+                    $v = strtolower(trim($value));
+                    if (!in_array($v, ['true', 'false'], true)) {
+                        return $fail('The correct_answer must be True or False.');
+                    }
+                }
+            ];
             break;
 
         case 'short_answer':
@@ -573,9 +604,40 @@ class QuestionController extends Controller
                 break;
 
             case 'true_false':
-                $rules['options'] = 'required|array|size:2';
-                $rules['options.*'] = 'required|string|in:true,false,True,False';
-                $rules['correct_answer'] = 'required|in:true,false,True,False';
+                $rules['options'] = [
+                    'required',
+                    function ($attribute, $value, $fail) use ($request) {
+                        $data = is_string($value) ? json_decode($value, true) : $value;
+                        if (!is_array($data) || count($data) !== 2) {
+                            return $fail('The options field must contain 2 items.');
+                        }
+                        foreach ($data as $opt) {
+                            if (!is_string($opt) && !is_bool($opt)) {
+                                return $fail('Each option must be a string or boolean representing True/False.');
+                            }
+                            $val = is_bool($opt) ? ($opt ? 'true' : 'false') : strtolower(trim($opt));
+                            if (!in_array($val, ['true', 'false'], true)) {
+                                return $fail('Each option must be "True" or "False".');
+                            }
+                        }
+                    }
+                ];
+
+                $rules['correct_answer'] = [
+                    'required',
+                    function ($attribute, $value, $fail) {
+                        if (is_bool($value)) {
+                            return;
+                        }
+                        if (!is_string($value)) {
+                            return $fail('The correct_answer must be True or False.');
+                        }
+                        $v = strtolower(trim($value));
+                        if (!in_array($v, ['true', 'false'], true)) {
+                            return $fail('The correct_answer must be True or False.');
+                        }
+                    }
+                ];
                 break;
 
             case 'short_answer':
