@@ -100,35 +100,37 @@ class StudentAnswerController extends Controller
                         ? json_decode($question->options, true)
                         : $question->options;
 
-                    $studentAnsArr = is_array($studentAnswerRaw)
-                        ? $studentAnswerRaw
-                        : [$studentAnswerRaw];
-
-                    // Convert any numeric index answers into option text
-                    $studentAnsText = array_map(function ($sa) use ($options) {
-                        $text = is_numeric($sa) && isset($options[$sa]) ? $options[$sa] : $sa;
-                        return is_string($text) ? trim($text, " \t\n\r\0\x0B\"'") : (string) $text;
-                    }, $studentAnsArr);
-
-                    // Ensure correct answer(s) are an array and map indices to option text if needed
-                    $correctArrRaw = is_array($correctAnswer) ? $correctAnswer : [$correctAnswer];
-                    $correctArr = array_map(function ($ca) use ($options) {
-                        if (is_numeric($ca) && isset($options[$ca])) {
-                            $text = $options[$ca];
-                        } else {
-                            $text = is_string($ca) ? $ca : (string) $ca;
-                        }
-                        return trim($text, " \t\n\r\0\x0B\"'");
-                    }, $correctArrRaw);
-
-                    // Normalize for case-insensitive comparison
-                    $normStudent = array_map(fn($v) => mb_strtolower($v), $studentAnsText);
-                    $normCorrect = array_map(fn($v) => mb_strtolower($v), $correctArr);
-
-                    sort($normStudent);
-                    sort($normCorrect);
-
-                    $isCorrect = $normStudent === $normCorrect;
+                    if (is_array($options) && !empty($options) && is_array($options[0])) {
+                        // Options are objects (e.g., with text and image), compare indices
+                        $studentAnsArr = is_array($studentAnswerRaw) ? $studentAnswerRaw : [$studentAnswerRaw];
+                        $correctArrRaw = is_array($correctAnswer) ? $correctAnswer : [$correctAnswer];
+                        $studentIndices = array_map(fn($sa) => (int) $sa, $studentAnsArr);
+                        $correctIndices = array_map(fn($ca) => (int) $ca, $correctArrRaw);
+                        sort($studentIndices);
+                        sort($correctIndices);
+                        $isCorrect = $studentIndices === $correctIndices;
+                    } else {
+                        // Options are strings, compare texts
+                        $studentAnsArr = is_array($studentAnswerRaw) ? $studentAnswerRaw : [$studentAnswerRaw];
+                        $studentAnsText = array_map(function ($sa) use ($options) {
+                            $text = is_numeric($sa) && isset($options[$sa]) ? $options[$sa] : $sa;
+                            return is_string($text) ? trim($text, " \t\n\r\0\x0B\"'") : (string) $text;
+                        }, $studentAnsArr);
+                        $correctArrRaw = is_array($correctAnswer) ? $correctAnswer : [$correctAnswer];
+                        $correctArr = array_map(function ($ca) use ($options) {
+                            if (is_numeric($ca) && isset($options[$ca])) {
+                                $text = $options[$ca];
+                            } else {
+                                $text = is_string($ca) ? $ca : (string) $ca;
+                            }
+                            return trim($text, " \t\n\r\0\x0B\"'");
+                        }, $correctArrRaw);
+                        $normStudent = array_map(fn($v) => mb_strtolower($v), $studentAnsText);
+                        $normCorrect = array_map(fn($v) => mb_strtolower($v), $correctArr);
+                        sort($normStudent);
+                        sort($normCorrect);
+                        $isCorrect = $normStudent === $normCorrect;
+                    }
 
                     if ($isCorrect) {
                         $pointsEarned = $question->marks;
@@ -256,7 +258,7 @@ class StudentAnswerController extends Controller
                 case 'short_answer':
 
                     if ($isPractice) {
-                        $confidence = $ans['confidence_score'] ?? 0;
+                        $confidence = $ans['confidence_score'] ?? null;
                         $weights = [0 => 0, 1 => 0.5, 2 => 0.75, 3 => 1];
                         $pointsEarned = $question->marks * ($weights[$confidence] ?? 0);
                         $confidenceScoreToSave = $confidence;

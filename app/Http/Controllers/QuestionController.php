@@ -826,6 +826,37 @@ class QuestionController extends Controller
             $validated['question'] = trim($validated['question']);
         }
 
+        // ---------------------------------------
+        // Handle MCQ normalization (only if not parent)
+        // ---------------------------------------
+        if (!$hasSub && $validated['question_type'] === 'mcq') {
+            $textOptions = $validated['options'] ?? [];
+            $imageFiles = $request->file('option_images', []);
+
+            $currentOptions = json_decode($question->options, true) ?? [];
+            $normalizedOptions = [];
+
+            foreach ($textOptions as $index => $text) {
+                $text = is_string($text) ? trim($text) : '';
+                $imagePath = $currentOptions[$index]['image'] ?? null;
+
+                if (isset($imageFiles[$index]) && $imageFiles[$index]) {
+                    // Delete old image if exists
+                    if ($imagePath) {
+                        Storage::disk('public')->delete($imagePath);
+                    }
+                    $imagePath = $imageFiles[$index]->store('options', 'public');
+                }
+
+                $normalizedOptions[] = [
+                    'text' => $text !== '' ? $text : null,
+                    'image' => $imagePath,
+                ];
+            }
+
+            $validated['options'] = $normalizedOptions;
+        }
+
         // Only auto-assign marks for non-parent, non-matching, non-short_answer
         if (!$hasSub) {
             $effectiveType = $validated['question_type'] ?? $question->question_type;
@@ -1475,9 +1506,9 @@ class QuestionController extends Controller
                         if (isset($q['options']) && is_string($q['options'])) {
                             $q['options'] = json_decode($q['options'], true);
                         }
-                        // If no correct_answer, pick the first option
+                        // If no correct_answer, pick the first option (index 0)
                         if (empty($q['correct_answer']) && !empty($q['options']) && is_array($q['options'])) {
-                            $q['correct_answer'] = is_array($q['options'][0]) && isset($q['options'][0]['text']) ? $q['options'][0]['text'] : $q['options'][0];
+                            $q['correct_answer'] = 0;
                         }
                     } elseif ($type === 'true_false') {
                         if (empty($q['correct_answer'])) {
