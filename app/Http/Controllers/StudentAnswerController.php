@@ -16,7 +16,7 @@ class StudentAnswerController extends Controller
 {
 
 
-    public function storeStudentAnswers(Request $request)
+    public function storeStudentAnswers_old(Request $request)
     {
         $request->validate([
             'assessment_id' => 'required|exists:assessments,id',
@@ -171,8 +171,8 @@ class StudentAnswerController extends Controller
                         $correctLeft = $correctAnswer['left'] ?? [];
                         $correctRight = $correctAnswer['right'] ?? [];
                         $correctPairs = $correctAnswer['pairs'] ?? $correctAnswer['matches'] ?? [];
-                    } 
-                    
+                    }
+
                     // Try separate field fallback for stored pairs
                     if (empty($correctPairs) && isset($question->correct_pairs)) {
                         $decodedPairs = is_string($question->correct_pairs)
@@ -226,17 +226,17 @@ class StudentAnswerController extends Controller
                     $normCorrect = array_map(function ($p) {
                         return [
                             'left_index' => (int)$p['left_index'],
-                            'right_index' => isset($p['right_index']) ? (int)$p['right_index']:null
+                            'right_index' => isset($p['right_index']) ? (int)$p['right_index'] : null
                         ];
                     }, $correctPairs);
 
-                    usort($normCorrect, fn($a, $b) => $a['left_index']<=> $b['left_index']);
+                    usort($normCorrect, fn($a, $b) => $a['left_index'] <=> $b['left_index']);
                     usort($studentPairs, fn($a, $b) => $a['left_index'] <=> $b['left_index']);
 
                     $totalPairs = count($normCorrect);
                     $correctPairCount = 0;
 
-                    foreach($studentPairs as $idx => $p) {
+                    foreach ($studentPairs as $idx => $p) {
                         if (isset($normCorrect[$idx]) && $p['right_index'] === $normCorrect[$idx]['right_index']) {
                             $correctPairCount++;
                         }
@@ -318,6 +318,413 @@ class StudentAnswerController extends Controller
             'max_score' => $maxScore,
             'status' => 'completed',
             'completed_at' => $studentAssessment->completed_at
+        ]);
+    }
+
+    public function storeStudentAnswers(Request $request)
+    {
+        $request->validate([
+            'assessment_id' => 'required|exists:assessments,id',
+            'answers' => 'required|array',
+            'answers.*.question_id' => 'required|exists:questions,id',
+            // allow empty short answers (you said it can be empty)
+            'answers.*.answer' => 'nullable',
+            'answers.*.confidence_score' => 'nullable|integer|min:0|max:3',
+        ]);
+
+        $studentId = auth()->id();
+        $assessmentId = $request->assessment_id;
+
+        // Helpers (closures) -------------------------------------------------------
+        $parseMaybeJson = function ($value) {
+            if ($value === null) return null;
+            if (is_array($value) || is_object($value)) return $value;
+
+            if (is_string($value)) {
+                $t = trim($value);
+                if ($t === '') return '';
+                if (
+                    (str_starts_with($t, '[') && str_ends_with($t, ']')) ||
+                    (str_starts_with($t, '{') && str_ends_with($t, '}'))
+                ) {
+                    $decoded = json_decode($t, true);
+                    if (json_last_error() === JSON_ERROR_NONE) return $decoded;
+                }
+            }
+
+            return $value;
+        };
+
+        $normText = function ($v) {
+            return mb_strtolower(trim((string)($v ?? '')));
+        };
+
+        $toStringArray = function ($v) use ($parseMaybeJson) {
+            $v = $parseMaybeJson($v);
+
+            if ($v === null) return [];
+            if (is_array($v)) {
+                // If associative (object), not a list -> ignore as list
+                $isList = array_keys($v) === range(0, count($v) - 1);
+                if (!$isList) return [];
+                return array_map(fn($x) => (string)($x ?? ''), $v);
+            }
+            return [(string)$v];
+        };
+
+        // Turn MCQ student answer into normalized keys (option text)
+        $normalizeStudentMcq = function ($studentRaw, array $options) use ($parseMaybeJson, $normText) {
+            $studentRaw = $parseMaybeJson($studentRaw);
+
+            // Build option texts list
+            $optTexts = array_map(function ($opt) {
+                if (is_array($opt)) return (string)($opt['text'] ?? $opt['label'] ?? $opt['value'] ?? '');
+                return (string)$opt;
+            }, $options);
+
+            $optKeys = array_map($normText, $optTexts);
+
+            $addByIndex = function ($idx, array &$set) use ($optKeys) {
+                $i = is_numeric($idx) ? (int)$idx : null;
+                if ($i !== null && $i >= 0 && $i < count($optKeys)) $set[$optKeys[$i]] = true;
+            };
+
+            $addByLetter = function ($letter, array &$set) use ($addByIndex) {
+                $s = strtoupper(trim((string)$letter));
+                if (preg_match('/^[A-Z]$/', $s)) {
+                    $idx = ord($s) - 65;
+                    $addByIndex($idx, $set);
+                }
+            };
+
+            $addByText = function ($txt, array &$set) use ($normText) {
+                $k = $normText($txt);
+                if ($k !== '') $set[$k] = true;
+            };
+
+            $set = [];
+
+            // If student sent an array => multi-select
+            if (is_array($studentRaw)) {
+                foreach ($studentRaw as $x) {
+                    if (is_numeric($x)) $addByIndex($x, $set);
+                    else {
+                        $sx = trim((string)$x);
+                        if (preg_match('/^[A-Za-z]$/', $sx)) $addByLetter($sx, $set);
+                        else $addByText($sx, $set);
+                    }
+                }
+                return array_keys($set);
+            }
+
+            // Single value
+            if (is_numeric($studentRaw)) {
+                $addByIndex($studentRaw, $set);
+                return array_keys($set);
+            }
+
+            $sx = trim((string)$studentRaw);
+            if ($sx === '') return [];
+            if (preg_match('/^[A-Za-z]$/', $sx)) $addByLetter($sx, $set);
+            else $addByText($sx, $set);
+
+            return array_keys($set);
+        };
+
+        // Normalize ANY matching answer to canonical pairs [{left_index,right_index}, ...]
+        $normalizeMatchingPairs = function ($rawAnswer, array $leftItems, array $rightItems) use ($parseMaybeJson, $normText) {
+            $rawAnswer = $parseMaybeJson($rawAnswer);
+
+            // Build right text -> index map
+            $rightIndexMap = [];
+            foreach ($rightItems as $idx => $r) {
+                $rightIndexMap[$normText($r)] = $idx;
+            }
+
+            $makeEmpty = function () use ($leftItems) {
+                return array_map(fn($_, $li) => ['left_index' => $li, 'right_index' => null], $leftItems, array_keys($leftItems));
+            };
+
+            // Case 1: wrapper {pairs: [...]}
+            if (is_array($rawAnswer) && array_key_exists('pairs', $rawAnswer) && is_array($rawAnswer['pairs'])) {
+                $rawAnswer = $rawAnswer['pairs'];
+            }
+
+            // Case 2: already pairs array
+            if (is_array($rawAnswer) && isset($rawAnswer[0]) && is_array($rawAnswer[0]) && (isset($rawAnswer[0]['left_index']) || isset($rawAnswer[0]['leftIndex']))) {
+                $pairs = [];
+                foreach ($rawAnswer as $i => $p) {
+                    $li = (int)($p['left_index'] ?? $p['leftIndex'] ?? $i);
+                    $ri = $p['right_index'] ?? $p['rightIndex'] ?? null;
+                    $pairs[] = [
+                        'left_index' => $li,
+                        'right_index' => ($ri === null || $ri === '') ? null : (int)$ri,
+                    ];
+                }
+                // Ensure all left indices exist
+                $out = $makeEmpty();
+                foreach ($pairs as $p) {
+                    $li = $p['left_index'];
+                    if ($li >= 0 && $li < count($out)) $out[$li]['right_index'] = $p['right_index'];
+                }
+                return $out;
+            }
+
+            // Case 3: array aligned to left order (either indices OR right texts)
+            if (is_array($rawAnswer)) {
+                $out = $makeEmpty();
+
+                foreach ($out as $li => $_p) {
+                    $val = $rawAnswer[$li] ?? null;
+                    if ($val === null || $val === '') {
+                        $out[$li]['right_index'] = null;
+                        continue;
+                    }
+
+                    // numeric index
+                    if (is_numeric($val)) {
+                        $ri = (int)$val;
+                        $out[$li]['right_index'] = ($ri >= 0 && $ri < count($rightItems)) ? $ri : null;
+                        continue;
+                    }
+
+                    // text -> find index
+                    $k = $normText($val);
+                    $out[$li]['right_index'] = $rightIndexMap[$k] ?? null;
+                }
+
+                return $out;
+            }
+
+            // Unknown format
+            return $makeEmpty();
+        };
+
+        // ------------------------------------------------------------------------
+
+        // 1) Load assessment with groups & students
+        $assessment = Assessment::with('groups.students')->findOrFail($assessmentId);
+        $isPractice = $assessment->type === 'practice';
+
+        // 2) Authorization (skip for practice)
+        if (! $isPractice) {
+            $allowed = $assessment->groups->contains(function ($group) use ($studentId) {
+                return $group->students->contains('id', $studentId);
+            });
+
+            if (! $allowed) {
+                return response()->json(['error' => 'Unauthorized'], 403);
+            }
+        }
+
+        // 3) Create or fetch StudentAssessment
+        $studentAssessment = StudentAssessment::firstOrCreate(
+            [
+                'student_id' => $studentId,
+                'assessment_id' => $assessmentId,
+            ],
+            [
+                'assigned_by' => $isPractice ? $studentId : $assessment->creator_id,
+                'assigned_at' => now(),
+                'status' => 'in_progress',
+            ]
+        );
+
+        // 4) Prevent resubmission for teacher-assigned assessments
+        if (! $isPractice && $studentAssessment->status === 'completed') {
+            return response()->json(['error' => 'Assessment already submitted'], 409);
+        }
+
+        $totalScore = 0;
+        $maxScore = 0;
+
+        // 5) Process answers
+        foreach ($request->answers as $ans) {
+
+            $question = Question::findOrFail($ans['question_id']);
+
+            $studentRaw = $ans['answer'] ?? null;
+
+            // Parse question fields
+            $options = $parseMaybeJson($question->options);
+            $options = is_array($options) ? $options : [];
+
+            $correctRaw = $parseMaybeJson($question->correct_answer);
+
+            $isCorrect = false;
+            $pointsEarned = 0;
+            $confidenceScoreToSave = null;
+
+            $marks = (float)($question->marks ?? 0);
+            $maxScore += $marks;
+
+            // Default: store student answer as-is (JSON column will handle array/object)
+            $answerToStore = $parseMaybeJson($studentRaw);
+
+            switch ($question->question_type) {
+
+                case 'mcq': {
+                        // Normalize student selection to option text keys
+                        $studentKeys = $normalizeStudentMcq($studentRaw, $options);
+
+                        // Normalize correct to option text keys too
+                        // correct can be indices, letters, or texts, or array of any
+                        $correctKeys = $normalizeStudentMcq($correctRaw, $options);
+
+                        sort($studentKeys);
+                        sort($correctKeys);
+
+                        $isCorrect = ($studentKeys === $correctKeys);
+
+                        if ($isCorrect) {
+                            $pointsEarned = $marks;
+                        }
+
+                        // Store in a stable format:
+                        // - selected_keys: normalized option texts
+                        // - raw: original student payload
+                        $answerToStore = [
+                            'selected_keys' => $studentKeys,
+                            'raw' => $parseMaybeJson($studentRaw),
+                        ];
+                        break;
+                    }
+
+                case 'matching': {
+                        // options expected: {left:[], right:[]}
+                        $leftItems = is_array($options['left'] ?? null) ? $options['left'] : [];
+                        $rightItems = is_array($options['right'] ?? null) ? $options['right'] : [];
+
+                        // Canonical correct pairs should come from correct_answer (json) as pairs,
+                        // otherwise we normalize whatever it is into pairs aligned with left indices.
+                        $studentPairs = $normalizeMatchingPairs($studentRaw, $leftItems, $rightItems);
+                        $correctPairs = $normalizeMatchingPairs($correctRaw, $leftItems, $rightItems);
+
+                        $totalPairs = count($leftItems);
+                        $correctCount = 0;
+
+                        for ($i = 0; $i < $totalPairs; $i++) {
+                            $sr = $studentPairs[$i]['right_index'] ?? null;
+                            $cr = $correctPairs[$i]['right_index'] ?? null;
+
+                            if ($sr !== null && $cr !== null && (int)$sr === (int)$cr) {
+                                $correctCount++;
+                            }
+                        }
+
+                        // Partial scoring
+                        // If marks=2 and 4 pairs => each pair = 0.5
+                        $pointsEarned = $totalPairs > 0 ? ($marks * ($correctCount / $totalPairs)) : 0;
+                        $isCorrect = ($totalPairs > 0 && $correctCount === $totalPairs);
+
+                        // Store canonical pairs (this fixes your "No match" rendering)
+                        $answerToStore = [
+                            'pairs' => $studentPairs,
+                        ];
+                        break;
+                    }
+
+                case 'true_false': {
+                        $studentVal = strtolower(trim((string)($studentRaw ?? '')));
+                        $correctVal = strtolower(trim((string)(is_array($correctRaw) ? ($correctRaw[0] ?? '') : ($correctRaw ?? ''))));
+
+                        $isCorrect = ($studentVal !== '' && $studentVal === $correctVal);
+
+                        if ($isCorrect) {
+                            $pointsEarned = $marks;
+                        }
+
+                        $answerToStore = $studentVal; // store as "true" / "false"
+                        break;
+                    }
+
+                case 'short_answer': {
+                        $studentText = is_string($studentRaw) ? trim($studentRaw) : (is_null($studentRaw) ? '' : trim((string)$studentRaw));
+
+                        if ($isPractice) {
+                            $confidence = $ans['confidence_score'] ?? null;
+                            $confidence = is_numeric($confidence) ? (int)$confidence : null;
+
+                            $weights = [0 => 0, 1 => 0.5, 2 => 0.75, 3 => 1];
+                            $pointsEarned = $marks * ($weights[$confidence] ?? 0);
+                            $confidenceScoreToSave = $confidence;
+
+                            // In practice, "is_correct" can be false (self-graded), keep it false unless you want otherwise
+                            $isCorrect = ($confidence === 3);
+                        } else {
+                            // Teacher-assigned: exact match ONLY if expected answer exists
+                            $correctArr = $toStringArray($correctRaw);
+                            $correctText = trim((string)($correctArr[0] ?? ''));
+
+                            if ($correctText !== '' && $studentText !== '') {
+                                $isCorrect = (mb_strtolower($studentText) === mb_strtolower($correctText));
+                                if ($isCorrect) {
+                                    $pointsEarned = $marks;
+                                }
+                            } else {
+                                $isCorrect = false;
+                                $pointsEarned = 0;
+                            }
+                        }
+
+                        $answerToStore = $studentText; // can be ""
+                        break;
+                    }
+
+                default: {
+                        // keep default storage
+                        $answerToStore = $parseMaybeJson($studentRaw);
+                        $isCorrect = false;
+                        $pointsEarned = 0;
+                        break;
+                    }
+            }
+
+            $totalScore += $pointsEarned;
+
+            StudentAnswer::updateOrCreate(
+                [
+                    'student_assessment_id' => $studentAssessment->id,
+                    'question_id' => $question->id,
+                ],
+                [
+                    // JSON column: store array/object/string directly
+                    'answer' => $answerToStore,
+                    'is_correct' => $isCorrect,
+                    // if points_earned is INT you may want round() or cast (optional):
+                    'points_earned' => $pointsEarned,
+                    'confidence_score' => $confidenceScoreToSave,
+                    'submitted_at' => now(),
+                ]
+            );
+
+            if ($isPractice) {
+                StudentQuestionHistory::updateOrCreate(
+                    [
+                        'student_id' => $studentId,
+                        'question_id' => $question->id,
+                    ],
+                    [
+                        'practiced_at' => now(),
+                    ]
+                );
+            }
+        }
+
+        // 6) Finalize assessment
+        $studentAssessment->update([
+            'score' => $totalScore,
+            'max_score' => $maxScore,
+            'status' => 'completed',
+            'completed_at' => now(),
+        ]);
+
+        return response()->json([
+            'message' => 'Answers submitted successfully',
+            'score' => $totalScore,
+            'max_score' => $maxScore,
+            'status' => 'completed',
+            'completed_at' => $studentAssessment->completed_at,
         ]);
     }
 

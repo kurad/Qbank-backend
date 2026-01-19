@@ -18,6 +18,11 @@ class StudentAnswer extends Model
         'confidence_score',
         'submitted_at',
     ];
+    protected $casts = [
+        'answer' => 'array',      // ✅ this is the key
+        'is_correct' => 'boolean',
+        'submitted_at' => 'datetime',
+    ];
 
     public function studentAssessment()
     {
