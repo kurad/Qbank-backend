@@ -911,32 +911,42 @@ class AssessmentController extends Controller
     }
 
     public function practice(Request $request)
-    {
-        $studentId = $request->user()->id;
-        // Only return practice assessments initiated by the student
-        $practiceAssessments = Assessment::with([
-            'subject:id,name',
-            'subject.topic:id,subject_id,topic_name',
+{
+    $studentId = $request->user()->id;
+
+    $practice = Assessment::query()
+        ->with([
             'creator:id,name',
+            'gradeSubject.subject:id,name',
+            'gradeSubject.topics:id,grade_subject_id,topic_name',
             'studentAssessments' => function ($q) use ($studentId) {
-                $q->where('student_id', $studentId);
+                $q->where('student_id', $studentId)->latest('id')->limit(1);
             }
         ])
-            ->where('type', 'practice')
-            ->where('creator_id', $studentId)
-            ->orderByDesc('created_at')
-            ->paginate(5);
+        ->where('type', 'practice')
+        ->where('creator_id', $studentId)
+        ->orderByDesc('created_at')
+        ->paginate(5);
 
-        // Attach the StudentAssessment (like assignedAssessments)
-        $practiceAssessments->getCollection()->transform(function ($assessment) use ($studentId) {
-            $studentAssessment = $assessment->studentAssessments->first();
-            $assessment->student_assessment = $studentAssessment;
-            unset($assessment->studentAssessments);
-            return $assessment;
-        });
+    $practice->getCollection()->transform(function ($assessment) {
+        // attach student assessment
+        $assessment->student_assessment = $assessment->studentAssessments->first();
+        unset($assessment->studentAssessments);
 
-        return response()->json($practiceAssessments);
-    }
+        // attach subject + topic for frontend convenience
+        $assessment->subject = $assessment->gradeSubject?->subject;                 // {id,name}
+        $assessment->topic   = $assessment->gradeSubject?->topics?->first();        // {id,topic_name,...}
+
+        unset($assessment->gradeSubject);
+
+        return $assessment;
+    });
+
+    return response()->json($practice);
+}
+
+
+
     /**
      * Delete an assessment by ID
      */

@@ -15,8 +15,22 @@ class StudentAssessment extends Model
         'status', 'completed_at'
         
     ];
+    protected $casts = [
+    'assigned_at'   => 'datetime',
+    'completed_at'  => 'datetime',
+    'score'         => 'float',
+    'max_score'     => 'float',
+];
+
     public $timestamps = false;
 
+    // Always store normalized status
+    public function setStatusAttribute($value): void
+    {
+        $this->attributes['status'] = $value
+            ? strtolower(trim($value))
+            : 'pending';
+    }
     public function student()
     {
         return $this->belongsTo(User::class, 'student_id');

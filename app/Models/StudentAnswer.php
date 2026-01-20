@@ -22,6 +22,8 @@ class StudentAnswer extends Model
         'answer' => 'array',      // ✅ this is the key
         'is_correct' => 'boolean',
         'submitted_at' => 'datetime',
+        'points_earned' => 'decimal:2',
+        
     ];
 
     public function studentAssessment()

@@ -15,7 +15,7 @@ class GradeSubject extends Model
 
     public function gradeLevel()
     {
-        return $this->belongsTo(GradeLevel::class);
+        return $this->belongsTo(GradeLevel::class, 'grade_level_id');
     }
     public function subject()
     {

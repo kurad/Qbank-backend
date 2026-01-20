@@ -1398,6 +1398,16 @@ class QuestionController extends Controller
      */
     public function storeAIQuestions(Request $request)
     {
+        // Coerce common AI-sent answer formats into the array shape
+        // expected by validation (MCQ / True-False use arrays).
+        $incomingType = $request->input('question_type');
+        $incomingCA = $request->input('correct_answer');
+        if (in_array($incomingType, ['mcq', 'true_false'], true)) {
+            if (! is_array($incomingCA)) {
+                $request->merge(['correct_answer' => is_null($incomingCA) ? [] : [$incomingCA]]);
+            }
+        }
+
         // Validate as if coming from the frontend selection
         $validated = $this->validateQuestionData($request);
         $questionText = trim($validated['question']);

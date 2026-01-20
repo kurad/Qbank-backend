@@ -16,7 +16,7 @@ class Topic extends Model
 
     public function gradeSubject()
     {
-        return $this->belongsTo(GradeSubject::class);
+        return $this->belongsTo(GradeSubject::class, 'grade_subject_id');
     }
     public function questions()
     {
