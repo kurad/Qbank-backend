@@ -1364,19 +1364,24 @@ class QuestionController extends Controller
                     // Ensure correct_answer is set for each type
                     $type = $q['question_type'] ?? $request->question_type;
                     if ($type === 'mcq') {
-                        // Decode options if needed
                         if (isset($q['options']) && is_string($q['options'])) {
                             $q['options'] = json_decode($q['options'], true);
                         }
-                        // If no correct_answer, pick the first option (index 0)
-                        if (empty($q['correct_answer']) && !empty($q['options']) && is_array($q['options'])) {
-                            $q['correct_answer'] = 0;
+
+                        // Always store as array
+                        if (!isset($q['correct_answer']) || $q['correct_answer'] === '' || $q['correct_answer'] === null) {
+                            $q['correct_answer'] = [0]; // default first option
+                        } elseif (!is_array($q['correct_answer'])) {
+                            $q['correct_answer'] = [$q['correct_answer']];
                         }
                     } elseif ($type === 'true_false') {
-                        if (empty($q['correct_answer'])) {
-                            $q['correct_answer'] = 'True';
-                        }
                         $q['options'] = ['True', 'False'];
+
+                        if (!isset($q['correct_answer']) || $q['correct_answer'] === '' || $q['correct_answer'] === null) {
+                            $q['correct_answer'] = ['True'];
+                        } elseif (!is_array($q['correct_answer'])) {
+                            $q['correct_answer'] = [$q['correct_answer']];
+                        }
                     }
                 }
             }
