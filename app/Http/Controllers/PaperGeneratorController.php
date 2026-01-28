@@ -770,7 +770,7 @@ class PaperGeneratorController extends Controller
      */
     private function normalizeOptions($rawOptions, ?string $type): array
     {
-        // Handle true/false questions - no options provided, generate them
+        // true/false auto options
         if ($type === 'true_false') {
             return [
                 ['text' => 'True'],
@@ -778,69 +778,84 @@ class PaperGeneratorController extends Controller
             ];
         }
 
-        // If options is null or empty, return empty array
         if (empty($rawOptions)) {
             return [];
         }
 
-        // If options come as JSON string, decode
+        // Decode JSON string if needed
         if (is_string($rawOptions)) {
-            // Try JSON decode first
             $decoded = json_decode($rawOptions, true);
-            if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+            if (json_last_error() === JSON_ERROR_NONE) {
                 $rawOptions = $decoded;
             } else {
-                // Fallback: split by newlines or treat as single item
+                // fallback split
                 $rawOptions = preg_split('/\r\n|\r|\n/', trim($rawOptions)) ?: [];
             }
         }
 
-        // Ensure array
-        $opts = [];
-        if (is_array($rawOptions)) {
-            $opts = $rawOptions;
-        } elseif ($rawOptions instanceof Collection) {
-            $opts = $rawOptions->all();
+        // Convert Collections
+        if ($rawOptions instanceof \Illuminate\Support\Collection) {
+            $rawOptions = $rawOptions->all();
         }
 
-        // Matching type: each item should be a pair
-        if (($type === 'matching') || $this->looksLikeMatching($opts)) {
+        // ----------------------------
+        // MATCHING: support BOTH formats:
+        // 1) ['left'=>[...], 'right'=>[...]]
+        // 2) [['left'=>'..','right'=>'..'], ...]
+        // 3) "left|right" strings
+        // ----------------------------
+        if ($type === 'matching' || (is_array($rawOptions) && $this->looksLikeMatching($rawOptions))) {
+
+            // Format A: { left:[], right:[] }
+            if (is_array($rawOptions) && isset($rawOptions['left'], $rawOptions['right'])) {
+                $lefts  = is_array($rawOptions['left']) ? $rawOptions['left'] : [$rawOptions['left']];
+                $rights = is_array($rawOptions['right']) ? $rawOptions['right'] : [$rawOptions['right']];
+
+                $max = max(count($lefts), count($rights));
+                $pairs = [];
+
+                for ($i = 0; $i < $max; $i++) {
+                    $pairs[] = [
+                        'left'  => (string) ($lefts[$i] ?? ''),
+                        'right' => (string) ($rights[$i] ?? ''),
+                    ];
+                }
+
+                return $pairs;
+            }
+
+            // Format B/C: list of pairs or "left|right"
             $pairs = [];
-            foreach ($opts as $item) {
-                if (is_array($item) && (isset($item['left']) || isset($item['right']))) {
+            foreach ((array) $rawOptions as $item) {
+                if (is_array($item) && (array_key_exists('left', $item) || array_key_exists('right', $item))) {
                     $pairs[] = [
                         'left'  => (string) ($item['left'] ?? ''),
                         'right' => (string) ($item['right'] ?? ''),
                     ];
                 } elseif (is_string($item) && str_contains($item, '|')) {
-                    [$left, $right] = array_pad(explode('|', $item, 2), 2, '');
-                    $pairs[] = [
-                        'left'  => trim($left),
-                        'right' => trim($right),
-                    ];
+                    [$l, $r] = array_pad(explode('|', $item, 2), 2, '');
+                    $pairs[] = ['left' => trim($l), 'right' => trim($r)];
                 } else {
-                    // If unexpected, treat as single text (MCQ) to avoid losing data
-                    $pairs[] = [
-                        'left'  => is_array($item) ? ($item['text'] ?? '') : (string) $item,
-                        'right' => '',
-                    ];
+                    $pairs[] = ['left' => (string) $item, 'right' => ''];
                 }
             }
+
             return $pairs;
         }
 
-        // Default: MCQ/choice list
+        // ----------------------------
+        // DEFAULT: MCQ list
+        // ----------------------------
         $normalized = [];
-        foreach ($opts as $item) {
+        foreach ((array) $rawOptions as $item) {
             if (is_array($item)) {
-                // Extract text from array
                 $text = (string) ($item['text'] ?? $item['value'] ?? '');
                 $normalized[] = ['text' => $text];
             } else {
-                // String option
                 $normalized[] = ['text' => (string) $item];
             }
         }
+
         return $normalized;
     }
 
