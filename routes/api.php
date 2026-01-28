@@ -1,6 +1,8 @@
 <?php
 
+use App\Models\User;
 use Illuminate\Http\Request;
+use Illuminate\Auth\Events\Verified;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\HomeController;
@@ -16,20 +18,61 @@ use App\Http\Controllers\PaperGeneratorController;
 use App\Http\Controllers\AssessmentBuilderController;
 use App\Http\Controllers\AssessmentSectionController;
 use App\Http\Controllers\StudentAssessmentController;
+use Illuminate\Foundation\Auth\EmailVerificationRequest;
 
+Route::get('/email/verify/{id}/{hash}', function (Request $request, $id, $hash) {
 
-Route::post('/schools', [SchoolController::class, 'store']);
-Route::get('/schools', [SchoolController::class, 'index']);
-Route::match(['put', 'patch'], '/schools/{id}', [SchoolController::class, 'update']);
+    $user = User::findOrFail($id);
+
+    // Validate the hash matches the user's email
+    if (! hash_equals(sha1($user->getEmailForVerification()), (string) $hash)) {
+        return response()->json(['message' => 'Invalid verification link.'], 403);
+    }
+
+    // Already verified
+    if ($user->hasVerifiedEmail()) {
+        return response()->json(['message' => 'Email already verified.']);
+    }
+
+    // Mark verified
+    $user->markEmailAsVerified();
+    event(new Verified($user));
+
+    return response()->json(['message' => 'Email verified successfully']);
+})->middleware(['signed', 'throttle:6,1'])->name('verification.verify');
+Route::post('/email/resend-verification', function (Request $request) {
+    $request->validate(['email' => 'required|email']);
+
+    $user = \App\Models\User::where('email', $request->email)->first();
+
+    // prevent email enumeration
+    if (!$user) {
+        return response()->json(['message' => 'If that email exists, a link has been sent.']);
+    }
+
+    if ($user->hasVerifiedEmail()) {
+        return response()->json(['message' => 'Email is already verified.']);
+    }
+
+    $user->sendEmailVerificationNotification();
+
+    return response()->json(['message' => 'Verification link sent.']);
+})->middleware(['throttle:6,1']);
+
 Route::post('/login', [AuthController::class, 'login']);
 Route::post('/register', [AuthController::class, 'register']);
-Route::get('/students', [AuthController::class, 'getStudents']);
-Route::post('/logout', [AuthController::class, 'logout']);
-Route::get('/users', [AuthController::class, 'index']);
-Route::put('/users/{id}', [AuthController::class, 'updateUser']);
-Route::delete('/users/{id}', [AuthController::class, 'deleteUser']);
 Route::post('/refresh-token', [AuthController::class, 'refreshToken']);
 
+Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
+    Route::post('/schools', [SchoolController::class, 'store']);
+    Route::get('/schools', [SchoolController::class, 'index']);
+    Route::match(['put', 'patch'], '/schools/{id}', [SchoolController::class, 'update']);
+    Route::get('/students', [AuthController::class, 'getStudents']);
+    Route::post('/logout', [AuthController::class, 'logout']);
+    Route::get('/users', [AuthController::class, 'index']);
+    Route::put('/users/{id}', [AuthController::class, 'updateUser']);
+    Route::delete('/users/{id}', [AuthController::class, 'deleteUser']);
+});
 
 
 Route::get('/subjects', [SubjectController::class, 'index']);
@@ -61,7 +104,7 @@ Route::get('/subjects/search', [SubjectController::class, 'searchSubjects']);
 Route::get('/topics', [TopicController::class, 'index']);
 Route::get('/topics-by-subject', [TopicController::class, 'topicsBySubject']);
 // Routes for teachers to create subjects, topics, and questions
-Route::middleware('auth:sanctum')->group(function () {
+Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     // Route::post('/subjects', [SubjectController::class, 'store']);
     Route::post('/topics', [TopicController::class, 'store']);
     Route::put('/topics/{topic}', [TopicController::class, 'update']);
@@ -74,12 +117,12 @@ Route::middleware('auth:sanctum')->group(function () {
 Route::get('/questions/all', [QuestionController::class, 'allQuestions']);
 Route::get('/questions/search', [QuestionController::class, 'search']);
 
-Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
+Route::middleware(['auth:sanctum', 'token.not_expired'])->get('/user', function (Request $request) {
     return $request->user();
 });
 
 // Assessment endpoints
-Route::middleware('auth:sanctum')->group(function () {
+Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     // 1. Create assessment
     Route::post('/assessments', [AssessmentController::class, 'createAssessment']);
     // 2. Add questions to assessment
@@ -127,12 +170,12 @@ Route::get('/questions/{id}', [QuestionController::class, 'show']);
 Route::get('/subjects/overview', [HomeController::class, 'subjectsOverview']);
 Route::get('/subjects/{subject}/topics', [HomeController::class, 'subjectTopics']);
 Route::get('/reports/questions-per-subject', [HomeController::class, 'questionsPerSubject']);
-Route::middleware('auth:sanctum')->group(function () {
+Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     Route::get('/questions/by-topics', [AssessmentBuilderController::class, 'questionsByTopics']);
     Route::post('/create-assessments', [AssessmentBuilderController::class, 'store']);
 });
 
-Route::middleware('auth:sanctum')->group(function () {
+Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     // Groups
     Route::get('/groups', [GroupController::class, 'index']);          // List groups created by user
     Route::post('/groups', [GroupController::class, 'store']);         // Create new group

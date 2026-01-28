@@ -1,19 +1,19 @@
 <?php
 
 namespace App\Models;
-
-// use Illuminate\Contracts\Auth\MustVerifyEmail;
-use App\Models\Quiz;
+use Illuminate\Auth\MustVerifyEmail as MustVerifyEmailTrait;
 use App\Models\School;
-use App\Models\QuizSubmission;
+use App\Models\StudentAnswer;
 use Laravel\Sanctum\HasApiTokens;
+use App\Notifications\VerifyEmailForSpa;
 use Illuminate\Notifications\Notifiable;
+use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 
-class User extends Authenticatable
+class User extends Authenticatable implements MustVerifyEmail
 {
-    use HasApiTokens, HasFactory, Notifiable;
+    use HasApiTokens, HasFactory, Notifiable, MustVerifyEmailTrait;
 
     /**
      * The attributes that are mass assignable.
@@ -26,7 +26,8 @@ class User extends Authenticatable
         'password',
         'role', // e.g., 'teacher', 'student',
         'school_id',
-        'google_id',
+        'status'
+        
     ];
     // User belongs to a school
     public function school()
@@ -54,6 +55,10 @@ class User extends Authenticatable
         'password' => 'hashed',
     ];
 
+    public function sendEmailVerificationNotification()
+    {
+        $this->notify(new VerifyEmailForSpa);
+    }
 
     public function createdAssessment()
     {

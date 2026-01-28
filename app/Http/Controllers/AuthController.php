@@ -73,12 +73,15 @@ class AuthController extends Controller
             'password' => bcrypt($validated['password']),
             'role' => $validated['role'],
             'school_id' => $schoolId,
+            'status' => 'active'
         ]);
 
-        $token = $user->createToken('auth_token')->plainTextToken;
+        // Send verification email
+        $user->sendEmailVerificationNotification();
+
         return response()->json([
-            'user' => $user,
-            'token' => $token,
+            'message' => 'Account created. Please check your email to verify your account before signing in.',
+            'email' => $user->email,
         ], 201);
     }
 
@@ -96,6 +99,24 @@ class AuthController extends Controller
         }
 
         $user = auth()->user();
+        if (!$user instanceof \App\Models\User) {
+            return response()->json([
+                'message' => 'Auth user is not a User model instance',
+                'type' => gettype($user),
+            ], 500);
+        }
+
+        //Block sign-in if email is not verified
+        if (!$user->hasVerifiedEmail()) {
+            // Send verification email automatically
+            $user->sendEmailVerificationNotification();
+            Auth::logout();
+            return response()->json([
+                'message' => 'Please verify your email before signing in. A new verification email has been sent to your email address.',
+                'needs_verification' => true,
+                'email' => $user->email,
+            ], 403);
+        }
 
         // Only allow users with active status to log in
         if ($user->status !== 'active') {
@@ -114,42 +135,6 @@ class AuthController extends Controller
             'user_role' => $user->role,
             'expires_at' => now()->addMinutes($ttlMinutes)->toDateTimeString(),
         ]);
-    }
-    public function redirectToGoogle()
-    {
-        return Socialite::driver('google')->redirect();
-    }
-    public function handleGoogleCallback()
-    {
-        try {
-            $googleUser = Socialite::driver('google')->stateless()->user();
-            $user = User::where('email', $googleUser->email)
-                ->orWhere('google_id', $googleUser->id)
-                ->first();
-            if (!$user) {
-                $user = User::create([
-                    'name' => $googleUser->name,
-                    'email' => $googleUser->email,
-                    'password' => Hash::make(Str::random(24)),
-                    'role' => 'teacher',
-                    'email_verified_at' => now(),
-                    'google_id' => $googleUser->id,
-                ]);
-                //$user->profile()->create();
-            } elseif (!$user->google_id) {
-                $user->update(['google_id' => $googleUser->id]);
-            }
-            // Auth::login($user);
-            $token = $user->createToken('auth_token')->plainTextToken;
-            // $user->load('profile');
-            return redirect(env('FRONTEND_URL') . '/login/callback?' . http_build_query([
-                'token' => $token,
-                'user' => $user,
-                'user_role' => $user->role,
-            ]));
-        } catch (\Exception $e) {
-            return redirect(env('FRONTEND_URL') . '/login?error=' . urlencode($e->getMessage()));
-        }
     }
     public function getStudents()
     {
