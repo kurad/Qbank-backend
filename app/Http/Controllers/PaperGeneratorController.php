@@ -508,8 +508,13 @@ class PaperGeneratorController extends Controller
                 $q['image_path'] = $this->resolveImagePath($q['image_path']);
             }
 
-            // Clean & KaTeX render main HTML
+            // Clean & KaTeX render main HTML (ensure it's not empty!)
             $q['clean_html'] = $this->toHtmlWithKatex($q['raw_html'] ?? '');
+            
+            // Debug: if clean_html is still empty, use raw_html as fallback
+            if (empty($q['clean_html']) && !empty($q['raw_html'])) {
+                $q['clean_html'] = htmlspecialchars($q['raw_html']);
+            }
 
             // Image to base64 (if present)
             $q['image_base64'] = $this->embedImageAsBase64(
@@ -518,8 +523,11 @@ class PaperGeneratorController extends Controller
             );
 
             // Normalize options (MCQ, matching, or true/false)
+            // IMPORTANT: Always normalize for true_false, even if no options provided
             if (!empty($q['options']) || $q['type'] === 'true_false') {
                 $q['options'] = $this->normalizeOptions($q['options'], $q['type'] ?? null);
+            } else {
+                $q['options'] = [];
             }
 
             // Sub‑questions
@@ -534,6 +542,12 @@ class PaperGeneratorController extends Controller
                     }
 
                     $sub['clean_html'] = $this->toHtmlWithKatex($sub['raw_html'] ?? '');
+                    
+                    // Debug: if clean_html is still empty, use raw_html as fallback
+                    if (empty($sub['clean_html']) && !empty($sub['raw_html'])) {
+                        $sub['clean_html'] = htmlspecialchars($sub['raw_html']);
+                    }
+
                     $sub['image_base64'] = $this->embedImageAsBase64(
                         $sub['image_path'] ?? null,
                         $sub['image_base64'] ?? null
@@ -541,6 +555,8 @@ class PaperGeneratorController extends Controller
 
                     if (!empty($sub['options']) || $sub['type'] === 'true_false') {
                         $sub['options'] = $this->normalizeOptions($sub['options'], $sub['type'] ?? null);
+                    } else {
+                        $sub['options'] = [];
                     }
 
                     // Minimal sub‑question payload for Blade
@@ -584,28 +600,69 @@ class PaperGeneratorController extends Controller
      */
     private function transformQuestionModelToArray($qModel): array
     {
-        // Access the nested question object
-        $question = $qModel->question ?? $qModel;
+        // Handle multiple possible structures
+        $question = null;
+        
+        // Try to access nested question object (if $qModel is pivot)
+        if (isset($qModel->question) && is_object($qModel->question)) {
+            $question = $qModel->question;
+        } elseif (is_object($qModel)) {
+            // $qModel might be the question itself
+            $question = $qModel;
+        }
 
-        // Extract question text (the actual question/prompt)
-        $rawHtml = $question->question ?? '';
+        // Fallback: if $qModel is an array or doesn't have question relationship
+        if (!$question && is_array($qModel)) {
+            $question = (object) $qModel;
+        }
+
+        if (!$question) {
+            $question = $qModel;
+        }
+
+        // Extract question text - try multiple possible fields
+        $rawHtml = '';
+        if (isset($question->question) && !empty($question->question)) {
+            $rawHtml = (string) $question->question;
+        } elseif (isset($question->text) && !empty($question->text)) {
+            $rawHtml = (string) $question->text;
+        } elseif (isset($question->content) && !empty($question->content)) {
+            $rawHtml = (string) $question->content;
+        }
 
         // Get question type
-        $type = $question->question_type ?? $question->type ?? null;
+        $type = null;
+        if (isset($question->question_type)) {
+            $type = $question->question_type;
+        } elseif (isset($question->type)) {
+            $type = $question->type;
+        }
 
         // Get marks (could be string or int)
-        $marks = (int) ($question->marks ?? 0);
+        $marks = 0;
+        if (isset($question->marks)) {
+            $marks = (int) $question->marks;
+        }
 
         // Get image path
-        $imagePath = $question->question_image ?? null;
+        $imagePath = null;
+        if (isset($question->question_image)) {
+            $imagePath = $question->question_image;
+        }
 
         $imageBase64 = null;
 
         // Get options - handle multiple formats
-        $options = $question->options ?? null;
+        $options = null;
+        if (isset($question->options)) {
+            $options = $question->options;
+        }
 
         // Get sub-questions if they exist
-        $subRaw = $question->sub_questions ?? [];
+        $subRaw = [];
+        if (isset($question->sub_questions)) {
+            $subRaw = $question->sub_questions;
+        }
 
         // Auto‑derive type when not explicitly set
         if (!$type) {
@@ -634,10 +691,12 @@ class PaperGeneratorController extends Controller
             return '';
         }
 
-        // Optional: escape currency $ to avoid false positives if needed.
-        // $html = preg_replace('/\$(\d[\d,\.]*)/', '\\\$$1', $html);
-
-        return MathRenderer::processHtmlWithLatex($html);
+        try {
+            return MathRenderer::processHtmlWithLatex($html);
+        } catch (\Exception $e) {
+            // If KaTeX processing fails, return HTML-escaped version
+            return htmlspecialchars($html, ENT_QUOTES, 'UTF-8');
+        }
     }
 
     /**
