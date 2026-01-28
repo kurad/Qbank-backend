@@ -640,6 +640,8 @@ class PaperGeneratorController extends Controller
             $type = $question->type;
         }
 
+        
+
         // Get marks (could be string or int)
         $marks = 0;
         if (isset($question->marks)) {
@@ -658,6 +660,10 @@ class PaperGeneratorController extends Controller
         $options = null;
         if (isset($question->options)) {
             $options = $question->options;
+        }
+        // Auto-derive type when not explicitly set
+        if (!$type) {
+            $type = $this->inferType($rawHtml, $options);
         }
 
         // Get sub-questions if they exist
