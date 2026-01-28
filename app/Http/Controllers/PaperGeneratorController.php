@@ -248,72 +248,71 @@ class PaperGeneratorController extends Controller
      */
     private function processQuestionsForKatex(array $questions): array
     {
-        foreach ($questions as &$q) {
-            // Process clean_html with KaTeX FIRST before any other processing
-            if (!empty($q['clean_html'])) {
-                $q['clean_html'] = MathRenderer::processHtmlWithLatex($q['clean_html']);
+        // Helper: process a single option (mcq text OR matching left/right) + embed option image
+        $processOption = function (&$opt) {
+            // If a plain string option, normalize to ['text'=>...]
+            if (is_string($opt)) {
+                $opt = ['text' => $opt];
             }
 
-            // Options on main question
-            if (!empty($q['options'])) {
-                foreach ($q['options'] as &$opt) {
-                    if (is_array($opt)) {
-                        // Process text with KaTeX if present
-                        if (isset($opt['text']) && !empty($opt['text'])) {
-                            $opt['text'] = MathRenderer::processHtmlWithLatex($opt['text']);
-                        }
-                        // Process left/right for matching questions
-                        if (isset($opt['left']) && !empty($opt['left'])) {
-                            $opt['left'] = MathRenderer::processHtmlWithLatex($opt['left']);
-                        }
-                        if (isset($opt['right']) && !empty($opt['right'])) {
-                            $opt['right'] = MathRenderer::processHtmlWithLatex($opt['right']);
-                        }
-                        // Convert option images to base64
-                        if (!empty($opt['image']) && empty($opt['image_base64'])) {
-                            $resolved = $this->resolveImagePath($opt['image']);
-                            $opt['image_base64'] = $this->embedImageAsBase64($resolved, null);
-                        }
-                    } elseif (is_string($opt)) {
-                        $opt = ['text' => MathRenderer::processHtmlWithLatex($opt)];
-                    }
+            if (!is_array($opt)) {
+                return;
+            }
+
+            // MCQ / generic text option
+            if (!empty($opt['text'])) {
+                $opt['text'] = MathRenderer::processHtmlWithLatex((string) $opt['text']);
+            }
+
+            // Matching option (left/right)
+            // IMPORTANT: do not rebuild/overwrite pairs — only process if keys exist
+            if (array_key_exists('left', $opt)) {
+                $opt['left'] = MathRenderer::processHtmlWithLatex((string) ($opt['left'] ?? ''));
+            }
+            if (array_key_exists('right', $opt)) {
+                $opt['right'] = MathRenderer::processHtmlWithLatex((string) ($opt['right'] ?? ''));
+            }
+
+            // Option image → base64 for DOMPDF
+            if (!empty($opt['image']) && empty($opt['image_base64'])) {
+                $resolved = $this->resolveImagePath((string) $opt['image']);
+                $opt['image_base64'] = $this->embedImageAsBase64($resolved, null);
+            }
+        };
+
+        // Helper: process a question or sub-question node
+        $processNode = function (&$node) use ($processOption) {
+            // Only process clean_html if it still contains LaTeX delimiters (avoid double-processing)
+            if (!empty($node['clean_html'])) {
+                $html = (string) $node['clean_html'];
+
+                $alreadyRendered =
+                    str_contains($html, 'data:image/svg+xml;base64,') ||
+                    str_contains($html, 'katex') ||
+                    str_contains($html, 'math-inline') ||
+                    str_contains($html, 'math-block');
+
+                if (!$alreadyRendered) {
+                    $node['clean_html'] = MathRenderer::processHtmlWithLatex($html);
+                }
+            }
+
+            // Options
+            if (!empty($node['options']) && is_array($node['options'])) {
+                foreach ($node['options'] as &$opt) {
+                    $processOption($opt);
                 }
                 unset($opt);
             }
+        };
+
+        foreach ($questions as &$q) {
+            $processNode($q);
 
             // Sub-questions
-            if (!empty($q['sub_questions'])) {
+            if (!empty($q['sub_questions']) && is_array($q['sub_questions'])) {
                 foreach ($q['sub_questions'] as &$sub) {
-                    if (!empty($sub['clean_html'])) {
-                        $sub['clean_html'] = MathRenderer::processHtmlWithLatex($sub['clean_html']);
-                    }
-
-                    // Options on sub-question
-                    if (!empty($sub['options'])) {
-                        foreach ($sub['options'] as &$op) {
-                            if (is_array($op)) {
-                                // Process text with KaTeX if present
-                                if (isset($op['text']) && !empty($op['text'])) {
-                                    $op['text'] = MathRenderer::processHtmlWithLatex($op['text']);
-                                }
-                                // Process left/right for matching questions
-                                if (isset($op['left']) && !empty($op['left'])) {
-                                    $op['left'] = MathRenderer::processHtmlWithLatex($op['left']);
-                                }
-                                if (isset($op['right']) && !empty($op['right'])) {
-                                    $op['right'] = MathRenderer::processHtmlWithLatex($op['right']);
-                                }
-                                // Convert option images to base64
-                                if (!empty($op['image']) && empty($op['image_base64'])) {
-                                    $resolved = $this->resolveImagePath($op['image']);
-                                    $op['image_base64'] = $this->embedImageAsBase64($resolved, null);
-                                }
-                            } elseif (is_string($op)) {
-                                $op = ['text' => MathRenderer::processHtmlWithLatex($op)];
-                            }
-                        }
-                        unset($op);
-                    }
+                    $processNode($sub);
                 }
                 unset($sub);
             }
@@ -322,8 +321,6 @@ class PaperGeneratorController extends Controller
 
         return $questions;
     }
-
-
     /**
      * Format questions + parent/child structure
      */
@@ -515,7 +512,7 @@ class PaperGeneratorController extends Controller
 
             // Clean & KaTeX render main HTML (ensure it's not empty!)
             $q['clean_html'] = $this->toHtmlWithKatex($q['raw_html'] ?? '');
-            
+
             // Debug: if clean_html is still empty, use raw_html as fallback
             if (empty($q['clean_html']) && !empty($q['raw_html'])) {
                 $q['clean_html'] = htmlspecialchars($q['raw_html']);
@@ -547,7 +544,7 @@ class PaperGeneratorController extends Controller
                     }
 
                     $sub['clean_html'] = $this->toHtmlWithKatex($sub['raw_html'] ?? '');
-                    
+
                     // Debug: if clean_html is still empty, use raw_html as fallback
                     if (empty($sub['clean_html']) && !empty($sub['raw_html'])) {
                         $sub['clean_html'] = htmlspecialchars($sub['raw_html']);
@@ -607,7 +604,7 @@ class PaperGeneratorController extends Controller
     {
         // Handle multiple possible structures
         $question = null;
-        
+
         // Try to access nested question object (if $qModel is pivot)
         if (isset($qModel->question) && is_object($qModel->question)) {
             $question = $qModel->question;
@@ -859,7 +856,7 @@ class PaperGeneratorController extends Controller
 
         // Check if it looks like matching
         $arr = is_array($options) ? $options : (is_string($options) ? json_decode($options, true) ?? [$options] : []);
-        
+
         if ($this->looksLikeMatching($arr)) {
             return 'matching';
         }
