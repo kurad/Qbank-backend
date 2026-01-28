@@ -116,6 +116,9 @@ class PaperGeneratorController extends Controller
                     $totalMarks
                 );
 
+                // Process KaTeX on all question text and options
+                $formattedQuestions = $this->processQuestionsForKatex($formattedQuestions);
+
                 if (!empty($formattedQuestions)) {
                     $data['sections'][] = [
                         'title'       => $section->title,
@@ -131,6 +134,9 @@ class PaperGeneratorController extends Controller
                 $questionNumber,
                 $totalMarks
             );
+
+            // Process KaTeX on all question text and options
+            $data['questions'] = $this->processQuestionsForKatex($data['questions']);
         }
 
         // Update total marks after formatting
@@ -238,6 +244,7 @@ class PaperGeneratorController extends Controller
 
     /**
      * Walk the questions structure and apply KaTeX processing to any HTML text fields.
+     * Also converts option images to base64 for DOMPDF compatibility.
      */
     private function processQuestionsForKatex(array $questions): array
     {
@@ -247,8 +254,23 @@ class PaperGeneratorController extends Controller
             // Options on main question
             if (!empty($q['options'])) {
                 foreach ($q['options'] as &$opt) {
-                    if (is_array($opt) && isset($opt['text'])) {
-                        $opt['text'] = MathRenderer::processHtmlWithLatex($opt['text'] ?? '');
+                    if (is_array($opt)) {
+                        // Process text with KaTeX if present
+                        if (isset($opt['text'])) {
+                            $opt['text'] = MathRenderer::processHtmlWithLatex($opt['text'] ?? '');
+                        }
+                        // Process left/right for matching questions
+                        if (isset($opt['left'])) {
+                            $opt['left'] = MathRenderer::processHtmlWithLatex($opt['left'] ?? '');
+                        }
+                        if (isset($opt['right'])) {
+                            $opt['right'] = MathRenderer::processHtmlWithLatex($opt['right'] ?? '');
+                        }
+                        // Convert option images to base64
+                        if (!empty($opt['image']) && empty($opt['image_base64'])) {
+                            $resolved = $this->resolveImagePath($opt['image']);
+                            $opt['image_base64'] = $this->embedImageAsBase64($resolved, null);
+                        }
                     } elseif (is_string($opt)) {
                         $opt = MathRenderer::processHtmlWithLatex($opt);
                     }
@@ -264,8 +286,23 @@ class PaperGeneratorController extends Controller
                     // Options on sub-question
                     if (!empty($sub['options'])) {
                         foreach ($sub['options'] as &$op) {
-                            if (is_array($op) && isset($op['text'])) {
-                                $op['text'] = MathRenderer::processHtmlWithLatex($op['text'] ?? '');
+                            if (is_array($op)) {
+                                // Process text with KaTeX if present
+                                if (isset($op['text'])) {
+                                    $op['text'] = MathRenderer::processHtmlWithLatex($op['text'] ?? '');
+                                }
+                                // Process left/right for matching questions
+                                if (isset($op['left'])) {
+                                    $op['left'] = MathRenderer::processHtmlWithLatex($op['left'] ?? '');
+                                }
+                                if (isset($op['right'])) {
+                                    $op['right'] = MathRenderer::processHtmlWithLatex($op['right'] ?? '');
+                                }
+                                // Convert option images to base64
+                                if (!empty($op['image']) && empty($op['image_base64'])) {
+                                    $resolved = $this->resolveImagePath($op['image']);
+                                    $op['image_base64'] = $this->embedImageAsBase64($resolved, null);
+                                }
                             } elseif (is_string($op)) {
                                 $op = MathRenderer::processHtmlWithLatex($op);
                             }
@@ -450,7 +487,7 @@ class PaperGeneratorController extends Controller
      * Transform the Eloquent questions collection into a Blade‑friendly array:
      *  - Renders LaTeX to KaTeX HTML+MathML
      *  - Base64 embeds images
-     *  - Normalizes options (MCQ and matching)
+     *  - Normalizes options (MCQ, matching, true/false)
      *  - Handles sub‑questions recursively
      *  - Accumulates total marks (by reference)
      *
@@ -466,6 +503,11 @@ class PaperGeneratorController extends Controller
         foreach ($questions->values() as $qModel) {
             $q = $this->transformQuestionModelToArray($qModel);
 
+            // Ensure image path is resolved to absolute path
+            if (!empty($q['image_path'])) {
+                $q['image_path'] = $this->resolveImagePath($q['image_path']);
+            }
+
             // Clean & KaTeX render main HTML
             $q['clean_html'] = $this->toHtmlWithKatex($q['raw_html'] ?? '');
 
@@ -475,8 +517,8 @@ class PaperGeneratorController extends Controller
                 $q['image_base64'] ?? null
             );
 
-            // Normalize options (MCQ or matching)
-            if (!empty($q['options'])) {
+            // Normalize options (MCQ, matching, or true/false)
+            if (!empty($q['options']) || $q['type'] === 'true_false') {
                 $q['options'] = $this->normalizeOptions($q['options'], $q['type'] ?? null);
             }
 
@@ -486,13 +528,18 @@ class PaperGeneratorController extends Controller
                 foreach ($q['sub_raw'] as $subModel) {
                     $sub = $this->transformQuestionModelToArray($subModel);
 
+                    // Ensure image path is resolved
+                    if (!empty($sub['image_path'])) {
+                        $sub['image_path'] = $this->resolveImagePath($sub['image_path']);
+                    }
+
                     $sub['clean_html'] = $this->toHtmlWithKatex($sub['raw_html'] ?? '');
                     $sub['image_base64'] = $this->embedImageAsBase64(
                         $sub['image_path'] ?? null,
                         $sub['image_base64'] ?? null
                     );
 
-                    if (!empty($sub['options'])) {
+                    if (!empty($sub['options']) || $sub['type'] === 'true_false') {
                         $sub['options'] = $this->normalizeOptions($sub['options'], $sub['type'] ?? null);
                     }
 
@@ -610,6 +657,40 @@ class PaperGeneratorController extends Controller
     }
 
     /**
+     * Resolve image path to absolute filesystem path.
+     * Tries multiple locations: direct public, storage, etc.
+     */
+    private function resolveImagePath(?string $imagePath): ?string
+    {
+        if (empty($imagePath)) {
+            return null;
+        }
+
+        $relative = ltrim($imagePath, '/');
+
+        // Try direct public path first
+        $directPublicPath = public_path($relative);
+        if (file_exists($directPublicPath)) {
+            return $directPublicPath;
+        }
+
+        // Try storage/public path
+        $storagePublicPath = public_path('storage/' . $relative);
+        if (file_exists($storagePublicPath)) {
+            return $storagePublicPath;
+        }
+
+        // Try storage/app/public path
+        $storagePath = storage_path('app/public/' . $relative);
+        if (file_exists($storagePath)) {
+            return $storagePath;
+        }
+
+        // Return original if nothing found (will handle gracefully downstream)
+        return $imagePath;
+    }
+
+    /**
      * Convert a local image path to base64 (preferred for DOMPDF).
      * If a base64 is already provided, use it.
      */
@@ -621,12 +702,11 @@ class PaperGeneratorController extends Controller
         if (empty($path)) {
             return null;
         }
+
+        // Resolve path if not absolute
         if (!file_exists($path)) {
-            // storage_path or public_path might be needed if only relative path is stored
-            $candidate = storage_path('app/public/' . ltrim($path, '/'));
-            if (file_exists($candidate)) {
-                $path = $candidate;
-            } else {
+            $path = $this->resolveImagePath($path);
+            if (empty($path) || !file_exists($path)) {
                 return null;
             }
         }
@@ -638,12 +718,21 @@ class PaperGeneratorController extends Controller
 
     /**
      * Normalize options:
+     *  - If true_false: return array of ['text' => 'True'] and ['text' => 'False']
      *  - If matching: produce array of ['left' => html, 'right' => html]
      *  - Else: return array of strings or ['text' => html]
      * Runs KaTeX on each option text.
      */
     private function normalizeOptions($rawOptions, ?string $type): array
     {
+        // Handle true/false questions
+        if ($type === 'true_false') {
+            return [
+                ['text' => 'True'],
+                ['text' => 'False'],
+            ];
+        }
+
         // If options come as JSON string, decode
         if (is_string($rawOptions)) {
             // Try JSON decode first

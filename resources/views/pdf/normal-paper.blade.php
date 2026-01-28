@@ -76,8 +76,7 @@
         /* ======================================================
            ===============   KATEX STYLING   ====================
            ====================================================== */
-
-        /* Inline KaTeX stylesheet provided by controller */
+        /* Inline full KaTeX stylesheet provided by controller */
         @php echo $katexCss ?? ''; @endphp
 
         /* Slightly larger KaTeX for readability in print */
@@ -104,6 +103,7 @@
                 Subject: {{ $subject ?? 'General' }}
                 @if(!empty($grade_level)) — Grade: {{ $grade_level }} @endif
             </div>
+            {{-- Add other metadata here if needed --}}
         </div>
     </div>
 
@@ -161,7 +161,6 @@
                                 {{-- a), b), c) … --}}
                                 <span class="question-number">({{ chr(96 + $loop->iteration) }})</span>
                                 <span>{!! $sub['clean_html'] !!}</span>
-
                                 @if(isset($sub['marks']))
                                     <span class="marks">[{{ $sub['marks'] }} mark{{ ($sub['marks'] ?? 0) > 1 ? 's' : '' }}]</span>
                                 @endif
@@ -196,16 +195,13 @@
                             @elseif(!empty($sub['options']))
                                 <div class="options" style="margin-left:20px;">
                                     @foreach($sub['options'] as $i => $opt)
-                                        @php
-                                            $optText = is_array($opt) ? ($opt['text'] ?? $opt['value'] ?? $opt['label'] ?? '') : $opt;
-                                        @endphp
                                         <div class="option">
                                             <div class="option-label">{{ chr(65 + $i) }}.</div>
                                             <div class="option-text">
                                                 @if(is_array($opt) && !empty($opt['image_base64']))
                                                     <img src="{{ $opt['image_base64'] }}" style="max-height:50px;" alt="">
                                                 @else
-                                                    {!! $optText !!}
+                                                    {!! is_array($opt) ? ($opt['text'] ?? '') : $opt !!}
                                                 @endif
                                             </div>
                                         </div>
@@ -263,16 +259,13 @@
                         @elseif(!empty($q['options']))
                             <div class="options">
                                 @foreach($q['options'] as $i => $opt)
-                                    @php
-                                        $optText = is_array($opt) ? ($opt['text'] ?? $opt['value'] ?? $opt['label'] ?? '') : $opt;
-                                    @endphp
                                     <div class="option">
                                         <div class="option-label">{{ chr(65 + $i) }}.</div>
                                         <div class="option-text">
                                             @if(is_array($opt) && !empty($opt['image_base64']))
                                                 <img src="{{ $opt['image_base64'] }}" style="max-height:50px;" alt="">
                                             @else
-                                                {!! $optText !!}
+                                                {!! is_array($opt) ? ($opt['text'] ?? '') : $opt !!}
                                             @endif
                                         </div>
                                     </div>
@@ -291,12 +284,21 @@
                             </div>
                         @endif
                     @endif
-               tions']))
+                </div>
+            @endforeach
+
+            <hr style="margin:20px 0; border:0; border-top:1px solid #ccc;" />
+        @endforeach
+    @else
+        {{-- Flat (non-section) assessments --}}
+        @foreach($questions as $q)
+            <div class="question">
+                @if(!empty($q['sub_questions']))
                     <div class="question-text">
                         <span class="question-number">{{ $loop->iteration }}.</span>
                         <span>{!! $q['clean_html'] !!}</span>
                         @if(!empty($q['image_base64']))
-                            <div>{{ $q[</div>
+                            <div><img src="{{ $q['image_base64'] }}" alt=""></div>
                         @endif
                     </div>
 
@@ -308,7 +310,7 @@
                                 <span class="marks">[{{ $sub['marks'] }} mark{{ ($sub['marks'] ?? 0) > 1 ? 's' : '' }}]</span>
                             @endif
                             @if(!empty($sub['image_base64']))
-                                <div>{{ $sub[</div>
+                                <div><img src="{{ $sub['image_base64'] }}" alt=""></div>
                             @endif
                         </div>
 
@@ -335,16 +337,13 @@
                         @elseif(!empty($sub['options']))
                             <div class="options" style="margin-left:20px;">
                                 @foreach($sub['options'] as $i => $opt)
-                                    @php
-                                        $optText = is_array($opt) ? ($opt['text'] ?? $opt['value'] ?? $opt['label'] ?? '') : $opt;
-                                    @endphp
                                     <div class="option">
                                         <div class="option-label">{{ chr(65 + $i) }}.</div>
                                         <div class="option-text">
                                             @if(is_array($opt) && !empty($opt['image_base64']))
-                                                {{ $opt[
+                                                <img src="{{ $opt['image_base64'] }}" style="max-height:50px;" alt="">
                                             @else
-                                                {!! $optText !!}
+                                                {!! is_array($opt) ? ($opt['text'] ?? '') : $opt !!}
                                             @endif
                                         </div>
                                     </div>
@@ -371,7 +370,7 @@
                             <span class="marks">[{{ $q['marks'] }} mark{{ ($q['marks'] ?? 0) > 1 ? 's' : '' }}]</span>
                         @endif
                         @if(!empty($q['image_base64']))
-                            <div>{{ $q[</div>
+                            <div><img src="{{ $q['image_base64'] }}" alt=""></div>
                         @endif
                     </div>
 
@@ -398,16 +397,13 @@
                     @elseif(!empty($q['options']))
                         <div class="options">
                             @foreach($q['options'] as $i => $opt)
-                                @php
-                                    $optText = is_array($opt) ? ($opt['text'] ?? $opt['value'] ?? $opt['label'] ?? '') : $opt;
-                                @endphp
                                 <div class="option">
                                     <div class="option-label">{{ chr(65 + $i) }}.</div>
                                     <div class="option-text">
                                         @if(is_array($opt) && !empty($opt['image_base64']))
-                                            {{ $opt[
+                                            <img src="{{ $opt['image_base64'] }}" style="max-height:50px;" alt="">
                                         @else
-                                            {!! $optText !!}
+                                            {!! is_array($opt) ? ($opt['text'] ?? '') : $opt !!}
                                         @endif
                                     </div>
                                 </div>
@@ -435,5 +431,6 @@
         {{ $school['school_name'] ?? 'School Name' }} | {{ $title }} | {{ date('F j, Y') }}
     </div>
 
+    {{-- Note: DOMPDF does not execute JavaScript; page numbers must be done via DOMPDF headers/footers if needed. --}}
 </body>
 </html>
