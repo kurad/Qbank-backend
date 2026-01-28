@@ -580,48 +580,32 @@ class PaperGeneratorController extends Controller
 
     /**
      * Safely extract fields from your question model regardless of nesting.
-     * Adjust keys to match your schema if needed.
+     * Handles the actual data structure from Assessment->questions->question relationships.
      */
     private function transformQuestionModelToArray($qModel): array
     {
-        // Common sources (adjust according to your DB schema):
-        // - $qModel->question->content_html or ->text/html/body
-        // - $qModel->content / $qModel->text / $qModel->html
-        // - $qModel->image_path / $qModel->question->image_path
-        // - $qModel->options (array|string|json) / $qModel->question->options
-        // - $qModel->marks / $qModel->question->marks
-        // - $qModel->type  (e.g., 'mcq', 'matching', 'short_answer')
-        // - $qModel->children / $qModel->subQuestions
+        // Access the nested question object
+        $question = $qModel->question ?? $qModel;
 
-        $rawHtml = Arr::get($qModel, 'question.content_html')
-            ?? Arr::get($qModel, 'question.text')
-            ?? Arr::get($qModel, 'content')
-            ?? Arr::get($qModel, 'text')
-            ?? Arr::get($qModel, 'html')
-            ?? '';
+        // Extract question text (the actual question/prompt)
+        $rawHtml = $question->question ?? '';
 
-        $type = Arr::get($qModel, 'type')
-            ?? Arr::get($qModel, 'question.type')
-            ?? null;
+        // Get question type
+        $type = $question->question_type ?? $question->type ?? null;
 
-        $marks = Arr::get($qModel, 'marks')
-            ?? Arr::get($qModel, 'question.marks')
-            ?? 0;
+        // Get marks (could be string or int)
+        $marks = (int) ($question->marks ?? 0);
 
-        $imagePath = Arr::get($qModel, 'image_path')
-            ?? Arr::get($qModel, 'question.image_path');
+        // Get image path
+        $imagePath = $question->question_image ?? null;
 
-        $imageBase64 = Arr::get($qModel, 'image_base64')
-            ?? Arr::get($qModel, 'question.image_base64');
+        $imageBase64 = null;
 
-        $options = Arr::get($qModel, 'options')
-            ?? Arr::get($qModel, 'question.options');
+        // Get options - handle multiple formats
+        $options = $question->options ?? null;
 
-        // Sub questions list; support multiple conventions
-        $subRaw = Arr::get($qModel, 'subQuestions')
-            ?? Arr::get($qModel, 'children')
-            ?? Arr::get($qModel, 'question.children')
-            ?? [];
+        // Get sub-questions if they exist
+        $subRaw = $question->sub_questions ?? [];
 
         // Auto‑derive type when not explicitly set
         if (!$type) {
@@ -629,13 +613,13 @@ class PaperGeneratorController extends Controller
         }
 
         return [
-            'raw_html'    => $rawHtml,
-            'type'        => $type,
-            'marks'       => $marks,
-            'options'     => $options,
-            'image_path'  => $imagePath,
+            'raw_html'     => $rawHtml,
+            'type'         => $type,
+            'marks'        => $marks,
+            'options'      => $options,
+            'image_path'   => $imagePath,
             'image_base64' => $imageBase64,
-            'sub_raw'     => is_iterable($subRaw) ? $subRaw : [],
+            'sub_raw'      => is_iterable($subRaw) ? $subRaw : [],
         ];
     }
 
@@ -725,12 +709,17 @@ class PaperGeneratorController extends Controller
      */
     private function normalizeOptions($rawOptions, ?string $type): array
     {
-        // Handle true/false questions
+        // Handle true/false questions - no options provided, generate them
         if ($type === 'true_false') {
             return [
                 ['text' => 'True'],
                 ['text' => 'False'],
             ];
+        }
+
+        // If options is null or empty, return empty array
+        if (empty($rawOptions)) {
+            return [];
         }
 
         // If options come as JSON string, decode
@@ -740,7 +729,7 @@ class PaperGeneratorController extends Controller
             if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
                 $rawOptions = $decoded;
             } else {
-                // Fallback: split by newlines
+                // Fallback: split by newlines or treat as single item
                 $rawOptions = preg_split('/\r\n|\r|\n/', trim($rawOptions)) ?: [];
             }
         }
@@ -783,10 +772,12 @@ class PaperGeneratorController extends Controller
         $normalized = [];
         foreach ($opts as $item) {
             if (is_array($item)) {
+                // Extract text from array
                 $text = (string) ($item['text'] ?? $item['value'] ?? '');
                 $normalized[] = ['text' => $this->toHtmlWithKatex($text)];
             } else {
-                $normalized[] = $this->toHtmlWithKatex((string) $item);
+                // String option
+                $normalized[] = ['text' => $this->toHtmlWithKatex((string) $item)];
             }
         }
         return $normalized;
@@ -797,17 +788,29 @@ class PaperGeneratorController extends Controller
      */
     private function inferType(string $rawHtml, $options): ?string
     {
-        if (!empty($options)) {
-            $arr = is_array($options) ? $options : (is_string($options) ? [$options] : []);
-            if ($this->looksLikeMatching($arr)) {
-                return 'matching';
-            }
-            return 'mcq';
+        // If no options, it's a short answer
+        if (empty($options)) {
+            return 'short_answer';
         }
 
-        // Heuristic: if it looks like "fill in", "short answer", etc., mark short_answer
-        // You can tighten this based on your taxonomy.
-        return 'short_answer';
+        // Check if it looks like matching
+        $arr = is_array($options) ? $options : (is_string($options) ? json_decode($options, true) ?? [$options] : []);
+        
+        if ($this->looksLikeMatching($arr)) {
+            return 'matching';
+        }
+
+        // Check if it's true/false (only 2 items that are true/false)
+        if (is_array($arr) && count($arr) === 2) {
+            $vals = array_map(fn($item) => is_array($item) ? strtolower($item['text'] ?? '') : strtolower((string) $item), $arr);
+            $vals = array_filter(array_unique($vals));
+            if (count($vals) === 2 && in_array('true', $vals) && in_array('false', $vals)) {
+                return 'true_false';
+            }
+        }
+
+        // Default to MCQ if options exist
+        return 'mcq';
     }
 
     /**
