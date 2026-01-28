@@ -125,8 +125,8 @@
 
         /* ======== IMAGES ======== */
         .question-image {
-            max-width: 350px;
-            max-height: 200px;
+            max-width: 300px;
+            max-height: 180px;
             margin-top: 8px;
             page-break-inside: avoid;
         }
@@ -225,6 +225,30 @@
 
         .math-block img {
             height: 22px;
+        }
+
+        /* Working space for short answers */
+        .work-block {
+            margin-top: 8px;
+        }
+
+        .work-label {
+            font-size: 11px;
+            color: #555;
+            margin-bottom: 4px;
+        }
+
+        .work-line {
+            border-bottom: 1px solid #000;
+            height: 18px;
+            /* line spacing */
+            margin-bottom: 6px;
+            /* gap between lines */
+            width: 100%;
+        }
+
+        .work-block {
+            page-break-inside: avoid;
         }
     </style>
 </head>
@@ -367,13 +391,20 @@
             @endforeach
         </div>
         @elseif(($sub['type'] ?? null) === 'short_answer')
-        <div style="margin-top:10px; margin-left:15px;">
-            <div style="font-size:11px; color:#555; margin-bottom:3px;">Working space &amp; answer:</div>
-            @for($i=0;$i<5;$i++)
-                <div class="answer-space" style="width:100%; min-height:20px; margin-bottom:6px;">
+        <div class="work-block" style="margin-left:15px;">
+            <div class="work-label">Working space &amp; answer:</div>
+
+            @php
+            // simple rule: 1 mark = 3 lines, cap at 10
+            $lines = min(10, max(3, (int)ceil(($sub['marks'] ?? 1) * 3)));
+            @endphp
+
+            @for($i = 0; $i < $lines; $i++)
+                <div class="work-line">
         </div>
         @endfor
     </div>
+
     @else
     <div style="margin-top:10px; min-height:50px; margin-left:15px;">
         <div class="answer-space" style="width:100%; min-height:50px;"></div>
@@ -433,10 +464,15 @@
         @endforeach
     </div>
     @elseif(($q['type'] ?? null) === 'short_answer')
-    <div style="margin-top:10px;">
-        <div style="font-size:11px; color:#555; margin-bottom:3px;">Working space &amp; answer:</div>
-        @for($i=0;$i<5;$i++)
-            <div class="answer-space" style="width:100%; min-height:20px; margin-bottom:6px;">
+    <div class="work-block">
+        <div class="work-label">Working space &amp; answer:</div>
+
+        @php
+        $lines = min(10, max(3, (int)ceil(($q['marks'] ?? 1) * 3)));
+        @endphp
+
+        @for($i = 0; $i < $lines; $i++)
+            <div class="work-line">
     </div>
     @endfor
     </div>
