@@ -123,17 +123,20 @@ class AuthController extends Controller
             Auth::logout();
             return response()->json(['message' => 'Your account is not active'], 403);
         }
-        $ttlMinutes = 60;
 
         // Create a token with expiry time of 1 hour
-        $plainTextToken = $user->createToken('auth_token')->plainTextToken;
+        $token = $user->createToken(
+            'auth_token',
+            ['*'], //abilities
+            now()->addMinutes(60) //expiry time
+        )->plainTextToken;
 
 
         return response()->json([
             'user' => $user,
-            'token' => $plainTextToken,
+            'token' => $token,
             'user_role' => $user->role,
-            'expires_at' => now()->addMinutes($ttlMinutes)->toDateTimeString(),
+            'expires_at' => now()->addMinutes(60)->toDateTimeString(),
         ]);
     }
     public function getStudents()
@@ -154,42 +157,48 @@ class AuthController extends Controller
 
     public function refreshToken(Request $request)
     {
+        // 1. Check for bearer token in authorization header
         $plainToken = $request->bearerToken();
-        if (!$plainToken) {
-            return response()->json(['message' => 'Authentication token is missing.'], 401);
+        if(!$plainToken){
+            return response()->json([
+                'message' => 'Authentication token is missing.'
+            ], 401);
         }
 
+        // 2. Fetch Token record (Even if expired)
         $token = PersonalAccessToken::findToken($plainToken);
-        if (!$token) {
-            return response()->json(['message' => 'Invalid or Unknown token.'], 401);
+        if(!$token){
+            return response()->json([
+                'message' => 'Invalid or Unknown token.'
+            ], 401);
         }
-
+         
         $user = $token->tokenable;
 
-        $ttlMinutes = 60;
+        // 3. Check Refresh Grace period (Optional but recommended)
+        // Example: Allow refreshing up to 30 minutes after expiry
         $gracePeriodMinutes = 30;
-
-        $expiredAt = $token->created_at->copy()->addMinutes($ttlMinutes);
-
-        // allow refresh until expiredAt + grace
-        if (now()->greaterThan($expiredAt->copy()->addMinutes($gracePeriodMinutes))) {
-            $token->delete(); // optional cleanup
+        if($token->expires_at && $token->expires_at->copy()->addMinutes($gracePeriodMinutes)->isPast())
+        {
             return response()->json([
                 'message' => 'Token refresh period has expired. Please log in again.'
             ], 401);
         }
-
-        // revoke old token
+        
+        // 4. Revoke old token
         $token->delete();
 
-        // issue new token
-        $newPlainToken = $user->createToken('auth_token')->plainTextToken;
+        // 5. Issue new token
+        $ttlMinutes = 60; //Token validity in minutes
 
+        $newToken = $user->createToken('auth_token', ['*'], now()->addMinutes($ttlMinutes))->plainTextToken;
+
+        // 6. Return new token
         return response()->json([
-            'message' => 'Token refreshed successfully.',
-            'token' => $newPlainToken,
-            'user' => $user,
-            'user_role' => $user->role,
+            'message' =>'Token refreshed successfully.',
+            'token' => $newToken,
+            'user' =>$user,
+            'user_role' =>$user->role,
             'expires_at' => now()->addMinutes($ttlMinutes)->toDateTimeString(),
         ]);
     }
