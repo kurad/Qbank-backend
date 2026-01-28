@@ -249,22 +249,25 @@ class PaperGeneratorController extends Controller
     private function processQuestionsForKatex(array $questions): array
     {
         foreach ($questions as &$q) {
-            $q['clean_html'] = MathRenderer::processHtmlWithLatex($q['clean_html'] ?? '');
+            // Process clean_html with KaTeX FIRST before any other processing
+            if (!empty($q['clean_html'])) {
+                $q['clean_html'] = MathRenderer::processHtmlWithLatex($q['clean_html']);
+            }
 
             // Options on main question
             if (!empty($q['options'])) {
                 foreach ($q['options'] as &$opt) {
                     if (is_array($opt)) {
                         // Process text with KaTeX if present
-                        if (isset($opt['text'])) {
-                            $opt['text'] = MathRenderer::processHtmlWithLatex($opt['text'] ?? '');
+                        if (isset($opt['text']) && !empty($opt['text'])) {
+                            $opt['text'] = MathRenderer::processHtmlWithLatex($opt['text']);
                         }
                         // Process left/right for matching questions
-                        if (isset($opt['left'])) {
-                            $opt['left'] = MathRenderer::processHtmlWithLatex($opt['left'] ?? '');
+                        if (isset($opt['left']) && !empty($opt['left'])) {
+                            $opt['left'] = MathRenderer::processHtmlWithLatex($opt['left']);
                         }
-                        if (isset($opt['right'])) {
-                            $opt['right'] = MathRenderer::processHtmlWithLatex($opt['right'] ?? '');
+                        if (isset($opt['right']) && !empty($opt['right'])) {
+                            $opt['right'] = MathRenderer::processHtmlWithLatex($opt['right']);
                         }
                         // Convert option images to base64
                         if (!empty($opt['image']) && empty($opt['image_base64'])) {
@@ -272,7 +275,7 @@ class PaperGeneratorController extends Controller
                             $opt['image_base64'] = $this->embedImageAsBase64($resolved, null);
                         }
                     } elseif (is_string($opt)) {
-                        $opt = MathRenderer::processHtmlWithLatex($opt);
+                        $opt = ['text' => MathRenderer::processHtmlWithLatex($opt)];
                     }
                 }
                 unset($opt);
@@ -281,22 +284,24 @@ class PaperGeneratorController extends Controller
             // Sub-questions
             if (!empty($q['sub_questions'])) {
                 foreach ($q['sub_questions'] as &$sub) {
-                    $sub['clean_html'] = MathRenderer::processHtmlWithLatex($sub['clean_html'] ?? '');
+                    if (!empty($sub['clean_html'])) {
+                        $sub['clean_html'] = MathRenderer::processHtmlWithLatex($sub['clean_html']);
+                    }
 
                     // Options on sub-question
                     if (!empty($sub['options'])) {
                         foreach ($sub['options'] as &$op) {
                             if (is_array($op)) {
                                 // Process text with KaTeX if present
-                                if (isset($op['text'])) {
-                                    $op['text'] = MathRenderer::processHtmlWithLatex($op['text'] ?? '');
+                                if (isset($op['text']) && !empty($op['text'])) {
+                                    $op['text'] = MathRenderer::processHtmlWithLatex($op['text']);
                                 }
                                 // Process left/right for matching questions
-                                if (isset($op['left'])) {
-                                    $op['left'] = MathRenderer::processHtmlWithLatex($op['left'] ?? '');
+                                if (isset($op['left']) && !empty($op['left'])) {
+                                    $op['left'] = MathRenderer::processHtmlWithLatex($op['left']);
                                 }
-                                if (isset($op['right'])) {
-                                    $op['right'] = MathRenderer::processHtmlWithLatex($op['right'] ?? '');
+                                if (isset($op['right']) && !empty($op['right'])) {
+                                    $op['right'] = MathRenderer::processHtmlWithLatex($op['right']);
                                 }
                                 // Convert option images to base64
                                 if (!empty($op['image']) && empty($op['image_base64'])) {
@@ -304,7 +309,7 @@ class PaperGeneratorController extends Controller
                                     $op['image_base64'] = $this->embedImageAsBase64($resolved, null);
                                 }
                             } elseif (is_string($op)) {
-                                $op = MathRenderer::processHtmlWithLatex($op);
+                                $op = ['text' => MathRenderer::processHtmlWithLatex($op)];
                             }
                         }
                         unset($op);
@@ -764,7 +769,7 @@ class PaperGeneratorController extends Controller
      *  - If true_false: return array of ['text' => 'True'] and ['text' => 'False']
      *  - If matching: produce array of ['left' => html, 'right' => html]
      *  - Else: return array of strings or ['text' => html]
-     * Runs KaTeX on each option text.
+     * NOTE: KaTeX processing happens separately in processQuestionsForKatex()
      */
     private function normalizeOptions($rawOptions, ?string $type): array
     {
@@ -807,19 +812,19 @@ class PaperGeneratorController extends Controller
             foreach ($opts as $item) {
                 if (is_array($item) && (isset($item['left']) || isset($item['right']))) {
                     $pairs[] = [
-                        'left'  => $this->toHtmlWithKatex((string) ($item['left'] ?? '')),
-                        'right' => $this->toHtmlWithKatex((string) ($item['right'] ?? '')),
+                        'left'  => (string) ($item['left'] ?? ''),
+                        'right' => (string) ($item['right'] ?? ''),
                     ];
                 } elseif (is_string($item) && str_contains($item, '|')) {
                     [$left, $right] = array_pad(explode('|', $item, 2), 2, '');
                     $pairs[] = [
-                        'left'  => $this->toHtmlWithKatex(trim($left)),
-                        'right' => $this->toHtmlWithKatex(trim($right)),
+                        'left'  => trim($left),
+                        'right' => trim($right),
                     ];
                 } else {
                     // If unexpected, treat as single text (MCQ) to avoid losing data
                     $pairs[] = [
-                        'left'  => $this->toHtmlWithKatex(is_array($item) ? ($item['text'] ?? '') : (string) $item),
+                        'left'  => is_array($item) ? ($item['text'] ?? '') : (string) $item,
                         'right' => '',
                     ];
                 }
@@ -833,10 +838,10 @@ class PaperGeneratorController extends Controller
             if (is_array($item)) {
                 // Extract text from array
                 $text = (string) ($item['text'] ?? $item['value'] ?? '');
-                $normalized[] = ['text' => $this->toHtmlWithKatex($text)];
+                $normalized[] = ['text' => $text];
             } else {
                 // String option
-                $normalized[] = ['text' => $this->toHtmlWithKatex((string) $item)];
+                $normalized[] = ['text' => (string) $item];
             }
         }
         return $normalized;
