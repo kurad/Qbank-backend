@@ -864,30 +864,48 @@ class PaperGeneratorController extends Controller
      */
     private function inferType(string $rawHtml, $options): ?string
     {
-        // If no options, it's a short answer
-        if (empty($options)) {
+        // Normalize options
+        if (is_string($options)) {
+            $decoded = json_decode($options, true);
+            $options = json_last_error() === JSON_ERROR_NONE ? $decoded : [$options];
+        }
+
+        if ($options instanceof \Illuminate\Support\Collection) {
+            $options = $options->all();
+        }
+
+        // Remove empty / meaningless options (e.g. "A.", "", null)
+        $cleanOptions = array_filter((array) $options, function ($opt) {
+            if (is_string($opt)) {
+                return trim($opt) !== '' && trim($opt) !== 'A.';
+            }
+            if (is_array($opt)) {
+                return !empty(trim($opt['text'] ?? ''));
+            }
+            return false;
+        });
+
+        // If after cleanup there are no real options → short answer
+        if (empty($cleanOptions)) {
             return 'short_answer';
         }
 
-        // Check if it looks like matching
-        $arr = is_array($options) ? $options : (is_string($options) ? json_decode($options, true) ?? [$options] : []);
-
-        if ($this->looksLikeMatching($arr)) {
+        // Matching
+        if ($this->looksLikeMatching($cleanOptions)) {
             return 'matching';
         }
 
-        // Check if it's true/false (only 2 items that are true/false)
-        if (is_array($arr) && count($arr) === 2) {
-            $vals = array_map(fn($item) => is_array($item) ? strtolower($item['text'] ?? '') : strtolower((string) $item), $arr);
-            $vals = array_filter(array_unique($vals));
-            if (count($vals) === 2 && in_array('true', $vals) && in_array('false', $vals)) {
+        // True/False
+        if (count($cleanOptions) === 2) {
+            $vals = array_map(fn($o) => strtolower(is_array($o) ? ($o['text'] ?? '') : $o), $cleanOptions);
+            if (in_array('true', $vals) && in_array('false', $vals)) {
                 return 'true_false';
             }
         }
 
-        // Default to MCQ if options exist
         return 'mcq';
     }
+
 
     /**
      * Detect if options resemble matching pairs.
