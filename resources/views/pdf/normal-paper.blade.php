@@ -36,6 +36,23 @@
         .student-info-row { margin-bottom:5px; display:flex; }
         .student-info-label { font-weight:bold; min-width:100px; }
         .total-marks { text-align:right; font-weight:bold; margin-top:10px; font-size:14px; }
+
+          @php echo $katexCss ?? ''; @endphp 
+
+        /* Slightly larger KaTeX for readability in print */
+        .katex {
+            font-size: 1.08em;
+        }
+
+        /* Center display equations */
+        .katex-display {
+            margin: 6px 0 8px 0;
+            text-align: center;
+        }
+
+        .katex-display .katex {
+            display: inline-block;
+        }
     </style>
 </head>
 <body>
