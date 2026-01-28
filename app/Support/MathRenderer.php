@@ -8,49 +8,84 @@ use Symfony\Component\Process\Process;
 
 class MathRenderer
 {
-    protected static function runKatex(string $latex, bool $display = true): string
+    protected static function runKatexSvg(string $latex, bool $display = true): string
     {
         $script = base_path('node-scripts/render-katex.js');
         $mode = $display ? 'display' : 'inline';
 
         $process = new Process(['node', $script, $mode]);
         $process->setInput($latex);
-        $process->setTimeout(5); // seconds
-
+        $process->setTimeout(5);
         $process->run();
+
         if (!$process->isSuccessful()) {
             Log::error('KaTeX render error: ' . $process->getErrorOutput());
+            return '<span style="color:#b00">[Math error]</span>';
         }
 
-        return $process->getOutput();
+        return (string) $process->getOutput();
+    }
+
+    protected static function svgToImg(string $svg, bool $display): string
+    {
+        $svg = trim($svg);
+
+        // If the node script returned a span (error fallback), just return it.
+        if ($svg === '' || stripos($svg, '<svg') === false) {
+            return $svg;
+        }
+
+        // DOMPDF is happiest with base64 data URIs
+        $b64 = base64_encode($svg);
+
+        if ($display) {
+            // Block-like math
+            return '<div class="math-block"><img src="data:image/svg+xml;base64,' . $b64 . '" /></div>';
+        }
+
+        // Inline math
+        return '<span class="math-inline"><img src="data:image/svg+xml;base64,' . $b64 . '" /></span>';
     }
 
     public static function render(string $latex, bool $display = true): string
     {
-        $key = 'katex_' . md5(($display ? 'D' : 'I') . $latex);
+        $latex = trim($latex);
+        if ($latex === '') return '';
+
+        $key = 'katex_svg_' . md5(($display ? 'D' : 'I') . $latex);
+
         return Cache::remember($key, now()->addDays(7), function () use ($latex, $display) {
-            return self::runKatex($latex, $display);
+            $svg = self::runKatexSvg($latex, $display);
+            return self::svgToImg($svg, $display);
         });
     }
 
     /**
-     * Process HTML that contains LaTeX delimiters and replace with KaTeX markup.
+     * Replace LaTeX delimiters with embedded SVG images.
      * Supports:
      *  - Display: $$...$$ or \[...\]
      *  - Inline:  $...$  or \(...\)
      */
     public static function processHtmlWithLatex(string $html): string
     {
+        if ($html === '') return $html;
+
+        // Guard: avoid double-processing if already rendered
+        if (str_contains($html, 'data:image/svg+xml;base64,') || str_contains($html, 'math-inline') || str_contains($html, 'math-block')) {
+            return $html;
+        }
+
         // Display math: $$ ... $$ or \[ ... \]
         $html = preg_replace_callback('/\\$\\$(.+?)\\$\\$|\\\\\\[(.+?)\\\\\\]/s', function ($m) {
             $latex = $m[1] ?? $m[2] ?? '';
-            return self::render(trim($latex), true);
+            return self::render($latex, true);
         }, $html);
 
         // Inline math: $ ... $ or \( ... \)
+        // (This avoids $$..$$ because those were already handled above)
         $html = preg_replace_callback('/(?<!\\$)\\$(?!\\$)(.+?)(?<!\\$)\\$(?!\\$)|\\\\\\((.+?)\\\\\\)/s', function ($m) {
             $latex = $m[1] ?? $m[2] ?? '';
-            return self::render(trim($latex), false);
+            return self::render($latex, false);
         }, $html);
 
         return $html;
