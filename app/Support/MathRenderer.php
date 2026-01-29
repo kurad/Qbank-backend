@@ -8,7 +8,7 @@ use Symfony\Component\Process\Process;
 
 class MathRenderer
 {
-    protected static function runKatexSvg(string $latex, bool $display = true): string
+    protected static function runKatexSvg_old(string $latex, bool $display = true): string
     {
         $script = base_path('node-scripts/render-katex.js');
     $mode   = $display ? 'display' : 'inline';
@@ -42,6 +42,46 @@ class MathRenderer
 
     }
 
+    protected static function runKatex(string $latex, bool $display = true): string
+{
+    $script = base_path('node-scripts/render-katex.js');
+    $mode   = $display ? 'display' : 'inline';
+
+    $node = env('NODE_BIN');
+
+    if (!$node || !is_file($node)) {
+        Log::error('KaTeX render error: NODE_BIN not set or invalid', [
+            'NODE_BIN' => $node,
+        ]);
+        return '<span style="color:#b00">[Math error]</span>';
+    }
+
+    $process = new \Symfony\Component\Process\Process([$node, $script, $mode]);
+    $process->setWorkingDirectory(base_path());
+    $process->setInput($latex);
+    $process->setTimeout(10);
+
+    // Give the process a usable PATH + HOME even under PHP-FPM
+    $process->setEnv([
+        'PATH' => dirname($node) . ':' . ($_SERVER['PATH'] ?? getenv('PATH') ?: ''),
+        'HOME' => $_SERVER['HOME'] ?? getenv('HOME') ?: base_path(),
+    ]);
+
+    $process->run();
+
+    if (!$process->isSuccessful()) {
+        Log::error('KaTeX render error: ' . $process->getErrorOutput(), [
+            'exit_code' => $process->getExitCode(),
+            'node' => $node,
+            'script' => $script,
+        ]);
+        return '<span style="color:#b00">[Math error]</span>';
+    }
+
+    return (string) $process->getOutput();
+}
+
+
     protected static function svgToImg(string $svg, bool $display): string
     {
         $svg = trim($svg);
@@ -71,7 +111,7 @@ class MathRenderer
         $key = 'katex_svg_' . md5(($display ? 'D' : 'I') . $latex);
 
         return Cache::remember($key, now()->addDays(7), function () use ($latex, $display) {
-            $svg = self::runKatexSvg($latex, $display);
+            $svg = self::runKatex($latex, $display);
             return self::svgToImg($svg, $display);
         });
     }
