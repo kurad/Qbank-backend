@@ -11,63 +11,34 @@ class MathRenderer
     protected static function runKatexSvg(string $latex, bool $display = true): string
     {
         $script = base_path('node-scripts/render-katex.js');
-    $mode = $display ? 'display' : 'inline';
+    $mode   = $display ? 'display' : 'inline';
 
-    // Clean LaTeX coming from HTML content
-    $latex = html_entity_decode($latex, ENT_QUOTES | ENT_HTML5, 'UTF-8');
-    $latex = strip_tags($latex);
-    $latex = trim($latex);
+    $node = env('NODE_BIN') ?: '/usr/bin/node'; // fallback
 
-    if ($latex === '') {
-        return '';
-    }
-
-    $process = new \Symfony\Component\Process\Process(['node', $script, $mode]);
+    $process = new \Symfony\Component\Process\Process([$node, $script, $mode]);
+    $process->setWorkingDirectory(base_path()); // important on shared hosting
     $process->setInput($latex);
-    $process->setTimeout(8);
+    $process->setTimeout(10);
+
+    // Optional: explicitly set PATH so child process can find libs
+    $process->setEnv([
+        'PATH' => dirname($node) . ':' . getenv('PATH'),
+        'HOME' => getenv('HOME') ?: base_path(),
+    ]);
+
     $process->run();
 
-    $out = trim((string) $process->getOutput());
-    $err = trim((string) $process->getErrorOutput());
-
-    // If node failed at all (node missing, permission, katex missing, etc.)
     if (!$process->isSuccessful()) {
-        \Log::error('KaTeX process failed', [
+        \Illuminate\Support\Facades\Log::error('KaTeX render error: ' . $process->getErrorOutput(), [
             'exit_code' => $process->getExitCode(),
-            'stderr' => $err,
-            'latex' => mb_substr($latex, 0, 500),
+            'node' => $node,
         ]);
+
+        // return visible placeholder (so PDF still renders)
         return '<span style="color:#b00">[Math error]</span>';
     }
 
-    // Node ran but katex reported an error marker
-    if (str_starts_with($out, '__KATEX_ERROR__')) {
-        \Log::error('KaTeX render error marker', [
-            'marker' => $out,
-            'stderr' => $err,
-            'latex' => mb_substr($latex, 0, 500),
-        ]);
-        return '<span style="color:#b00">[Math error]</span>';
-    }
-
-    // Still no SVG => log it
-    if ($out === '' || !str_contains($out, '<svg')) {
-        \Log::error('KaTeX returned empty/non-svg', [
-            'stdout' => $out,
-            'stderr' => $err,
-            'latex' => mb_substr($latex, 0, 500),
-        ]);
-        return '<span style="color:#b00">[Math error]</span>';
-    }
-
-    // DOMPDF-safe: embed as <img>
-    $b64 = base64_encode($out);
-
-    if ($display) {
-        return '<div class="math-block"><img alt="math" src="data:image/svg+xml;base64,' . $b64 . '" style="height:22px"></div>';
-    }
-
-    return '<span class="math-inline"><img alt="math" src="data:image/svg+xml;base64,' . $b64 . '" style="height:14px; vertical-align:middle"></span>';
+    return $process->getOutput();
 
     }
 
