@@ -212,3 +212,8 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     // Finalize assessment
     Route::post('/assessments/{studentAssessment}/finalize', [StudentAssessmentController::class, 'finalize']);
 });
+
+Route::get('/debug-katex', function () {
+    return \App\Support\MathRenderer::render('x^2+1', true);
+});
+

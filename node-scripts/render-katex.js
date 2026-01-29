@@ -1,9 +1,22 @@
 // node-scripts/render-katex.js
-const katex = require("katex");
+const path = require("path");
 
-const mode = process.argv[2] || "display"; // display | inline
+// Load katex from your project node_modules explicitly (works under PHP-FPM too)
+let katex;
+try {
+  const katexPath = path.join(__dirname, "..", "node_modules", "katex");
+  katex = require(katexPath);
+} catch (e) {
+  // If this fails, PHP will see Math error, and you will see the real issue in stderr logs.
+  console.error("KaTeX require failed:", e && e.message ? e.message : e);
+  process.stdout.write(`<span style="color:#b00">[Math error]</span>`);
+  process.exit(0);
+}
+
+const mode = process.argv[2] || "display";
 const displayMode = mode === "display";
 
+// Read full stdin as LaTeX
 let input = "";
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => (input += chunk));
@@ -13,22 +26,14 @@ process.stdin.on("end", () => {
   try {
     const html = katex.renderToString(latex, {
       displayMode,
-      throwOnError: true,          // IMPORTANT: throw so we can log real failures
+      throwOnError: false,
       strict: "ignore",
       output: "svg",
     });
 
-    // Extract ONLY the <svg>...</svg>
-    const m = html.match(/<svg[\s\S]*?<\/svg>/i);
-    if (!m) {
-      process.stderr.write(`[KaTeX] No <svg> found. Raw output:\n${html}\n`);
-      process.stdout.write("__KATEX_ERROR__NO_SVG__");
-      return;
-    }
-
-    process.stdout.write(m[0]);
+    process.stdout.write(html);
   } catch (e) {
-    process.stderr.write(`[KaTeX] Render failed: ${e && e.message ? e.message : e}\n`);
-    process.stdout.write("__KATEX_ERROR__" + (e && e.message ? e.message : "UNKNOWN"));
+    console.error("KaTeX render failed:", e && e.message ? e.message : e);
+    process.stdout.write(`<span style="color:#b00">[Math error]</span>`);
   }
 });
