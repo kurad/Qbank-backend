@@ -12,6 +12,8 @@ use Illuminate\Support\Collection;
 
 class PaperGeneratorController extends Controller
 {
+
+
     /**
      * Generate a PDF version of the assessment (student paper).
      * ?layout=normal|standard (default: normal).
@@ -51,7 +53,7 @@ class PaperGeneratorController extends Controller
         $instructions = [];
         if (!empty($assessment->instructions)) {
             $instructions = preg_split('/\r\n|\r|\n/', trim($assessment->instructions));
-            $instructions = array_values(array_filter($instructions, fn ($line) => trim($line) !== ''));
+            $instructions = array_values(array_filter($instructions, fn($line) => trim($line) !== ''));
         }
         if (empty($instructions)) {
             $instructions = [
@@ -162,7 +164,7 @@ class PaperGeneratorController extends Controller
         $instructions = [];
         if (!empty($assessment->instructions)) {
             $instructions = preg_split('/\r\n|\r|\n/', trim($assessment->instructions));
-            $instructions = array_values(array_filter($instructions, fn ($line) => trim($line) !== ''));
+            $instructions = array_values(array_filter($instructions, fn($line) => trim($line) !== ''));
         }
         if (empty($instructions)) {
             $instructions = [
@@ -260,6 +262,15 @@ class PaperGeneratorController extends Controller
                 $q['options'] = [];
             }
 
+            // HARD FIX: short_answer must NEVER have options
+            if (($q['type'] ?? null) === 'short_answer') {
+                $q['options'] = [];
+            }
+
+
+            // Sub-questions (children)
+            $q['sub_questions'] = [];
+
             // Sub-questions
             $subQuestions = [];
             if (!empty($q['sub_raw'])) {
@@ -295,6 +306,9 @@ class PaperGeneratorController extends Controller
                 }
             }
 
+            if (($sub['type'] ?? null) === 'short_answer') {
+                $sub['options'] = [];
+            }
             $out[] = [
                 'clean_html'    => $q['clean_html'],
                 'image_base64'  => $q['image_base64'],
@@ -309,6 +323,8 @@ class PaperGeneratorController extends Controller
 
         return $out;
     }
+
+
 
     // =========================================================================
     // TRANSFORM MODEL → ARRAY (FIXED: PIVOT PREFERRED + OVERRIDE MCQ W/NO OPTIONS)
@@ -598,8 +614,8 @@ class PaperGeneratorController extends Controller
 
         // matching format
         if (is_array($options) && isset($options['left'], $options['right'])) {
-            $lefts  = array_filter((array) $options['left'], fn ($x) => trim((string) $x) !== '');
-            $rights = array_filter((array) $options['right'], fn ($x) => trim((string) $x) !== '');
+            $lefts  = array_filter((array) $options['left'], fn($x) => trim((string) $x) !== '');
+            $rights = array_filter((array) $options['right'], fn($x) => trim((string) $x) !== '');
             return count($lefts) > 0 || count($rights) > 0;
         }
 
