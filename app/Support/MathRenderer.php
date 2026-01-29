@@ -10,7 +10,7 @@ class MathRenderer
 {
     protected static function runKatexSvg_old(string $latex, bool $display = true): string
     {
-        $script = base_path('node-scripts/render-katex.js');
+        $script = base_path('node-scripts/render-katex.cjs');
         $mode   = $display ? 'display' : 'inline';
 
         $node = env('NODE_BIN') ?: '/usr/bin/node'; // fallback
@@ -43,22 +43,21 @@ class MathRenderer
 
     protected static function runKatex(string $latex, bool $display = true): string
 {
-    $script = base_path('node-scripts/render-katex.js');
-    $mode   = $display ? 'display' : 'inline';
-
-    $node = env('NODE_BIN');
+    $node = env('NODE_BIN') ?: config('services.node_bin');
 
     if (!$node || !is_file($node) || !is_executable($node)) {
-        Log::error('KaTeX render error: NODE_BIN not set or invalid', ['NODE_BIN' => $node]);
+        Log::error('KaTeX render error: NODE_BIN not set or invalid', [
+            'NODE_BIN' => $node,
+            'exists' => $node ? file_exists($node) : false,
+            'exec' => $node ? is_executable($node) : false,
+        ]);
         return '<span style="color:#b00">[Math error]</span>';
     }
 
-    if (!is_file($script)) {
-        Log::error('KaTeX render error: render-katex.js not found', ['script' => $script]);
-        return '<span style="color:#b00">[Math error]</span>';
-    }
+    $script = base_path('node-scripts/render-katex.cjs'); // IMPORTANT
+    $mode   = $display ? 'display' : 'inline';
 
-    $process = new Process([$node, $script, $mode], base_path()); // important: cwd = base_path
+    $process = new \Symfony\Component\Process\Process([$node, $script, $mode]);
     $process->setInput($latex);
     $process->setTimeout(10);
 
@@ -66,15 +65,14 @@ class MathRenderer
 
     if (!$process->isSuccessful()) {
         Log::error('KaTeX render error: ' . $process->getErrorOutput(), [
-            'out' => $process->getOutput(),
-            'code' => $process->getExitCode(),
+            'latex' => mb_substr($latex, 0, 200),
         ]);
         return '<span style="color:#b00">[Math error]</span>';
     }
 
-    $out = trim($process->getOutput());
-    return $out !== '' ? $out : '<span style="color:#b00">[Math error]</span>';
+    return (string) $process->getOutput();
 }
+
 
 
 
