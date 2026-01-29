@@ -11,75 +11,62 @@ class MathRenderer
     protected static function runKatexSvg_old(string $latex, bool $display = true): string
     {
         $script = base_path('node-scripts/render-katex.js');
-    $mode   = $display ? 'display' : 'inline';
+        $mode   = $display ? 'display' : 'inline';
 
-    $node = env('NODE_BIN') ?: '/usr/bin/node'; // fallback
+        $node = env('NODE_BIN') ?: '/usr/bin/node'; // fallback
 
-    $process = new \Symfony\Component\Process\Process([$node, $script, $mode]);
-    $process->setWorkingDirectory(base_path()); // important on shared hosting
-    $process->setInput($latex);
-    $process->setTimeout(10);
+        $process = new \Symfony\Component\Process\Process([$node, $script, $mode]);
+        $process->setWorkingDirectory(base_path()); // important on shared hosting
+        $process->setInput($latex);
+        $process->setTimeout(10);
 
-    // Optional: explicitly set PATH so child process can find libs
-    $process->setEnv([
-        'PATH' => dirname($node) . ':' . getenv('PATH'),
-        'HOME' => getenv('HOME') ?: base_path(),
-    ]);
-
-    $process->run();
-
-    if (!$process->isSuccessful()) {
-        \Illuminate\Support\Facades\Log::error('KaTeX render error: ' . $process->getErrorOutput(), [
-            'exit_code' => $process->getExitCode(),
-            'node' => $node,
+        // Optional: explicitly set PATH so child process can find libs
+        $process->setEnv([
+            'PATH' => dirname($node) . ':' . getenv('PATH'),
+            'HOME' => getenv('HOME') ?: base_path(),
         ]);
 
-        // return visible placeholder (so PDF still renders)
-        return '<span style="color:#b00">[Math error]</span>';
-    }
+        $process->run();
 
-    return $process->getOutput();
+        if (!$process->isSuccessful()) {
+            \Illuminate\Support\Facades\Log::error('KaTeX render error: ' . $process->getErrorOutput(), [
+                'exit_code' => $process->getExitCode(),
+                'node' => $node,
+            ]);
 
+            // return visible placeholder (so PDF still renders)
+            return '<span style="color:#b00">[Math error]</span>';
+        }
+
+        return $process->getOutput();
     }
 
     protected static function runKatex(string $latex, bool $display = true): string
-{
-    $script = base_path('node-scripts/render-katex.js');
-    $mode   = $display ? 'display' : 'inline';
+    {
+        $script = base_path('node-scripts/render-katex.js');
+        $mode   = $display ? 'display' : 'inline';
 
-    $node = env('NODE_BIN');
+        $node = config('services.node_bin') ?: env('NODE_BIN');
 
-    if (!$node || !is_file($node)) {
-        Log::error('KaTeX render error: NODE_BIN not set or invalid', [
-            'NODE_BIN' => $node,
-        ]);
-        return '<span style="color:#b00">[Math error]</span>';
+        if (!$node || !is_file($node) || !is_executable($node)) {
+            Log::error('KaTeX render error: NODE_BIN not set or invalid', ['NODE_BIN' => $node]);
+            return '<span style="color:#b00">[Math error]</span>';
+        }
+
+        $process = new \Symfony\Component\Process\Process([$node, $script, $mode]);
+        $process->setInput($latex);
+        $process->setTimeout(10);
+
+        $process->run();
+
+        if (!$process->isSuccessful()) {
+            Log::error('KaTeX render error: ' . $process->getErrorOutput());
+            return '<span style="color:#b00">[Math error]</span>';
+        }
+
+        return $process->getOutput();
     }
 
-    $process = new \Symfony\Component\Process\Process([$node, $script, $mode]);
-    $process->setWorkingDirectory(base_path());
-    $process->setInput($latex);
-    $process->setTimeout(10);
-
-    // Give the process a usable PATH + HOME even under PHP-FPM
-    $process->setEnv([
-        'PATH' => dirname($node) . ':' . ($_SERVER['PATH'] ?? getenv('PATH') ?: ''),
-        'HOME' => $_SERVER['HOME'] ?? getenv('HOME') ?: base_path(),
-    ]);
-
-    $process->run();
-
-    if (!$process->isSuccessful()) {
-        Log::error('KaTeX render error: ' . $process->getErrorOutput(), [
-            'exit_code' => $process->getExitCode(),
-            'node' => $node,
-            'script' => $script,
-        ]);
-        return '<span style="color:#b00">[Math error]</span>';
-    }
-
-    return (string) $process->getOutput();
-}
 
 
     protected static function svgToImg(string $svg, bool $display): string
