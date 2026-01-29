@@ -22,8 +22,20 @@ class MathRenderer
             Log::error('KaTeX render error: ' . $process->getErrorOutput());
             return '<span style="color:#b00">[Math error]</span>';
         }
+        $svg = trim($process->getOutput());
+        // If KaTeX returns nothing, fail softly
+        if ($svg === '') {
+            return '<span style="color:#b00">[Math error]</span>';
+        }
 
-        return (string) $process->getOutput();
+        // DOMPDF is safest with <img src="data:...base64">
+        $b64 = base64_encode($svg);
+
+        if ($display) {
+            return '<div class="math-block"><img alt="math" src="data:image/svg+xml;base64,' . $b64 . '" style="height:22px"></div>';
+        }
+
+        return '<span class="math-inline"><img alt="math" src="data:image/svg+xml;base64,' . $b64 . '" style="height:14px; vertical-align:middle"></span>';
     }
 
     protected static function svgToImg(string $svg, bool $display): string

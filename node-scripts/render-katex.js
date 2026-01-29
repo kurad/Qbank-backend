@@ -12,19 +12,23 @@ process.stdin.on("end", () => {
   const latex = (input || "").trim();
 
   try {
-    // IMPORTANT: output "svg" (DOMPDF-safe)
-    const svg = katex.renderToString(latex, {
+    const out = katex.renderToString(latex, {
       displayMode,
       throwOnError: false,
       output: "svg",
       strict: "ignore",
     });
 
-    process.stdout.write(svg);
+    // KaTeX output includes wrapper spans. Extract ONLY the <svg>...</svg>.
+    const m = out.match(/<svg[\s\S]*?<\/svg>/i);
+
+    if (!m) {
+      process.stdout.write(""); // no svg found
+      return;
+    }
+
+    process.stdout.write(m[0]); // raw SVG only
   } catch (e) {
-    // Return something harmless so PDF generation doesn't crash
-    process.stdout.write(
-      `<span style="color:#b00">[Math error]</span>`
-    );
+    process.stdout.write(""); // keep it harmless
   }
 });

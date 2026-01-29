@@ -520,7 +520,7 @@
 
     {{-- Footer --}}
     <div class="footer">
-        {{ $school['school_name'] ?? 'School Name' }} | {{ $title }} | {{ date('F j, Y') }}
+        {{ $school['school_name'] ?? 'School Name' }} | {{ $title }} | Printed:{{ date('F j, Y') }}
     </div>
 </body>
 </html>
