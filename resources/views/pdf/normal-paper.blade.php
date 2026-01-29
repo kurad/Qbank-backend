@@ -434,7 +434,7 @@
                             <div class="work-block" style="margin-left:15px;">
                                 <div class="work-label">Working space &amp; answer:</div>
                                 @php $lines = $calcLines($sub['marks'] ?? 1); @endphp
-                                @for($i = 0; $i < $lines; $i++)
+                                @for($i = 0; $i < 5; $i++)
                                     <div class="work-line"></div>
                                 @endfor
                             </div>
@@ -502,7 +502,7 @@
                         <div class="work-block">
                             <div class="work-label">Working space &amp; answer:</div>
                             @php $lines = $calcLines($q['marks'] ?? 1); @endphp
-                            @for($i = 0; $i < $lines; $i++)
+                            @for($i = 0; $i < 5; $i++)
                                 <div class="work-line"></div>
                             @endfor
                         </div>
