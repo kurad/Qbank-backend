@@ -39,4 +39,7 @@ return [
         'api_key' => env('GROQ_API_KEY'),
     ],
 
+    'node_bin' => env('NODE_BIN'),
+
+
 ];
