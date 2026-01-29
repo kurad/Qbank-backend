@@ -68,8 +68,8 @@
 
         /* ======== IMAGES ======== */
         .question-image {
-            max-width: 300px;
-            max-height: 180px;
+            max-width: 350px;
+            max-height: 200px;
             margin-top: 8px;
             page-break-inside: avoid;
         }
@@ -145,7 +145,7 @@
                 <tr>
                     <td class="assessment-meta-left">
                         Subject: {{ $subject ?? 'General' }}
-                        @if(!empty($grade_level)) — Grade: {{ $grade_level }} @endif
+                       
                     </td>
                     <td class="assessment-meta-right"></td>
                 </tr>
