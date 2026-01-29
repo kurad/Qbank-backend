@@ -21,3 +21,12 @@ Route::get('/', function () {
     Route::get('/auth/google', [AuthController::class, 'redirectToGoogle']);
     Route::get('/auth/google/callback', [AuthController::class, 'handleGoogleCallback']);
     
+
+Route::get('/debug-node', function () {
+    return response()->json([
+        'NODE_BIN_env' => env('NODE_BIN'),
+        'NODE_BIN_cfg' => config('services.node_bin'),
+        'exists' => is_file(config('services.node_bin') ?? ''),
+        'exec' => is_executable(config('services.node_bin') ?? ''),
+    ]);
+});

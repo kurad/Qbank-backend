@@ -213,13 +213,5 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     Route::post('/assessments/{studentAssessment}/finalize', [StudentAssessmentController::class, 'finalize']);
 });
 
-Route::get('/debug-node', function () {
-    return response()->json([
-        'NODE_BIN_env' => env('NODE_BIN'),
-        'NODE_BIN_cfg' => config('services.node_bin'),
-        'exists' => is_file(config('services.node_bin') ?? ''),
-        'exec' => is_executable(config('services.node_bin') ?? ''),
-    ]);
-});
 
 
