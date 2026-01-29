@@ -118,8 +118,8 @@
         .work-label { font-size: 11px; color: #555; margin-bottom: 4px; font-weight: normal; }
         .work-line {
             border-bottom: 1px solid #000;
-            height: 18px;
-            margin-bottom: 6px;
+            height: 28px;
+            margin-bottom: 8px;
             width: 100%;
         }
 
