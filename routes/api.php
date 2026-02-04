@@ -165,7 +165,7 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     Route::delete('/assessment-sections/{id}', [AssessmentSectionController::class, 'destroy']);
     Route::post('/assessment-sections/{id}/questions', [AssessmentSectionController::class, 'addSectionQuestions']);
     Route::put('/assessments/{id}/instructions', [AssessmentController::class, 'updateInstructions']);
-    Route::post('/assessment-sections/{sectionId}/questions/insert', [AssessmentController::class, 'insertQuestionsIntoSection']);
+    Route::post('/assessment-sections/{sectionId}/questions/insert', [AssessmentSectionController::class, 'insertQuestionsIntoSection']);
     Route::post('/assessment-sections/{section}/questions/reorder', [AssessmentSectionController::class, 'reorderSectionQuestions']);
 });
 Route::get('/topics/{id}/question-count', [QuestionController::class, 'getQuestionCount']);
