@@ -19,7 +19,7 @@ class AssessmentSection extends Model
 
     public function questions()
     {
-        return $this->belongsToMany(Question::class, 'assessment_section_questions')->withPivot('ordering')->orderBy('assessment_section_questions.ordering');
+        return $this->belongsToMany(Question::class, 'assessment_section_questions')->withPivot('ordering')->orderByPivot('ordering');
     }
 
     public function assessment()
