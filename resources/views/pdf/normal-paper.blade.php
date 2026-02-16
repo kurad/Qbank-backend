@@ -1,14 +1,12 @@
 <!DOCTYPE html>
 <html>
-
 <head>
     <meta charset="utf-8" />
     <title>{{ $title }} - {{ $school['school_name'] ?? 'School Name' }}</title>
 
+    {{-- Main CSS (NO Blade directives inside) --}}
     <style>
-        @page {
-            margin: 25.4mm;
-        }
+        @page { margin: 25.4mm; }
 
         body {
             font-family: DejaVu Sans, sans-serif;
@@ -40,33 +38,14 @@
             text-transform: uppercase;
         }
 
-        .assessment-meta {
-            width: 100%;
-            margin-bottom: 15px;
-            font-size: 11px;
-        }
-
-        .assessment-meta-table {
-            width: 100%;
-            border-collapse: collapse;
-        }
-
-        .assessment-meta-table td {
-            vertical-align: top;
-        }
-
-        .assessment-meta-left {
-            text-align: left;
-        }
-
-        .assessment-meta-right {
-            text-align: right;
-        }
+        .assessment-meta { width: 100%; margin-bottom: 15px; font-size: 11px; }
+        .assessment-meta-table { width: 100%; border-collapse: collapse; }
+        .assessment-meta-table td { vertical-align: top; }
+        .assessment-meta-left { text-align: left; }
+        .assessment-meta-right { text-align: right; }
 
         /* ======== QUESTIONS ======== */
-        .question {
-            margin-bottom: 20px;
-        }
+        .question { margin-bottom: 20px; }
 
         .question-text {
             margin-bottom: 10px;
@@ -81,10 +60,7 @@
             clear: both;
         }
 
-        .question-number {
-            font-weight: bold;
-            margin-right: 5px;
-        }
+        .question-number { font-weight: bold; margin-right: 5px; }
 
         .marks {
             float: right;
@@ -92,12 +68,8 @@
             white-space: nowrap;
         }
 
-        .options {
-            margin-left: 20px;
-            margin-bottom: 10px;
-        }
+        .options { margin-left: 20px; margin-bottom: 10px; }
 
-        /* Better PDF rendering for options */
         .option {
             margin-bottom: 5px;
             display: table;
@@ -112,12 +84,8 @@
             vertical-align: top;
         }
 
-        .option-text {
-            display: table-cell;
-            vertical-align: top;
-        }
+        .option-text { display: table-cell; vertical-align: top; }
 
-        /* Small answer line (used for student name/class) */
         .answer-space {
             border-bottom: 1px solid #000;
             min-width: 200px;
@@ -134,16 +102,12 @@
             page-break-inside: avoid;
         }
 
-        .option-image {
-            max-height: 50px;
-            page-break-inside: avoid;
-        }
+        .option-image { max-height: 50px; page-break-inside: avoid; }
 
         /* ======== FOOTER ======== */
         .footer {
             position: fixed;
-            left: 0;
-            right: 0;
+            left: 0; right: 0;
             bottom: 10px;
             font-size: 10px;
             color: #666;
@@ -159,58 +123,12 @@
             background-color: #f9f9f9;
         }
 
-        .student-info-table {
-            width: 100%;
-            border-collapse: collapse;
-        }
-
-        .student-info-table td {
-            padding: 3px 0;
-            vertical-align: middle;
-        }
-
-        .student-info-label {
-            font-weight: bold;
-            width: 140px;
-        }
-
-        /* ======================================================
-           ===============   KATEX STYLING   ====================
-           ====================================================== */
-        @php echo $katexCss ?? ''; @endphp
-
-        .katex {
-            font-size: 1.08em;
-        }
-
-        .katex-display {
-            margin: 6px 0 8px 0;
-            text-align: center;
-        }
-
-        .katex-display .katex {
-            display: inline-block;
-        }
-
-        .math-inline img {
-            height: 14px;
-            vertical-align: middle;
-        }
-
-        .math-block {
-            text-align: center;
-            margin: 6px 0;
-        }
-
-        .math-block img {
-            height: 22px;
-        }
+        .student-info-table { width: 100%; border-collapse: collapse; }
+        .student-info-table td { padding: 3px 0; vertical-align: middle; }
+        .student-info-label { font-weight: bold; width: 140px; }
 
         /* ======== WORKING SPACE (SHORT ANSWER) ======== */
-        .work-block {
-            margin-top: 8px;
-            page-break-inside: auto;
-        }
+        .work-block { margin-top: 8px; page-break-inside: auto; }
 
         .work-label {
             font-size: 11px;
@@ -219,7 +137,6 @@
             font-weight: normal;
         }
 
-        /* Blank space box instead of lines */
         .work-space-chunk {
             border: 1px solid #111;
             width: 100%;
@@ -248,7 +165,20 @@
             vertical-align: top;
             border-bottom: 1px solid #eee;
         }
+
+        /* KaTeX sizing helpers (actual KaTeX CSS is injected below) */
+        .katex { font-size: 1.08em; }
+        .katex-display { margin: 6px 0 8px 0; text-align: center; }
+        .katex-display .katex { display: inline-block; }
+        .math-inline img { height: 14px; vertical-align: middle; }
+        .math-block { text-align: center; margin: 6px 0; }
+        .math-block img { height: 22px; }
     </style>
+
+    {{-- KaTeX CSS injected safely (Blade won't parse @font-face inside the string) --}}
+    @if(!empty($katexCss))
+        <style>{!! $katexCss !!}</style>
+    @endif
 </head>
 
 <body>
@@ -295,8 +225,8 @@
         </ul>
     </div>
 
-    {{-- Helpers --}}
     @php
+        // Space helpers
         $calcSpaceMm = function ($marks) {
             $m = max(1, (int) ($marks ?? 1));
             $mm = $m * 18;
@@ -307,7 +237,6 @@
             $chunkMm = 24;
             $chunks = [];
             $remaining = (int) $totalMm;
-
             while ($remaining > 0) {
                 $h = min($chunkMm, $remaining);
                 $chunks[] = $h;
@@ -316,9 +245,7 @@
             return $chunks;
         };
 
-        // Normalizer for both shapes:
-        // - wrapper: $q['question'] is the real question object
-        // - direct:  $q itself is the question object
+        // Normalize wrapper vs direct question object
         $norm = function ($q) {
             $qq = $q['question'] ?? $q;
 
@@ -332,11 +259,20 @@
                 'isParent' => (($qq['question_type'] ?? null) === 'parent'),
             ];
         };
+
+        // Renderer for a single question object
+        $renderImage = function ($node) {
+            if (!empty($node['image_base64'])) {
+                return '<div><img class="question-image" src="'.$node['image_base64'].'" alt=""></div>';
+            }
+            if (!empty($node['question_image_url'])) {
+                return '<div><img class="question-image" src="'.$node['question_image_url'].'" alt=""></div>';
+            }
+            return '';
+        };
     @endphp
 
-    {{-- =========================
-         QUESTIONS
-         ========================= --}}
+    {{-- ========================= QUESTIONS ========================= --}}
 
     @if(!empty($sections))
 
@@ -352,31 +288,28 @@
             @endif
 
             @foreach(($section['questions'] ?? []) as $q)
-                @php($n = $norm($q))
-                @php($qq = $n['qq'])
-                @php($subs = $n['subs'])
+                @php
+                    $n = $norm($q);
+                    $qq = $n['qq'];
+                    $subs = $n['subs'];
+                @endphp
 
-                {{-- Do NOT render child questions as standalone --}}
+                {{-- Skip children if they also appear as top-level items --}}
                 @if($n['isChild'])
                     @continue
                 @endif
 
                 <div class="question">
 
-                    {{-- PARENT --}}
+                    {{-- Parent question --}}
                     @if($n['isParent'])
                         <div class="question-text">
                             <span class="question-number">{{ $loop->iteration }}.</span>
                             <span>{!! $qq['clean_html'] ?? $qq['question'] ?? '' !!}</span>
-
-                            @if(!empty($qq['image_base64']))
-                                <div><img class="question-image" src="{{ $qq['image_base64'] }}" alt=""></div>
-                            @elseif(!empty($qq['question_image_url']))
-                                <div><img class="question-image" src="{{ $qq['question_image_url'] }}" alt=""></div>
-                            @endif
+                            {!! $renderImage($qq) !!}
                         </div>
 
-                        {{-- SUB QUESTIONS --}}
+                        {{-- Sub-questions --}}
                         @foreach(($subs ?? []) as $sub)
                             <div class="question-text" style="margin-left:15px; margin-top:4px; font-weight: normal;">
                                 <span class="question-number">({{ chr(96 + $loop->iteration) }})</span>
@@ -386,11 +319,7 @@
                                     <span class="marks">[{{ $sub['marks'] }} mark{{ ((int)($sub['marks'] ?? 0)) > 1 ? 's' : '' }}]</span>
                                 @endif
 
-                                @if(!empty($sub['image_base64']))
-                                    <div><img class="question-image" src="{{ $sub['image_base64'] }}" alt=""></div>
-                                @elseif(!empty($sub['question_image_url']))
-                                    <div><img class="question-image" src="{{ $sub['question_image_url'] }}" alt=""></div>
-                                @endif
+                                {!! $renderImage($sub) !!}
                             </div>
 
                             {{-- Sub options / space --}}
@@ -401,10 +330,7 @@
                                         <col style="width:60%">
                                     </colgroup>
                                     <thead>
-                                        <tr>
-                                            <th>Left Column</th>
-                                            <th>Right Column</th>
-                                        </tr>
+                                        <tr><th>Left Column</th><th>Right Column</th></tr>
                                     </thead>
                                     <tbody>
                                         @foreach($sub['options'] as $i => $pair)
@@ -451,7 +377,7 @@
                             @endif
                         @endforeach
 
-                    {{-- STANDALONE --}}
+                    {{-- Standalone question --}}
                     @else
                         <div class="question-text">
                             <span class="question-number">{{ $loop->iteration }}.</span>
@@ -461,11 +387,7 @@
                                 <span class="marks">[{{ $qq['marks'] }} mark{{ ((int)($qq['marks'] ?? 0)) > 1 ? 's' : '' }}]</span>
                             @endif
 
-                            @if(!empty($qq['image_base64']))
-                                <div><img class="question-image" src="{{ $qq['image_base64'] }}" alt=""></div>
-                            @elseif(!empty($qq['question_image_url']))
-                                <div><img class="question-image" src="{{ $qq['question_image_url'] }}" alt=""></div>
-                            @endif
+                            {!! $renderImage($qq) !!}
                         </div>
 
                         @if(($qq['question_type'] ?? null) === 'matching' && !empty($qq['options']))
@@ -475,10 +397,7 @@
                                     <col style="width:60%">
                                 </colgroup>
                                 <thead>
-                                    <tr>
-                                        <th>Left Column</th>
-                                        <th>Right Column</th>
-                                    </tr>
+                                    <tr><th>Left Column</th><th>Right Column</th></tr>
                                 </thead>
                                 <tbody>
                                     @foreach($qq['options'] as $i => $pair)
@@ -532,11 +451,13 @@
         @endforeach
 
     @else
-        {{-- Flat (non-section) assessments --}}
+        {{-- Flat (non-section) --}}
         @foreach(($questions ?? []) as $q)
-            @php($n = $norm($q))
-            @php($qq = $n['qq'])
-            @php($subs = $n['subs'])
+            @php
+                $n = $norm($q);
+                $qq = $n['qq'];
+                $subs = $n['subs'];
+            @endphp
 
             @if($n['isChild'])
                 @continue
@@ -553,10 +474,6 @@
                         <div class="question-text" style="margin-left:15px; margin-top:4px; font-weight: normal;">
                             <span class="question-number">({{ chr(96 + $loop->iteration) }})</span>
                             <span>{!! $sub['clean_html'] ?? $sub['question'] ?? '' !!}</span>
-
-                            @if(isset($sub['marks']))
-                                <span class="marks">[{{ $sub['marks'] }} mark{{ ((int)($sub['marks'] ?? 0)) > 1 ? 's' : '' }}]</span>
-                            @endif
                         </div>
                     @endforeach
                 @else
@@ -574,5 +491,4 @@
         {{ $school['school_name'] ?? 'School Name' }} | {{ $title }} | Printed: {{ date('F j, Y') }}
     </div>
 </body>
-
 </html>
