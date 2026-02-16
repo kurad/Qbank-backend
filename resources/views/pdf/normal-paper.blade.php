@@ -264,9 +264,7 @@
         <div class="assessment-meta">
             <table class="assessment-meta-table">
                 <tr>
-                    <td class="assessment-meta-left">
-                        Subject: {{ $subject ?? 'General' }}
-                    </td>
+                    <td class="assessment-meta-left">Subject: {{ $subject ?? 'General' }}</td>
                     <td class="assessment-meta-right"></td>
                 </tr>
             </table>
@@ -278,15 +276,11 @@
         <table class="student-info-table">
             <tr>
                 <td class="student-info-label">Student Name:</td>
-                <td>
-                    <div class="answer-space" style="width:100%"></div>
-                </td>
+                <td><div class="answer-space" style="width:100%"></div></td>
             </tr>
             <tr>
                 <td class="student-info-label">Class/Grade:</td>
-                <td>
-                    <div class="answer-space" style="width:240px"></div>
-                </td>
+                <td><div class="answer-space" style="width:240px"></div></td>
             </tr>
         </table>
     </div>
@@ -301,24 +295,16 @@
         </ul>
     </div>
 
-    {{-- =========================
-         Helper: working space height (mm)
-         based on marks
-         ========================= --}}
+    {{-- Helpers --}}
     @php
-        /**
-         * Decide blank space height from marks (Dompdf + A4):
-         * 1 mark -> 20mm, each mark adds ~18mm, capped to 120mm
-         */
         $calcSpaceMm = function ($marks) {
             $m = max(1, (int) ($marks ?? 1));
             $mm = $m * 18;
             return min(120, max(20, $mm));
         };
 
-        // Break total space into chunks to prevent wasted gaps
         $spaceChunks = function ($totalMm) {
-            $chunkMm = 24; // ~3-4 writing lines
+            $chunkMm = 24;
             $chunks = [];
             $remaining = (int) $totalMm;
 
@@ -330,20 +316,20 @@
             return $chunks;
         };
 
-        /**
-         * Normalize question node:
-         * API often returns assessment_question rows like:
-         *  - $q['question'] (actual question object)
-         *  - sub questions at $q['question']['sub_questions']
-         */
+        // Normalizer for both shapes:
+        // - wrapper: $q['question'] is the real question object
+        // - direct:  $q itself is the question object
         $norm = function ($q) {
-            $qq = $q['question'] ?? $q; // support both shapes
+            $qq = $q['question'] ?? $q;
+
+            $subs = $qq['sub_questions'] ?? [];
+            $parentId = $qq['parent_question_id'] ?? null;
+
             return [
-                'raw' => $q,
                 'qq' => $qq,
-                'subs' => $qq['sub_questions'] ?? [],
-                'isChild' => !empty($qq['parent_question_id'] ?? null),
-                'isParentWithSubs' => (($qq['question_type'] ?? null) === 'parent') && !empty($qq['sub_questions'] ?? []),
+                'subs' => $subs,
+                'isChild' => !is_null($parentId),
+                'isParent' => (($qq['question_type'] ?? null) === 'parent'),
             ];
         };
     @endphp
@@ -351,6 +337,7 @@
     {{-- =========================
          QUESTIONS
          ========================= --}}
+
     @if(!empty($sections))
 
         @foreach($sections as $section)
@@ -369,14 +356,15 @@
                 @php($qq = $n['qq'])
                 @php($subs = $n['subs'])
 
-                {{-- IMPORTANT: prevent sub-questions from rendering as standalone --}}
+                {{-- Do NOT render child questions as standalone --}}
                 @if($n['isChild'])
                     @continue
                 @endif
 
                 <div class="question">
-                    {{-- Parent with sub-questions --}}
-                    @if($n['isParentWithSubs'])
+
+                    {{-- PARENT --}}
+                    @if($n['isParent'])
                         <div class="question-text">
                             <span class="question-number">{{ $loop->iteration }}.</span>
                             <span>{!! $qq['clean_html'] ?? $qq['question'] ?? '' !!}</span>
@@ -388,7 +376,8 @@
                             @endif
                         </div>
 
-                        @foreach($subs as $sub)
+                        {{-- SUB QUESTIONS --}}
+                        @foreach(($subs ?? []) as $sub)
                             <div class="question-text" style="margin-left:15px; margin-top:4px; font-weight: normal;">
                                 <span class="question-number">({{ chr(96 + $loop->iteration) }})</span>
                                 <span>{!! $sub['clean_html'] ?? $sub['question'] ?? '' !!}</span>
@@ -404,7 +393,7 @@
                                 @endif
                             </div>
 
-                            {{-- Sub options --}}
+                            {{-- Sub options / space --}}
                             @if(($sub['question_type'] ?? null) === 'matching' && !empty($sub['options']))
                                 <table class="match-table" style="margin-left:15px;">
                                     <colgroup>
@@ -462,7 +451,7 @@
                             @endif
                         @endforeach
 
-                    {{-- Standalone question --}}
+                    {{-- STANDALONE --}}
                     @else
                         <div class="question-text">
                             <span class="question-number">{{ $loop->iteration }}.</span>
@@ -535,6 +524,7 @@
                             </div>
                         @endif
                     @endif
+
                 </div>
             @endforeach
 
@@ -553,19 +543,13 @@
             @endif
 
             <div class="question">
-                @if($n['isParentWithSubs'])
+                @if($n['isParent'])
                     <div class="question-text">
                         <span class="question-number">{{ $loop->iteration }}.</span>
                         <span>{!! $qq['clean_html'] ?? $qq['question'] ?? '' !!}</span>
-
-                        @if(!empty($qq['image_base64']))
-                            <div><img class="question-image" src="{{ $qq['image_base64'] }}" alt=""></div>
-                        @elseif(!empty($qq['question_image_url']))
-                            <div><img class="question-image" src="{{ $qq['question_image_url'] }}" alt=""></div>
-                        @endif
                     </div>
 
-                    @foreach($subs as $sub)
+                    @foreach(($subs ?? []) as $sub)
                         <div class="question-text" style="margin-left:15px; margin-top:4px; font-weight: normal;">
                             <span class="question-number">({{ chr(96 + $loop->iteration) }})</span>
                             <span>{!! $sub['clean_html'] ?? $sub['question'] ?? '' !!}</span>
@@ -574,43 +558,12 @@
                                 <span class="marks">[{{ $sub['marks'] }} mark{{ ((int)($sub['marks'] ?? 0)) > 1 ? 's' : '' }}]</span>
                             @endif
                         </div>
-
-                        @if(($sub['question_type'] ?? null) === 'short_answer')
-                            @php
-                                $totalMm = $calcSpaceMm($sub['marks'] ?? 1);
-                                $chunks = $spaceChunks($totalMm);
-                            @endphp
-                            <div class="work-block" style="margin-left:15px;">
-                                <div class="work-label">Working space &amp; answer:</div>
-                                @foreach($chunks as $mm)
-                                    <div class="work-space-chunk" style="height: {{ $mm }}mm;"></div>
-                                @endforeach
-                            </div>
-                        @endif
                     @endforeach
-
                 @else
                     <div class="question-text">
                         <span class="question-number">{{ $loop->iteration }}.</span>
                         <span>{!! $qq['clean_html'] ?? $qq['question'] ?? '' !!}</span>
-
-                        @if(isset($qq['marks']))
-                            <span class="marks">[{{ $qq['marks'] }} mark{{ ((int)($qq['marks'] ?? 0)) > 1 ? 's' : '' }}]</span>
-                        @endif
                     </div>
-
-                    @if(($qq['question_type'] ?? null) === 'short_answer')
-                        @php
-                            $totalMm = $calcSpaceMm($qq['marks'] ?? 1);
-                            $chunks = $spaceChunks($totalMm);
-                        @endphp
-                        <div class="work-block">
-                            <div class="work-label">Working space &amp; answer:</div>
-                            @foreach($chunks as $mm)
-                                <div class="work-space-chunk" style="height: {{ $mm }}mm;"></div>
-                            @endforeach
-                        </div>
-                    @endif
                 @endif
             </div>
         @endforeach
