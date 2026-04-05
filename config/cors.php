@@ -25,7 +25,7 @@ return [
         'http://localhost:8081', 
         'http://localhost:8082', 
         'http://localhost:8083',
-        'https://qbank.gashoragirls.com/api/public/api',
+        'https://qbank.gashoragirls.com',
         'https://*.gashoragirls.com',
         'https://gashoragirls.com',
         ],
