@@ -133,8 +133,8 @@ class AssessmentSectionController extends Controller
                     })
                     ->count();
 
-                if ($usageCount >= 3) {
-                    $warnings[] = "Question ID {$qid} has been used in 3 or more assessments created by you.";
+                if ($usageCount >= 10) {
+                    $warnings[] = "Question ID {$qid} has been used in 10 or more assessments created by you.";
                 }
 
                 AssessmentSectionQuestion::updateOrCreate(

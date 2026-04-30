@@ -44,12 +44,12 @@ class AssessmentBuilderService
         // ---- STEP 1: Validate usage BEFORE creating an assessment ----
         $usage = $this->countQuestionUsesByCreator($creatorId, $expandedQuestionIds);
 
-        // Hard-stop if any question has been used 3 or more times
-        $blocked = array_keys(array_filter($usage, fn($count) => $count >= 3));
+        // Hard-stop if any question has been used 10 or more times
+        $blocked = array_keys(array_filter($usage, fn($count) => $count >= 10));
 
         if (!empty($blocked)) {
             throw ValidationException::withMessages([
-                'message' => 'Some questions have already been used in 3 or more of your assessments.',
+                'message' => 'Some questions have already been used in 10 or more of your assessments.',
                 'question_ids' => $blocked,
             ]);
         }

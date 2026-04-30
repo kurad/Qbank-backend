@@ -560,8 +560,8 @@ class AssessmentController extends Controller
                 ->whereHas('assessment', function ($q) use ($userId) {
                     $q->where('creator_id', $userId);
                 })->count();
-            if ($usageCount >= 3) {
-                $warnings[] = "Question ID {$qid} has been used in 3 or more assessments created by you.";
+            if ($usageCount >= 10) {
+                $warnings[] = "Question ID {$qid} has been used in 10 or more assessments created by you.";
             }
             // -------------------------------------------------------
             if (isset($existing[$qid])) {
