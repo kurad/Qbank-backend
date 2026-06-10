@@ -521,6 +521,8 @@ class AssessmentController extends Controller
 
         $assessment = Assessment::findOrFail($id);
 
+        
+
         // Only the creator can modify instructions
         if ($assessment->creator_id !== Auth::id()) {
             return response()->json([

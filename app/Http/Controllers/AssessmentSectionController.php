@@ -194,7 +194,9 @@ class AssessmentSectionController extends Controller
 
         $section = AssessmentSection::findOrFail($sectionId);
 
+        
         // Optional security: ensure owner
+
         $assessment = Assessment::findOrFail($section->assessment_id);
         if ($assessment->creator_id !== Auth::id()) {
             return response()->json(['message' => 'Unauthorized'], 403);
