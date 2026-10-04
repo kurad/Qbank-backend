@@ -11,13 +11,13 @@ return [
     'allowed_methods' => ['*'],
 
     'allowed_origins' => [
-        'https://revisionhub.rw',
-        'https://www.revisionhub.rw',
+        'https://test.revisionhub.rw',
+        'https://www.test.revisionhub.rw',
         'http://localhost:8080',
     ],
 
     'allowed_origins_patterns' => [
-        '#^https://([a-z0-9-]+\.)?revisionhub\.rw$#',
+        '#^https://([a-z0-9-]+\.)?testrevisionhub\.rw$#',
     ],
 
     'allowed_headers' => ['*'],
