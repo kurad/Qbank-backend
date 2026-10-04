@@ -1,79 +1,152 @@
 <?php
 
 namespace App\Models;
-use Illuminate\Auth\MustVerifyEmail as MustVerifyEmailTrait;
+
 use App\Models\School;
 use App\Models\StudentAnswer;
-use Laravel\Sanctum\HasApiTokens;
+use App\Models\TutorResponseEvaluation;
 use App\Notifications\VerifyEmailForSpa;
-use Illuminate\Notifications\Notifiable;
+use Illuminate\Auth\MustVerifyEmail as MustVerifyEmailTrait;
 use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
+use Illuminate\Notifications\Notifiable;
+use Laravel\Sanctum\HasApiTokens;
 
 class User extends Authenticatable implements MustVerifyEmail
 {
-    use HasApiTokens, HasFactory, Notifiable, MustVerifyEmailTrait;
+    use HasApiTokens;
+    use HasFactory;
+    use Notifiable;
+    use MustVerifyEmailTrait;
 
-    /**
-     * The attributes that are mass assignable.
-     *
-     * @var array<int, string>
-     */
     protected $fillable = [
         'name',
         'email',
         'password',
-        'role', // e.g., 'teacher', 'student',
+        'role',
         'school_id',
-        'status'
-        
+        'status',
     ];
-    // User belongs to a school
-    public function school()
-    {
-        return $this->belongsTo(School::class);
-    }
 
-    /**
-     * The attributes that should be hidden for serialization.
-     *
-     * @var array<int, string>
-     */
     protected $hidden = [
         'password',
         'remember_token',
     ];
 
-    /**
-     * The attributes that should be cast.
-     *
-     * @var array<string, string>
-     */
     protected $casts = [
         'email_verified_at' => 'datetime',
         'password' => 'hashed',
     ];
 
-    public function sendEmailVerificationNotification()
+    /*
+    |--------------------------------------------------------------------------
+    | Authentication
+    |--------------------------------------------------------------------------
+    */
+
+    public function sendEmailVerificationNotification(): void
     {
         $this->notify(new VerifyEmailForSpa);
     }
 
-    public function createdAssessment()
+    /*
+    |--------------------------------------------------------------------------
+    | School
+    |--------------------------------------------------------------------------
+    */
+
+    public function school(): BelongsTo
+    {
+        return $this->belongsTo(School::class);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Teacher relationships
+    |--------------------------------------------------------------------------
+    */
+
+    /**
+     * Subjects/grade combinations taught by this teacher.
+     */
+    public function teachingAreas(): HasMany
+    {
+        return $this->hasMany(GradeSubject::class, 'teacher_id');
+    }
+
+    /**
+     * Groups created/managed by this teacher.
+     */
+    public function createdGroups(): HasMany
+    {
+        return $this->hasMany(Group::class, 'created_by');
+    }
+
+    /**
+     * Subjects created by this user.
+     */
+    public function subjectsCreated(): HasMany
+    {
+        return $this->hasMany(Subject::class, 'created_by');
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Student group membership
+    |--------------------------------------------------------------------------
+    */
+
+    /**
+     * Groups in which this user is enrolled as a student.
+     *
+     * IMPORTANT:
+     * group_students contains student membership only.
+     * Do not query a "role" column from this pivot unless
+     * the database actually has such a column.
+     */
+    public function groups(): BelongsToMany
+    {
+        return $this->belongsToMany(
+            Group::class,
+            'group_students',
+            'student_id',
+            'group_id'
+        );
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Assessments
+    |--------------------------------------------------------------------------
+    */
+
+    public function createdAssessment(): HasMany
     {
         return $this->hasMany(Assessment::class, 'creator_id');
     }
-    public function studentAssessments()
+
+    public function studentAssessments(): HasMany
     {
         return $this->hasMany(StudentAssessment::class, 'student_id');
     }
-    public function studentAnswers()
+
+    public function studentAnswers(): HasMany
     {
         return $this->hasMany(StudentAnswer::class, 'student_id');
     }
-    public function groups()
+    public function tutorSessions()
     {
-        return $this->belongsToMany(Group::class,'group_students', 'student_id', 'group_id');
+        return $this->hasMany(TutorSession::class, 'student_id');
+    }
+    public function tutorResponseEvaluations()
+    {
+        return $this->hasMany(
+            TutorResponseEvaluation::class,
+            'student_id'
+        );
     }
 }

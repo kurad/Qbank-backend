@@ -2,38 +2,78 @@
 
 namespace App\Models;
 
-use App\Models\Quiz;
-use App\Models\Subject;
-use App\Models\Question;
-use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Topic extends Model
 {
     use HasFactory;
 
-    protected $fillable = ['topic_name', 'grade_subject_id'];
+    protected $fillable = [
+        'grade_subject_id',
+        'unit_id',
+        'curriculum_analysis_id',
+        'topic_name',
+        'order',
+        'status',
+        'created_by',
+    ];
 
-    public function gradeSubject()
+    public function gradeSubject(): BelongsTo
     {
-        return $this->belongsTo(GradeSubject::class, 'grade_subject_id');
+        return $this->belongsTo(
+            GradeSubject::class,
+            'grade_subject_id'
+        );
     }
+
+    public function unit(): BelongsTo
+    {
+        return $this->belongsTo(
+            Unit::class,
+            'unit_id'
+        );
+    }
+
+    public function curriculumAnalysis(): BelongsTo
+    {
+        return $this->belongsTo(
+            CurriculumAnalysis::class,
+            'curriculum_analysis_id'
+        );
+    }
+
+    public function learningObjectives(): HasMany
+    {
+        return $this->hasMany(
+            LearningObjective::class
+        )->orderBy('order');
+    }
+
+    public function creator(): BelongsTo
+    {
+        return $this->belongsTo(
+            User::class,
+            'created_by'
+        );
+    }
+
     public function questions()
     {
-        return $this->hasMany(Question::class);
+        return $this->hasMany(
+            Question::class
+        );
     }
-    public function gradeLevels()
-    {
-        return $this->belongsToMany(GradeLevel::class, 'grade_subjects', 'subject_id','grade_level_id'); // Assuming a many-to-many relationship
-    }
-    public function subject()
-    {
-        return $this->belongsTo(Subject::class);
-    }
+
     public function assessments()
     {
-        return $this->belongsToMany(Assessment::class, 'assessment_topic', 'topic_id', 'assessment_id')->withTimestamps();
+        return $this->belongsToMany(
+            Assessment::class,
+            'assessment_topic'
+        );
     }
 
+    
 }
-

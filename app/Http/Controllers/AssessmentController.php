@@ -2,7 +2,7 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Group;
+// use App\Models\Group;
 use App\Models\Topic;
 use App\Models\Question;
 use App\Models\Assessment;
@@ -18,47 +18,75 @@ use App\Models\StudentQuestionHistory;
 
 class AssessmentController extends Controller
 {
-    // List all assessments for the authenticated user      // List all assessments created by the authenticated user
     public function listCreatedAssessments()
     {
         $user = Auth::user();
+
         $assessments = Assessment::where('creator_id', $user->id)
-            ->with(['questions.question', 'topics.gradeSubject.subject', 'topics.gradeSubject.gradeLevel'])
+            ->with([
+                'questions.question',
+                'topics.gradeSubject.subject',
+                'topics.gradeSubject.gradeLevel'
+            ])
             ->latest()
             ->get();
 
-        // For each assessment, get unique topics from its questions
         $createdAssessments = $assessments->map(function ($assessment) {
-            $topicIds = $assessment->questions->pluck('question.topic_id')->unique()->filter();
+
+            $assessment->question_count = $assessment->questions
+                ->filter(fn($assessmentQuestion) => $assessmentQuestion->question)
+                ->count();
+
+            $assessment->total_marks = $assessment->questions
+                ->sum(function ($assessmentQuestion) {
+                    return (float) ($assessmentQuestion->question?->marks ?? 0);
+                });
+            $assessment->total_score = $assessment->total_marks;
+
+            $topicIds = $assessment->questions
+                ->pluck('question.topic_id')
+                ->unique()
+                ->filter();
+
             $topics = Topic::whereIn('id', $topicIds)->get();
+
             $assessment->topics = $topics;
-            //Compute subject/grade-level pairs from topics
 
-            $subjectGradeLevels = $assessment->topics->map(function ($topic) {
-                $gradeSubject = $topic->gradeSubject;
-                $subjectName = $gradeSubject?->subject?->name;
-                $gradeLevelName = $gradeSubject?->gradeLevel?->grade_name;
+            $subjectGradeLevels = $assessment->topics
+                ->map(function ($topic) {
 
-                if ($subjectName && $gradeLevelName) {
-                    return [
-                        'subject' => $subjectName,
-                        'grade_level' => $gradeLevelName,
-                    ];
-                }
-                return null;
-            })->filter()->unique()->values();
+                    $gradeSubject = $topic->gradeSubject;
 
-            // Optional: primary subject/grade for quick display
-            $assessment->primary_subject = $subjectGradeLevels->first()['subject'] ?? null;
-            $assessment->primary_grade_level = $subjectGradeLevels->first()['grade_level'] ?? null;
+                    $subjectName = $gradeSubject?->subject?->name;
+                    $gradeLevelName = $gradeSubject?->gradeLevel?->grade_name;
 
-            // All pairs if you need them on the frontend
+                    if ($subjectName && $gradeLevelName) {
+                        return [
+                            'subject' => $subjectName,
+                            'grade_level' => $gradeLevelName,
+                        ];
+                    }
+
+                    return null;
+                })
+                ->filter()
+                ->unique()
+                ->values();
+
+            $assessment->primary_subject =
+                $subjectGradeLevels->first()['subject'] ?? null;
+
+            $assessment->primary_grade_level =
+                $subjectGradeLevels->first()['grade_level'] ?? null;
+
             $assessment->subject_grade_levels = $subjectGradeLevels;
-
 
             return $assessment;
         });
-        return response()->json(['created_assessments' => $createdAssessments]);
+
+        return response()->json([
+            'created_assessments' => $createdAssessments
+        ]);
     }
     // List all practice assessments for the authenticated student
     public function listPracticeAssessments(Request $request)
@@ -521,7 +549,7 @@ class AssessmentController extends Controller
 
         $assessment = Assessment::findOrFail($id);
 
-        
+
 
         // Only the creator can modify instructions
         if ($assessment->creator_id !== Auth::id()) {
@@ -913,39 +941,39 @@ class AssessmentController extends Controller
     }
 
     public function practice(Request $request)
-{
-    $studentId = $request->user()->id;
+    {
+        $studentId = $request->user()->id;
 
-    $practice = Assessment::query()
-        ->with([
-            'creator:id,name',
-            'gradeSubject.subject:id,name',
-            'gradeSubject.topics:id,grade_subject_id,topic_name',
-            'studentAssessments' => function ($q) use ($studentId) {
-                $q->where('student_id', $studentId)->latest('id')->limit(1);
-            }
-        ])
-        ->where('type', 'practice')
-        ->where('creator_id', $studentId)
-        ->orderByDesc('created_at')
-        ->paginate(5);
+        $practice = Assessment::query()
+            ->with([
+                'creator:id,name',
+                'gradeSubject.subject:id,name',
+                'gradeSubject.topics:id,grade_subject_id,topic_name',
+                'studentAssessments' => function ($q) use ($studentId) {
+                    $q->where('student_id', $studentId)->latest('id')->limit(1);
+                }
+            ])
+            ->where('type', 'practice')
+            ->where('creator_id', $studentId)
+            ->orderByDesc('created_at')
+            ->paginate(5);
 
-    $practice->getCollection()->transform(function ($assessment) {
-        // attach student assessment
-        $assessment->student_assessment = $assessment->studentAssessments->first();
-        unset($assessment->studentAssessments);
+        $practice->getCollection()->transform(function ($assessment) {
+            // attach student assessment
+            $assessment->student_assessment = $assessment->studentAssessments->first();
+            unset($assessment->studentAssessments);
 
-        // attach subject + topic for frontend convenience
-        $assessment->subject = $assessment->gradeSubject?->subject;                 // {id,name}
-        $assessment->topic   = $assessment->gradeSubject?->topics?->first();        // {id,topic_name,...}
+            // attach subject + topic for frontend convenience
+            $assessment->subject = $assessment->gradeSubject?->subject;                 // {id,name}
+            $assessment->topic   = $assessment->gradeSubject?->topics?->first();        // {id,topic_name,...}
 
-        unset($assessment->gradeSubject);
+            unset($assessment->gradeSubject);
 
-        return $assessment;
-    });
+            return $assessment;
+        });
 
-    return response()->json($practice);
-}
+        return response()->json($practice);
+    }
 
 
 

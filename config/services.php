@@ -6,12 +6,6 @@ return [
     |--------------------------------------------------------------------------
     | Third Party Services
     |--------------------------------------------------------------------------
-    |
-    | This file is for storing the credentials for third party services such
-    | as Mailgun, Postmark, AWS and more. This file provides the de facto
-    | location for this type of information, allowing packages to have
-    | a conventional file to locate the various service credentials.
-    |
     */
 
     'mailgun' => [
@@ -30,16 +24,38 @@ return [
         'secret' => env('AWS_SECRET_ACCESS_KEY'),
         'region' => env('AWS_DEFAULT_REGION', 'us-east-1'),
     ],
+
     'google' => [
         'client_id' => env('GOOGLE_CLIENT_ID'),
         'client_secret' => env('GOOGLE_CLIENT_SECRET'),
         'redirect' => env('GOOGLE_REDIRECT_URI'),
     ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | AI Services
+    |--------------------------------------------------------------------------
+    */
+
+    'ai' => [
+        'provider' => env('AI_PROVIDER', 'gemini'),
+        'model' => env('AI_MODEL', 'gemini-1.5-flash'),
+        'fallback_models' => array_filter(
+            explode(',', env('AI_FALLBACK_MODELS', ''))
+        ),
+    ],
+
+    'gemini' => [
+        'key' => env('GEMINI_API_KEY'),
+        'url' => env('GEMINI_URL', 'https://generativelanguage.googleapis.com/v1beta'),
+        'model' => env('GEMINI_MODEL', 'gemini-1.5-flash'),
+    ],
+
     'groq' => [
-        'api_key' => env('GROQ_API_KEY'),
+        'key' => env('GROQ_API_KEY'),
+        'model' => env('GROQ_MODEL', 'openai/gpt-oss-120b'),
     ],
 
     'node_bin' => env('NODE_BIN'),
-
 
 ];

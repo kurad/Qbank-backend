@@ -21,6 +21,13 @@ class Assessment extends Model
         'is_timed',
         'time_limit',
         'instructions',
+        'question_blueprint',
+        'status',
+    ];
+
+    protected $casts = [
+        'is_timed' => 'boolean',
+        'question_blueprint' => 'array',
     ];
 
     public function creator()
@@ -42,10 +49,6 @@ class Assessment extends Model
     {
         return $this->hasMany(StudentAssessment::class);
     }
-    /**
-     * Backwards-compatible accessor that returns the first topic attached to the assessment.
-     * Allows existing code to use $assessment->topic->name while the canonical relation is many-to-many.
-     */
     public function getTopicAttribute()
     {
         return $this->topics()->first();
@@ -54,6 +57,31 @@ class Assessment extends Model
     public function topics()
     {
         return $this->belongsToMany(Topic::class, 'assessment_topic', 'assessment_id', 'topic_id')->withTimestamps();
+    }
+
+    public function units()
+    {
+        return $this->belongsToMany(Unit::class, 'assessment_unit', 'assessment_id', 'unit_id')->withTimestamps();
+    }
+
+    public function learningObjectives()
+    {
+        return $this->belongsToMany(
+            LearningObjective::class,
+            'assessment_learning_objective',
+            'assessment_id',
+            'learning_objective_id'
+        )->withTimestamps();
+    }
+
+    public function scopeDraft($query)
+    {
+        return $query->where('status', 'draft');
+    }
+
+    public function scopePublished($query)
+    {
+        return $query->where('status', 'published');
     }
     public function questions()
     {
@@ -85,10 +113,9 @@ class Assessment extends Model
     {
         return $this->belongsToMany(User::class, 'group_students', 'group_id', 'student_id');
     }
-    
+
     public function gradeSubject()
     {
         return $this->belongsTo(GradeSubject::class, 'grade_subject_id');
     }
-    
 }

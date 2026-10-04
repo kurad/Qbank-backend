@@ -31,4 +31,19 @@ class School extends Model
             }
         });
     }
+
+    public function teachers()
+    {
+        return $this->hasMany(User::class);
+    }
+
+    public function subjects()
+    {
+        return $this->hasMany(Subject::class);
+    }
+
+    public function teachingAreas()
+    {
+        return $this->hasMany(GradeSubject::class);
+    }
 }

@@ -56,32 +56,82 @@ class AuthController extends Controller
     {
         $validated = $request->validate([
             'name' => 'required|string|max:255',
-            'email' => 'required|string|email|max:255|unique:users',
+            'email' => 'required|string|email|max:255|unique:users,email',
             'password' => 'required|string|min:8',
             'role' => 'required|in:student,teacher',
-            'school_code' => 'required_if:role,student|exists:schools,school_code',
+            'school_code' => 'nullable|string|exists:schools,school_code',
+            'class_code' => 'nullable|string',
         ]);
 
-        $schoolId = null;
-        if ($validated['role'] === 'student') {
-            $school = School::where('school_code', $validated['school_code'])->first();
-            $schoolId = $school->id;
+        $group = null;
+        $school = null;
+
+        if (!empty($validated['class_code'])) {
+            if ($validated['role'] !== 'student') {
+                return response()->json([
+                    'message' => 'Class invitations can only be used to create student accounts.',
+                ], 422);
+            }
+
+            $classCode = strtoupper(trim($validated['class_code']));
+
+            $group = \App\Models\Group::with([
+                'gradeSubject.school',
+            ])
+                ->whereRaw('UPPER(class_code) = ?', [$classCode])
+                ->first();
+
+            if (!$group) {
+                return response()->json([
+                    'message' => 'This class invitation is invalid or no longer exists.',
+                ], 422);
+            }
+
+            if (!$group->gradeSubject) {
+                return response()->json([
+                    'message' => 'This class is not linked to a teaching area yet.',
+                ], 422);
+            }
+
+            $school = $group->gradeSubject->school;
+
+            if (!$school) {
+                return response()->json([
+                    'message' => 'The school for this class could not be determined.',
+                ], 422);
+            }
+        } else {
+            if (empty($validated['school_code'])) {
+                return response()->json([
+                    'message' => 'School code is required.',
+                    'errors' => [
+                        'school_code' => ['School code is required.'],
+                    ],
+                ], 422);
+            }
+
+            $school = School::where(
+                'school_code',
+                $validated['school_code']
+            )->firstOrFail();
         }
+
         $user = User::create([
             'name' => $validated['name'],
             'email' => $validated['email'],
             'password' => bcrypt($validated['password']),
             'role' => $validated['role'],
-            'school_id' => $schoolId,
-            'status' => 'active'
+            'school_id' => $school?->id,
+            'status' => 'active',
         ]);
 
-        // Send verification email
+
         $user->sendEmailVerificationNotification();
 
         return response()->json([
             'message' => 'Account created. Please check your email to verify your account before signing in.',
             'email' => $user->email,
+            'class_code' => $group?->class_code,
         ], 201);
     }
 
@@ -136,15 +186,23 @@ class AuthController extends Controller
             'expires_at' => now()->addMinutes($ttlMinutes)->toDateTimeString(),
         ]);
     }
-    public function getStudents()
+    public function getStudents(Request $request)
     {
-        $gradeLevelId = request('grade_level_id');
-        $query = User::where('role', 'student');
-        if ($gradeLevelId) {
-            $query->where('grade_level_id', $gradeLevelId);
+        $user = $request->user();
+
+        $query = User::query()
+            ->where('role', 'student');
+
+        if ($user && $user->school_id) {
+            $query->where('school_id', $user->school_id);
         }
-        $students = $query->get();
-        return response()->json($students);
+
+        return response()->json(
+            $query
+                ->select('id', 'name', 'email', 'school_id', 'status')
+                ->orderBy('name')
+                ->get()
+        );
     }
     public function logout(Request $request)
     {

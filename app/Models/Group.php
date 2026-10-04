@@ -13,7 +13,15 @@ class Group extends Model
         'group_name',
         'class_code',
         'created_by',
+        'grade_subject_id',
+        'academic_year',
     ];
+
+
+    public function gradeSubject()
+    {
+        return $this->belongsTo(GradeSubject::class, 'grade_subject_id');
+    }
 
     public function students()
     {
@@ -31,5 +39,13 @@ class Group extends Model
             'group_id',
             'assessment_id'
         );
+    }
+    public function learningPeriods()
+    {
+        return $this->hasMany(LearningPeriod::class);
+    }
+    public function tutorSessions()
+    {
+        return $this->hasMany(TutorSession::class);
     }
 }
