@@ -5,6 +5,7 @@ namespace App\Providers;
 use App\Models\TutorMessage;
 use App\Observers\TutorMessageObserver;
 use Illuminate\Support\ServiceProvider;
+use Illuminate\Support\Facades\Schema;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -15,6 +16,7 @@ class AppServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        Schema::defaultStringLength(191);
         TutorMessage::observe(TutorMessageObserver::class);
     }
 }
