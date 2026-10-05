@@ -30,6 +30,7 @@ class User extends Authenticatable implements MustVerifyEmail
         'role',
         'school_id',
         'status',
+        'email_verified_at',
     ];
 
     protected $hidden = [
@@ -63,51 +64,20 @@ class User extends Authenticatable implements MustVerifyEmail
     {
         return $this->belongsTo(School::class);
     }
-
-    /*
-    |--------------------------------------------------------------------------
-    | Teacher relationships
-    |--------------------------------------------------------------------------
-    */
-
-    /**
-     * Subjects/grade combinations taught by this teacher.
-     */
     public function teachingAreas(): HasMany
     {
         return $this->hasMany(GradeSubject::class, 'teacher_id');
     }
 
-    /**
-     * Groups created/managed by this teacher.
-     */
     public function createdGroups(): HasMany
     {
         return $this->hasMany(Group::class, 'created_by');
     }
 
-    /**
-     * Subjects created by this user.
-     */
     public function subjectsCreated(): HasMany
     {
         return $this->hasMany(Subject::class, 'created_by');
     }
-
-    /*
-    |--------------------------------------------------------------------------
-    | Student group membership
-    |--------------------------------------------------------------------------
-    */
-
-    /**
-     * Groups in which this user is enrolled as a student.
-     *
-     * IMPORTANT:
-     * group_students contains student membership only.
-     * Do not query a "role" column from this pivot unless
-     * the database actually has such a column.
-     */
     public function groups(): BelongsToMany
     {
         return $this->belongsToMany(
@@ -117,12 +87,6 @@ class User extends Authenticatable implements MustVerifyEmail
             'group_id'
         );
     }
-
-    /*
-    |--------------------------------------------------------------------------
-    | Assessments
-    |--------------------------------------------------------------------------
-    */
 
     public function createdAssessment(): HasMany
     {

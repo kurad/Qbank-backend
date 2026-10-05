@@ -16,9 +16,7 @@ return [
         'http://localhost:8080',
     ],
 
-    'allowed_origins_patterns' => [
-        '#^https://([a-z0-9-]+\.)?testrevisionhub\.rw$#',
-    ],
+    'allowed_origins_patterns' => [],
 
     'allowed_headers' => ['*'],
 
