@@ -90,36 +90,6 @@ Route::get('/class-invitations/{classCode}', [ClassInvitationController::class, 
 Route::get('/auth/google', [AuthController::class, 'redirectToGoogle']);
 Route::get('/auth/google/callback', [AuthController::class, 'handleGoogleCallback']);
 
-
-/*
-|--------------------------------------------------------------------------
-| Public Basic Data Routes
-|--------------------------------------------------------------------------
-*/
-
-Route::get('/subjects', [SubjectController::class, 'index']);
-Route::get('/subjects/search', [SubjectController::class, 'searchSubjects']);
-Route::get('/subjects/details', [SubjectController::class, 'subjectsByGrade']);
-Route::get('/subjects/overview', [HomeController::class, 'subjectsOverview']);
-Route::get('/subjects/{subject}/topics', [HomeController::class, 'subjectTopics']);
-Route::get('/subjects/{subject}/grades', [SubjectController::class, 'gradesForSubject']);
-Route::get('/subjects/{id}/topics', [TopicController::class, 'topicsBySubject']);
-Route::get('/subjects/{subjectId}/topics-with-questions', [QuestionController::class, 'topicsWithQuestionsBySubject']);
-Route::get('/subjects/{subjectId}/grades/{gradeId}/topics', [TopicController::class, 'topicsBySubjectAndGrade']);
-Route::get('/subjects/{subjectId}/grades/{gradeId}/units', [TopicController::class, 'topicsBySubjectGrade']);
-Route::get('/grade-levels', [GradeLevelController::class, 'index']);
-Route::get('/grade-subjects/{gradeId}/{subjectId}/topics', [TopicController::class, 'topicsByGradeAndSubject']);
-Route::get('/topics', [TopicController::class, 'index']);
-Route::get('/topics-by-subject', [TopicController::class, 'topicsBySubject']);
-Route::get('/questions/all', [QuestionController::class, 'allQuestions']);
-Route::get('/questions/search', [QuestionController::class, 'search']);
-Route::get('/questions/{id}', [QuestionController::class, 'show']);
-Route::post('/questions/{id}/approve-for-assessment', [QuestionController::class, 'approveForAssessment']);
-Route::post('/questions/{id}/reject-for-assessment', [QuestionController::class, 'rejectForAssessment']);
-Route::get('/questions/assessment-pool/objective/{learningObjectiveId}', [QuestionController::class, 'assessmentQuestionsByObjective']);
-Route::get('/reports/questions-per-subject', [HomeController::class, 'questionsPerSubject']);
-
-
 /*
 |--------------------------------------------------------------------------
 | Protected Routes
@@ -134,6 +104,8 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     |--------------------------------------------------------------------------
     */
 
+
+
     Route::get('/user', function (Request $request) {
         return $request->user();
     });
@@ -146,6 +118,29 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     | General Question Access
     |--------------------------------------------------------------------------
     */
+
+
+    Route::get('/subjects', [SubjectController::class, 'index']);
+    Route::get('/subjects/search', [SubjectController::class, 'searchSubjects']);
+    Route::get('/subjects/details', [SubjectController::class, 'subjectsByGrade']);
+    Route::get('/subjects/overview', [HomeController::class, 'subjectsOverview']);
+    Route::get('/subjects/{subject}/topics', [HomeController::class, 'subjectTopics']);
+    Route::get('/subjects/{subject}/grades', [SubjectController::class, 'gradesForSubject']);
+    Route::get('/subjects/{id}/topics', [TopicController::class, 'topicsBySubject']);
+    Route::get('/subjects/{subjectId}/topics-with-questions', [QuestionController::class, 'topicsWithQuestionsBySubject']);
+    Route::get('/subjects/{subjectId}/grades/{gradeId}/topics', [TopicController::class, 'topicsBySubjectAndGrade']);
+    Route::get('/subjects/{subjectId}/grades/{gradeId}/units', [TopicController::class, 'topicsBySubjectGrade']);
+    Route::get('/grade-levels', [GradeLevelController::class, 'index']);
+    Route::get('/grade-subjects/{gradeId}/{subjectId}/topics', [TopicController::class, 'topicsByGradeAndSubject']);
+    Route::get('/topics', [TopicController::class, 'index']);
+    Route::get('/topics-by-subject', [TopicController::class, 'topicsBySubject']);
+    Route::get('/questions/all', [QuestionController::class, 'allQuestions']);
+    Route::get('/questions/search', [QuestionController::class, 'search']);
+    Route::get('/questions/{id}', [QuestionController::class, 'show']);
+    Route::post('/questions/{id}/approve-for-assessment', [QuestionController::class, 'approveForAssessment']);
+    Route::post('/questions/{id}/reject-for-assessment', [QuestionController::class, 'rejectForAssessment']);
+    Route::get('/questions/assessment-pool/objective/{learningObjectiveId}', [QuestionController::class, 'assessmentQuestionsByObjective']);
+    Route::get('/reports/questions-per-subject', [HomeController::class, 'questionsPerSubject']);
 
     Route::get('/topics/{id}/question-count', [QuestionController::class, 'getQuestionCount']);
     Route::get('/topics/{topic}/questions', [QuestionController::class, 'byTopic']);
