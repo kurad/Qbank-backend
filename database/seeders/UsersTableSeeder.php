@@ -63,24 +63,24 @@ class UsersTableSeeder extends Seeder
 
         $teachers = [
             [
-                'name' => 'Alice Mukamana',
-                'email' => 'alice.teacher@test.revisionhub.rw',
+                'name' => 'Alain Mukama',
+                'email' => 'a.teacher@test.revisionhub.rw',
             ],
             [
-                'name' => 'Beatrice Uwase',
-                'email' => 'beatrice.teacher@test.revisionhub.rw',
+                'name' => 'Bob Rukundo',
+                'email' => 'b.teacher@test.revisionhub.rw',
             ],
             [
-                'name' => 'Claudine Uwera',
-                'email' => 'claudine.teacher@test.revisionhub.rw',
+                'name' => 'Claude Habimana',
+                'email' => 'c.teacher@test.revisionhub.rw',
             ],
             [
-                'name' => 'Diane Ingabire',
-                'email' => 'diane.teacher@test.revisionhub.rw',
+                'name' => 'Dieudonne Rukundo',
+                'email' => 'd.teacher@test.revisionhub.rw',
             ],
             [
-                'name' => 'Esther Mukeshimana',
-                'email' => 'esther.teacher@test.revisionhub.rw',
+                'name' => 'Emmy Karera',
+                'email' => 'e.teacher@test.revisionhub.rw',
             ],
         ];
 
@@ -99,19 +99,6 @@ class UsersTableSeeder extends Seeder
                 ]
             );
         }
-
-        /*
-        |--------------------------------------------------------------------------
-        | Students
-        |--------------------------------------------------------------------------
-        |
-        | Notice that we deliberately do NOT assign grade_level_id.
-        |
-        | Student grade will come from class membership:
-        |
-        | Student -> Class -> Teaching Area -> Grade
-        |
-        */
 
         $students = [
             [
