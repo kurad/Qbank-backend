@@ -284,7 +284,6 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     Route::put('/questions/{id}', [QuestionController::class, 'update']);
     Route::delete('/questions/{id}', [QuestionController::class, 'destroy']);
     Route::get('/my-questions', [QuestionController::class, 'myQuestions']);
-    Route::post('/questions/ai-assist', [QuestionController::class, 'aiAssist']);
     Route::post('/questions/ai-generate', [QuestionController::class, 'generateAIQuestions']);
     Route::post('/questions/ai-generate/store', [QuestionController::class, 'storeAIQuestions']);
     Route::get('/questions/by-topics', [AssessmentBuilderController::class, 'questionsByTopics']);

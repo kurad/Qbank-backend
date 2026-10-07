@@ -369,7 +369,7 @@ class ModernAssessmentBuilderController extends Controller
 
             'question_type' => [
                 'nullable',
-                'in:mcq,true_false,short_answer,matching,parent,open_ended',
+                'in:mcq,true_false,short_answer,fill_blank,matching,parent,open_ended',
             ],
 
             'difficulty_level' => [

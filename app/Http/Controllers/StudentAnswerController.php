@@ -368,6 +368,40 @@ class StudentAnswerController extends Controller
                         break;
                     }
 
+                case 'fill_blank': {
+                        $studentText = is_string($studentRaw)
+                            ? trim($studentRaw)
+                            : (is_null($studentRaw) ? '' : trim((string)$studentRaw));
+
+                        $accepted = array_values(array_filter(array_map(
+                            fn($value) => mb_strtolower(trim((string)$value)),
+                            $toStringArray($correctRaw)
+                        )));
+
+                        $normalizedStudent = mb_strtolower($studentText);
+                        $isCorrect = $normalizedStudent !== '' && in_array(
+                            $normalizedStudent,
+                            $accepted,
+                            true
+                        );
+                        $pointsEarned = $isCorrect ? $marks : 0.0;
+                        $answerToStore = $studentText;
+                        break;
+                    }
+
+                case 'open_ended': {
+                        $studentText = is_string($studentRaw)
+                            ? trim($studentRaw)
+                            : (is_null($studentRaw) ? '' : trim((string)$studentRaw));
+
+                        // Open-ended responses are intentionally not auto-marked.
+                        // They remain available for teacher review/manual grading.
+                        $isCorrect = false;
+                        $pointsEarned = 0.0;
+                        $answerToStore = $studentText;
+                        break;
+                    }
+
                 default: {
                         $answerToStore = $parseMaybeJson($studentRaw);
                         $isCorrect = false;

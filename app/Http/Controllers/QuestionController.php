@@ -168,7 +168,7 @@ class QuestionController extends Controller
                 !$hasSub &&
                 !in_array(
                     $validated['question_type'] ?? null,
-                    ['matching', 'short_answer'],
+                    ['matching', 'short_answer', 'open_ended'],
                     true
                 )
             ) {
@@ -280,7 +280,7 @@ class QuestionController extends Controller
 
             'question_type' => [
                 'required',
-                'in:mcq,true_false,short_answer,matching,parent',
+                'in:mcq,true_false,short_answer,fill_blank,matching,open_ended,parent',
             ],
 
             'marks' => [
@@ -386,8 +386,8 @@ class QuestionController extends Controller
                             trim($text) !== '';
 
                         $hasImage =
-                            isset($imageFiles[$index]) &&
-                            $imageFiles[$index];
+                            (isset($imageFiles[$index]) && $imageFiles[$index]) ||
+                            $request->boolean("existing_option_images.{$index}");
 
                         if (!$hasText && !$hasImage) {
                             $fail(
@@ -409,6 +409,11 @@ class QuestionController extends Controller
                 'mimes:jpeg,png,jpg,gif,svg',
                 'max:4096',
             ];
+
+            $rules['remove_option_images'] = ['nullable', 'array'];
+            $rules['remove_option_images.*'] = ['nullable', 'boolean'];
+            $rules['existing_option_images'] = ['nullable', 'array'];
+            $rules['existing_option_images.*'] = ['nullable', 'boolean'];
 
             if ($request->boolean('multiple_answers')) {
                 $rules['correct_answer'] = [
@@ -461,6 +466,17 @@ class QuestionController extends Controller
          * SHORT ANSWER.
          */
         if ($type === 'short_answer') {
+            $rules['options'] = 'nullable';
+            $rules['correct_answer'] = 'nullable|array';
+        }
+
+        if ($type === 'fill_blank') {
+            $rules['options'] = 'nullable';
+            $rules['correct_answer'] = ['required', 'array', 'min:1'];
+            $rules['correct_answer.*'] = ['required', 'string'];
+        }
+
+        if ($type === 'open_ended') {
             $rules['options'] = 'nullable';
             $rules['correct_answer'] = 'nullable|array';
         }
@@ -615,7 +631,8 @@ class QuestionController extends Controller
                     $this->normalizeMcqOptionsForUpdate(
                         $validated['options'] ?? [],
                         $request->file('option_images', []),
-                        $question->options ?? []
+                        $question->options ?? [],
+                        $request->input('remove_option_images', [])
                     );
             }
 
@@ -670,7 +687,7 @@ class QuestionController extends Controller
                 if (
                     !in_array(
                         $effectiveType,
-                        ['matching', 'short_answer', 'parent'],
+                        ['matching', 'short_answer', 'open_ended', 'parent'],
                         true
                     )
                 ) {
@@ -686,6 +703,16 @@ class QuestionController extends Controller
             /*
              * Question image.
              */
+            if (
+                $request->boolean('remove_question_image') &&
+                !$request->hasFile('question_image')
+            ) {
+                if ($question->question_image) {
+                    Storage::disk('public')->delete($question->question_image);
+                }
+                $validated['question_image'] = null;
+            }
+
             if ($request->hasFile('question_image')) {
                 if ($question->question_image) {
                     Storage::disk('public')->delete(
@@ -716,6 +743,18 @@ class QuestionController extends Controller
                 $validated['correct_answer_image'] =
                     $request->file('correct_answer_image')
                     ->store('answers', 'public');
+            }
+
+            if (
+                !$hasSub &&
+                ($validated['question_type'] ?? $question->question_type) === 'short_answer' &&
+                $request->boolean('remove_correct_answer_image') &&
+                !$request->hasFile('correct_answer_image')
+            ) {
+                if ($question->correct_answer_image) {
+                    Storage::disk('public')->delete($question->correct_answer_image);
+                }
+                $validated['correct_answer_image'] = null;
             }
 
             /*
@@ -900,7 +939,7 @@ class QuestionController extends Controller
             if (
                 !in_array(
                     $subValidated['question_type'] ?? null,
-                    ['matching', 'short_answer'],
+                    ['matching', 'short_answer', 'open_ended'],
                     true
                 )
             ) {
@@ -1033,7 +1072,7 @@ class QuestionController extends Controller
             if (
                 !in_array(
                     $subValidated['question_type'] ?? null,
-                    ['matching', 'short_answer'],
+                    ['matching', 'short_answer', 'open_ended'],
                     true
                 )
             ) {
@@ -1537,6 +1576,223 @@ class QuestionController extends Controller
     |--------------------------------------------------------------------------
     */
 
+    /**
+     * AI co-authoring assistant for a teacher who is manually building one question.
+     * Suggestions are never saved automatically; the frontend lets the teacher
+     * review and explicitly apply each result.
+     */
+    public function aiAssist(Request $request)
+    {
+        $validated = $request->validate([
+            'action' => [
+                'required',
+                'in:improve_question,generate_answer,generate_distractors,generate_explanation,suggest_metadata,suggest_visual',
+            ],
+            'topic_id' => ['required', 'integer', 'exists:topics,id'],
+            'learning_objective_id' => [
+                'required',
+                'integer',
+                Rule::exists('learning_objectives', 'id')->where(
+                    fn ($query) => $query->where('topic_id', $request->input('topic_id'))
+                ),
+            ],
+            'question_type' => [
+                'required',
+                'in:mcq,true_false,short_answer,fill_blank,matching,open_ended',
+            ],
+            'question' => ['required', 'string', 'max:5000'],
+            'current_answer' => ['nullable', 'string', 'max:5000'],
+            'options' => ['nullable', 'array', 'max:10'],
+            'options.*' => ['nullable', 'string', 'max:1000'],
+        ]);
+
+        try {
+            $topic = Topic::with([
+                'gradeSubject.subject',
+                'gradeSubject.gradeLevel',
+                'unit',
+            ])->findOrFail($validated['topic_id']);
+
+            $this->ownsTopic($topic);
+
+            $objective = LearningObjective::findOrFail(
+                $validated['learning_objective_id']
+            );
+
+            $this->validateLearningObjectiveBelongsToTopic(
+                $objective->id,
+                $topic
+            );
+
+            $subjectName = $topic->gradeSubject?->subject?->name
+                ?? $topic->gradeSubject?->subject?->subject_name
+                ?? 'the subject';
+
+            $gradeName = $topic->gradeSubject?->gradeLevel?->grade_name
+                ?? $topic->gradeSubject?->gradeLevel?->name
+                ?? $topic->gradeSubject?->gradeLevel?->grade
+                ?? '';
+
+            $unitName = $topic->unit?->name ?? '';
+            $topicName = $topic->topic_name ?? $topic->name ?? '';
+            $objectiveText = $objective->objective
+                ?? $objective->description
+                ?? '';
+
+            $context = <<<TEXT
+Curriculum context:
+- Grade: {$gradeName}
+- Subject: {$subjectName}
+- Unit: {$unitName}
+- Topic: {$topicName}
+- Learning objective: {$objectiveText}
+- Question type: {$validated['question_type']}
+
+Teacher's current question:
+{$validated['question']}
+TEXT;
+
+            $currentAnswer = trim((string) ($validated['current_answer'] ?? ''));
+            if ($currentAnswer !== '') {
+                $context .= "\n\nTeacher's current/expected answer:\n{$currentAnswer}";
+            }
+
+            $options = array_values(array_filter(
+                array_map(
+                    fn ($item) => trim((string) $item),
+                    $validated['options'] ?? []
+                ),
+                fn ($item) => $item !== ''
+            ));
+
+            if ($options) {
+                $context .= "\n\nCurrent answer options:\n- " . implode("\n- ", $options);
+            }
+
+            $system = 'You are a careful assessment co-author for a teacher. '
+                . 'Keep every suggestion aligned to the supplied curriculum context. '
+                . 'Do not silently change the teacher\'s intent. Return only the requested JSON.';
+
+            [$instruction, $schema] = match ($validated['action']) {
+                'improve_question' => [
+                    "Improve the wording of the teacher's question so it is clear, age-appropriate, unambiguous, and directly aligned to the learning objective. Preserve the intended difficulty and meaning. Do not add the answer into the question.",
+                    [
+                        'type' => 'OBJECT',
+                        'properties' => [
+                            'question' => ['type' => 'STRING'],
+                            'reason' => ['type' => 'STRING'],
+                        ],
+                        'required' => ['question', 'reason'],
+                    ],
+                ],
+                'generate_answer' => [
+                    "Generate a strong teacher answer/model answer for this question. For fill-in-the-blank, give concise accepted answer wording. For open-ended questions, give a model answer suitable for marking guidance. For true/false, answer only True or False plus a brief reason in the explanation field.",
+                    [
+                        'type' => 'OBJECT',
+                        'properties' => [
+                            'answer' => ['type' => 'STRING'],
+                            'explanation' => ['type' => 'STRING'],
+                        ],
+                        'required' => ['answer', 'explanation'],
+                    ],
+                ],
+                'generate_distractors' => [
+                    "Generate exactly three plausible but incorrect MCQ distractors. They must be clearly wrong to a knowledgeable learner, should not overlap with the correct answer, and should be similar in style and length to the correct option. Do not include the correct answer itself.",
+                    [
+                        'type' => 'OBJECT',
+                        'properties' => [
+                            'distractors' => [
+                                'type' => 'ARRAY',
+                                'items' => ['type' => 'STRING'],
+                            ],
+                        ],
+                        'required' => ['distractors'],
+                    ],
+                ],
+                'generate_explanation' => [
+                    "Write a concise teacher-facing explanation of the correct answer. It should explain why the answer is correct and, where useful, the misconception learners may have.",
+                    [
+                        'type' => 'OBJECT',
+                        'properties' => [
+                            'explanation' => ['type' => 'STRING'],
+                        ],
+                        'required' => ['explanation'],
+                    ],
+                ],
+                'suggest_metadata' => [
+                    "Recommend the most suitable Bloom's taxonomy level and a reasonable mark value for this question. Use one of: remembering, understanding, applying, analyzing, evaluating, creating. Marks should reflect the work actually required, not the topic importance.",
+                    [
+                        'type' => 'OBJECT',
+                        'properties' => [
+                            'difficulty_level' => [
+                                'type' => 'STRING',
+                                'enum' => [
+                                    'remembering',
+                                    'understanding',
+                                    'applying',
+                                    'analyzing',
+                                    'evaluating',
+                                    'creating',
+                                ],
+                            ],
+                            'marks' => ['type' => 'NUMBER'],
+                            'reason' => ['type' => 'STRING'],
+                        ],
+                        'required' => ['difficulty_level', 'marks', 'reason'],
+                    ],
+                ],
+                'suggest_visual' => [
+                    "Decide whether a visual would materially improve this question. If yes, describe the educational visual a teacher should use or create. Do not claim to have fetched or generated an image. Give a precise visual brief that can be used in the next visual-assistant phase.",
+                    [
+                        'type' => 'OBJECT',
+                        'properties' => [
+                            'recommended' => ['type' => 'BOOLEAN'],
+                            'visual_description' => ['type' => 'STRING'],
+                            'reason' => ['type' => 'STRING'],
+                        ],
+                        'required' => ['recommended', 'visual_description', 'reason'],
+                    ],
+                ],
+            };
+
+            $result = $this->ai->json(
+                [
+                    ['role' => 'system', 'content' => $system],
+                    [
+                        'role' => 'user',
+                        'content' => $context . "\n\nTask:\n" . $instruction,
+                    ],
+                ],
+                $schema,
+                [
+                    'temperature' => in_array(
+                        $validated['action'],
+                        ['generate_distractors', 'improve_question'],
+                        true
+                    ) ? 0.6 : 0.3,
+                    'max_tokens' => 2048,
+                ]
+            );
+
+            return response()->json([
+                'success' => true,
+                'action' => $validated['action'],
+                'data' => $result,
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('AI question authoring assist failed', [
+                'user_id' => auth()->id(),
+                'action' => $validated['action'] ?? null,
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'AI assistance failed: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
     public function generateAIQuestions(Request $request)
     {
         $validated = $request->validate([
@@ -1565,7 +1821,7 @@ class QuestionController extends Controller
 
             'question_type' => [
                 'required',
-                'in:mcq,true_false,short_answer,matching',
+                'in:mcq,true_false,short_answer,fill_blank,matching,open_ended',
             ],
 
             'difficulty_level' => [
@@ -1639,6 +1895,8 @@ class QuestionController extends Controller
                 'true_false' => 'Return options as ["True", "False"] and correct_answer as either "True" or "False".',
                 'short_answer' => 'Return options as an empty array and correct_answer as the expected answer or key answer points.',
                 'matching' => 'Return options as an object with left and right arrays. Return correct_answer as an array of objects containing left_index and right_index.',
+                'fill_blank' => 'Write one clear sentence with exactly one blank represented by ______. Return correct_answer as the accepted answer text.',
+                'open_ended' => 'Write an open-ended question that requires explanation, reasoning, analysis, or creation. Return correct_answer as a concise model answer or marking guidance.',
                 default => '',
             };
 
@@ -1886,10 +2144,10 @@ PROMPT;
                         );
                 }
 
-                if ($q['question_type'] === 'short_answer') {
-                    if (!isset($q['correct_answer'])) {
-                        $q['correct_answer'] = [];
-                    }
+                if (in_array($q['question_type'], ['short_answer', 'fill_blank', 'open_ended'], true)) {
+                    $q['correct_answer'] = $this->normalizeAnswerArray(
+                        $q['correct_answer'] ?? []
+                    );
                 }
 
                 if ($q['question_type'] === 'matching') {
@@ -2128,7 +2386,7 @@ PROMPT;
                     if (
                         !in_array(
                             $validated['question_type'],
-                            ['matching', 'short_answer'],
+                            ['matching', 'short_answer', 'open_ended'],
                             true
                         )
                     ) {
@@ -2625,7 +2883,8 @@ PROMPT;
     private function normalizeMcqOptionsForUpdate(
         array $options,
         array $imageFiles,
-        array $currentOptions
+        array $currentOptions,
+        array $removeImages = []
     ): array {
         $normalized = [];
 
@@ -2638,6 +2897,11 @@ PROMPT;
             $imagePath =
                 $currentOptions[$index]['image']
                 ?? null;
+
+            if (!empty($removeImages[$index]) && $imagePath) {
+                Storage::disk('public')->delete($imagePath);
+                $imagePath = null;
+            }
 
             if (
                 isset($imageFiles[$index]) &&
@@ -2840,10 +3104,17 @@ PROMPT;
         ) {
             $question->options =
                 array_map(
-                    fn($option) =>
-                    $this->decodeJsonIfNeeded(
-                        $option
-                    ),
+                    function ($option) {
+                        $option = $this->decodeJsonIfNeeded($option);
+
+                        if (is_array($option) && !empty($option['image'])) {
+                            $option['image_url'] = asset(
+                                'storage/' . $option['image']
+                            );
+                        }
+
+                        return $option;
+                    },
                     $question->options
                 );
         }
