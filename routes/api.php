@@ -21,6 +21,7 @@ use App\Http\Controllers\SchoolController;
 use App\Http\Controllers\StudentAnswerController;
 use App\Http\Controllers\StudentAssessmentController;
 use App\Http\Controllers\SubjectController;
+use App\Http\Controllers\TeacherGradebookController;
 use App\Http\Controllers\TeacherProgressController;
 use App\Http\Controllers\TopicController;
 use App\Http\Controllers\TutorController;
@@ -485,4 +486,9 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
         Route::get('/learning-periods/{learningPeriod}', [TeacherProgressController::class, 'learningPeriod']);
         Route::get('/students/{student}', [TeacherProgressController::class, 'student']);
     });
+
+    Route::prefix('teacher/gradebook')->group(function () {
+    Route::get('/', [TeacherGradebookController::class, 'index']);
+    Route::get('/export', [TeacherGradebookController::class, 'export']);
+});
 });
