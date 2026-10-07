@@ -110,7 +110,7 @@ class TeacherGradebookService
         ];
 
         foreach ($columns as $column) {
-            $headings[] = $column['title'] . ' (' . $column['group_name'] . ')';
+            $headings[] = $column['name'] . ' (' . $column['group_name'] . ')';
         }
 
         $headings[] = 'Assessment Average %';
@@ -233,7 +233,7 @@ class TeacherGradebookService
                     'assessment_id' => $assessment->id,
                     'group_id' => $group->id,
                     'group_name' => $group->group_name,
-                    'title' => $assessment->title,
+                    'name' => $assessment->name,
                     'type' => $assessment->type,
                     'delivery_mode' => $assessment->delivery_mode,
                     'due_date' => $assessment->due_date ? (string) $assessment->due_date : null,
@@ -257,7 +257,7 @@ class TeacherGradebookService
                 'session:id,group_id,topic_id,learning_period_id',
                 'session.group:id,group_name',
                 'session.topic:id,topic_name,unit_id',
-                'session.topic.unit:id,title',
+                'session.topic.unit:id,name',
                 'sessionObjective:id,learning_objective_id,tutor_session_id',
                 'sessionObjective.learningObjective:id,topic_id,code,objective',
             ])
@@ -291,7 +291,7 @@ class TeacherGradebookService
                 'student_name' => $evaluation->student?->name,
                 'group_id' => $evaluation->session?->group_id,
                 'group_name' => $evaluation->session?->group?->group_name,
-                'unit' => $topic?->unit?->title,
+                'unit' => $topic?->unit?->name,
                 'topic' => $topic?->topic_name,
                 'learning_objective_id' => $objective?->id,
                 'objective_code' => $objective?->code,
