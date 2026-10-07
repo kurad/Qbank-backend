@@ -1586,7 +1586,7 @@ class QuestionController extends Controller
         $validated = $request->validate([
             'action' => [
                 'required',
-                'in:improve_question,generate_answer,generate_distractors,generate_explanation,suggest_metadata,suggest_visual',
+                'in:improve_question,generate_answer,generate_distractors,generate_explanation,suggest_metadata,suggest_visual,generate_visual',
             ],
             'topic_id' => ['required', 'integer', 'exists:topics,id'],
             'learning_objective_id' => [
@@ -1604,6 +1604,9 @@ class QuestionController extends Controller
             'current_answer' => ['nullable', 'string', 'max:5000'],
             'options' => ['nullable', 'array', 'max:10'],
             'options.*' => ['nullable', 'string', 'max:1000'],
+            'visual_target' => ['nullable', 'in:question,correct_answer,option'],
+            'option_index' => ['nullable', 'integer', 'min:0', 'max:9'],
+            'visual_description' => ['nullable', 'string', 'max:5000'],
         ]);
 
         try {
@@ -1657,16 +1660,44 @@ TEXT;
                 $context .= "\n\nTeacher's current/expected answer:\n{$currentAnswer}";
             }
 
+            $rawOptions = array_map(
+                fn ($item) => trim((string) $item),
+                $validated['options'] ?? []
+            );
+
             $options = array_values(array_filter(
-                array_map(
-                    fn ($item) => trim((string) $item),
-                    $validated['options'] ?? []
-                ),
+                $rawOptions,
                 fn ($item) => $item !== ''
             ));
 
             if ($options) {
                 $context .= "\n\nCurrent answer options:\n- " . implode("\n- ", $options);
+            }
+
+            if ($validated['action'] === 'generate_visual') {
+                $visualTarget = $validated['visual_target'] ?? 'question';
+                $visualDescription = trim((string) ($validated['visual_description'] ?? ''));
+
+                if ($visualDescription === '') {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'A visual description is required before generating a visual.',
+                    ], 422);
+                }
+
+                $context .= "\n\nVisual target: {$visualTarget}";
+
+                if ($visualTarget === 'option') {
+                    $optionIndex = (int) ($validated['option_index'] ?? 0);
+                    $optionLabel = chr(65 + max(0, min(25, $optionIndex)));
+                    $optionText = $rawOptions[$optionIndex] ?? '';
+                    $context .= "\nMCQ option target: {$optionLabel}";
+                    if ($optionText !== '') {
+                        $context .= " ({$optionText})";
+                    }
+                }
+
+                $context .= "\nVisual brief supplied by teacher/assistant:\n{$visualDescription}";
             }
 
             $system = 'You are a careful assessment co-author for a teacher. '
@@ -1742,15 +1773,31 @@ TEXT;
                     ],
                 ],
                 'suggest_visual' => [
-                    "Decide whether a visual would materially improve this question. If yes, describe the educational visual a teacher should use or create. Do not claim to have fetched or generated an image. Give a precise visual brief that can be used in the next visual-assistant phase.",
+                    "Decide whether a visual would materially improve this question. If yes, describe a precise educational diagram, graph, schematic, map, chart, labelled illustration, or symbolic visual that supports the intended thinking without revealing the answer. If a visual is not necessary, still provide a concise optional brief in case the teacher chooses to use one.",
                     [
                         'type' => 'OBJECT',
                         'properties' => [
                             'recommended' => ['type' => 'BOOLEAN'],
+                            'visual_kind' => [
+                                'type' => 'STRING',
+                                'enum' => ['diagram', 'graph', 'chart', 'schematic', 'map', 'labelled_illustration', 'symbolic_visual'],
+                            ],
                             'visual_description' => ['type' => 'STRING'],
                             'reason' => ['type' => 'STRING'],
                         ],
-                        'required' => ['recommended', 'visual_description', 'reason'],
+                        'required' => ['recommended', 'visual_kind', 'visual_description', 'reason'],
+                    ],
+                ],
+                'generate_visual' => [
+                    "Create a clean classroom-ready SVG visual based on the supplied visual brief. Use only SVG primitives and text. Do not embed external images, scripts, stylesheets, foreignObject, animation, links, data URLs, or JavaScript. Keep the SVG self-contained, legible, simple, and suitable for a school assessment. Use a viewBox of 0 0 1200 675. Do not put the correct answer into a question visual. If the target is a correct-answer visual, it may show the worked/expected result. Return the complete SVG markup as one string plus concise accessible alt text and a short caption.",
+                    [
+                        'type' => 'OBJECT',
+                        'properties' => [
+                            'svg' => ['type' => 'STRING'],
+                            'alt_text' => ['type' => 'STRING'],
+                            'caption' => ['type' => 'STRING'],
+                        ],
+                        'required' => ['svg', 'alt_text', 'caption'],
                     ],
                 ],
             };
@@ -1769,10 +1816,14 @@ TEXT;
                         $validated['action'],
                         ['generate_distractors', 'improve_question'],
                         true
-                    ) ? 0.6 : 0.3,
-                    'max_tokens' => 2048,
+                    ) ? 0.6 : 0.25,
+                    'max_tokens' => $validated['action'] === 'generate_visual' ? 6144 : 2048,
                 ]
             );
+
+            if ($validated['action'] === 'generate_visual') {
+                $result['svg'] = $this->sanitizeAiSvg((string) ($result['svg'] ?? ''));
+            }
 
             return response()->json([
                 'success' => true,
@@ -1791,6 +1842,87 @@ TEXT;
                 'message' => 'AI assistance failed: ' . $e->getMessage(),
             ], 500);
         }
+    }
+
+    /**
+     * Sanitize AI-generated SVG before it is returned to the browser.
+     * The visual assistant only needs basic SVG drawing primitives and text.
+     */
+    private function sanitizeAiSvg(string $svg): string
+    {
+        $svg = trim($svg);
+        $svg = preg_replace('/^```(?:xml|svg)?\s*/i', '', $svg);
+        $svg = preg_replace('/\s*```$/', '', $svg);
+
+        if (preg_match('/(<svg\b[\s\S]*<\/svg>)/i', $svg, $match)) {
+            $svg = $match[1];
+        }
+
+        if ($svg === '' || strlen($svg) > 120000) {
+            throw new \RuntimeException('AI returned an invalid or oversized SVG visual.');
+        }
+
+        $previous = libxml_use_internal_errors(true);
+        $dom = new \DOMDocument();
+        $loaded = $dom->loadXML($svg, LIBXML_NONET | LIBXML_NOERROR | LIBXML_NOWARNING);
+        libxml_clear_errors();
+        libxml_use_internal_errors($previous);
+
+        if (!$loaded || !$dom->documentElement || strtolower($dom->documentElement->localName) !== 'svg') {
+            throw new \RuntimeException('AI returned malformed SVG markup.');
+        }
+
+        $forbiddenElements = [
+            'script', 'foreignobject', 'iframe', 'object', 'embed', 'image',
+            'use', 'style', 'animate', 'animatemotion', 'animatetransform',
+            'set', 'audio', 'video', 'a',
+        ];
+
+        $all = [];
+        foreach ($dom->getElementsByTagName('*') as $element) {
+            $all[] = $element;
+        }
+
+        foreach ($all as $element) {
+            if (in_array(strtolower($element->localName), $forbiddenElements, true)) {
+                $element->parentNode?->removeChild($element);
+                continue;
+            }
+
+            $removeAttributes = [];
+            foreach ($element->attributes ?? [] as $attribute) {
+                $name = strtolower($attribute->name);
+                $value = strtolower(trim($attribute->value));
+
+                if (
+                    str_starts_with($name, 'on') ||
+                    in_array($name, ['href', 'xlink:href'], true) ||
+                    str_contains($value, 'javascript:') ||
+                    str_contains($value, 'data:text/html') ||
+                    str_contains($value, 'url(')
+                ) {
+                    $removeAttributes[] = $attribute->name;
+                }
+            }
+
+            foreach ($removeAttributes as $attributeName) {
+                $element->removeAttribute($attributeName);
+            }
+        }
+
+        $root = $dom->documentElement;
+        $root->setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+        $root->setAttribute('viewBox', '0 0 1200 675');
+        $root->removeAttribute('width');
+        $root->removeAttribute('height');
+
+        $clean = $dom->saveXML($root);
+
+        if (!$clean || strlen($clean) > 120000) {
+            throw new \RuntimeException('Generated SVG could not be sanitized safely.');
+        }
+
+        return $clean;
     }
 
     public function generateAIQuestions(Request $request)
