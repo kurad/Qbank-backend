@@ -13,18 +13,157 @@ use Illuminate\Validation\ValidationException;
 
 class LearningPeriodController extends Controller
 {
-    /**
-     * List learning periods created for a group.
-     */
-    public function index(Request $request, Group $group)
+
+    public function index(Request $request)
     {
-        $this->ensureCanManage($request, $group);
+        $user = $request->user();
+
+        abort_unless(
+            $user,
+            401,
+            'Unauthenticated.'
+        );
+
+        /*
+    |--------------------------------------------------------------------------
+    | Determine classes this user is allowed to manage
+    |--------------------------------------------------------------------------
+    */
+
+        $manageableGroups = Group::query();
+
+        if ($user->role === 'admin') {
+            /*
+         * Admin can see classes belonging to their school.
+         */
+            $manageableGroups->whereHas(
+                'gradeSubject',
+                function ($query) use ($user) {
+                    $query->where(
+                        'school_id',
+                        $user->school_id
+                    );
+                }
+            );
+        } elseif ($user->role === 'teacher') {
+            /*
+         * Teachers manage their own classes.
+         */
+            $manageableGroups->where(
+                'created_by',
+                $user->id
+            );
+        } else {
+            abort(
+                403,
+                'You are not authorized to manage learning periods.'
+            );
+        }
+
+        $manageableGroupIds = $manageableGroups
+            ->pluck('id');
+
+        /*
+    |--------------------------------------------------------------------------
+    | Learning periods
+    |--------------------------------------------------------------------------
+    */
 
         $periods = LearningPeriod::query()
-            ->where('group_id', $group->id)
-            ->with($this->periodRelations())
+            ->whereIn(
+                'group_id',
+                $manageableGroupIds
+            )
+
+            /*
+         * Class filter
+         */
+            ->when(
+                $request->filled('group_id'),
+                function ($query) use (
+                    $request,
+                    $manageableGroupIds
+                ) {
+                    $groupId = $request->integer(
+                        'group_id'
+                    );
+
+                    /*
+                 * Prevent requesting another
+                 * teacher's class manually.
+                 */
+                    abort_unless(
+                        $manageableGroupIds->contains(
+                            $groupId
+                        ),
+                        403,
+                        'You are not authorized to manage this class.'
+                    );
+
+                    $query->where(
+                        'group_id',
+                        $groupId
+                    );
+                }
+            )
+
+            /*
+         * Status filter
+         */
+            ->when(
+                $request->filled('status'),
+                function ($query) use ($request) {
+                    $query->where(
+                        'status',
+                        $request->input('status')
+                    );
+                }
+            )
+
+            /*
+         * Search
+         */
+            ->when(
+                $request->filled('search'),
+                function ($query) use ($request) {
+                    $search = trim(
+                        (string) $request->input(
+                            'search'
+                        )
+                    );
+
+                    $query->where(
+                        function ($subQuery) use (
+                            $search
+                        ) {
+                            $subQuery
+                                ->where(
+                                    'title',
+                                    'like',
+                                    "%{$search}%"
+                                )
+                                ->orWhere(
+                                    'description',
+                                    'like',
+                                    "%{$search}%"
+                                );
+                        }
+                    );
+                }
+            )
+
+            ->with(
+                $this->periodRelations()
+            )
+
             ->latest('start_date')
-            ->paginate($request->integer('per_page', 15));
+
+            ->paginate(
+                $request->integer(
+                    'per_page',
+                    15
+                )
+            );
 
         return response()->json([
             'data' => $periods,
