@@ -8,7 +8,6 @@ use App\Models\StudentAssessment;
 use App\Models\TutorResponseEvaluation;
 use App\Models\User;
 use Illuminate\Support\Collection;
-use Illuminate\Support\Str;
 
 class TeacherGradebookService
 {
@@ -257,7 +256,7 @@ class TeacherGradebookService
                 'student:id,name,email',
                 'session:id,group_id,topic_id,learning_period_id',
                 'session.group:id,group_name',
-                'session.topic:id,name,unit_id',
+                'session.topic:id,topic_name,unit_id',
                 'session.topic.unit:id,title',
                 'sessionObjective:id,learning_objective_id,tutor_session_id',
                 'sessionObjective.learningObjective:id,topic_id,code,objective',
@@ -293,7 +292,7 @@ class TeacherGradebookService
                 'group_id' => $evaluation->session?->group_id,
                 'group_name' => $evaluation->session?->group?->group_name,
                 'unit' => $topic?->unit?->title,
-                'topic' => $topic?->name,
+                'topic' => $topic?->topic_name,
                 'learning_objective_id' => $objective?->id,
                 'objective_code' => $objective?->code,
                 'objective' => $objective?->objective,
