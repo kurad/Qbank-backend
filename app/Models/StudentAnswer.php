@@ -15,6 +15,9 @@ class StudentAnswer extends Model
         'answer',
         'is_correct',
         'points_earned',
+        'reviewed_by',
+        'reviewed_at',
+        'teacher_feedback',
         'confidence_score',
         'submitted_at',
     ];
@@ -22,6 +25,7 @@ class StudentAnswer extends Model
         'answer' => 'array',      // ✅ this is the key
         'is_correct' => 'boolean',
         'submitted_at' => 'datetime',
+        'reviewed_at' => 'datetime',
         'points_earned' => 'decimal:2',
         
     ];
@@ -37,6 +41,11 @@ class StudentAnswer extends Model
     }
     public function assignedBy() {
         return $this->belongsTo(User::class, 'assigned_by');
+    }
+
+    public function reviewedBy()
+    {
+        return $this->belongsTo(User::class, 'reviewed_by');
     }
     
 }

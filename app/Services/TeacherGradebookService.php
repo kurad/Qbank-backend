@@ -5,9 +5,11 @@ namespace App\Services;
 use App\Models\Assessment;
 use App\Models\Group;
 use App\Models\StudentAssessment;
+use App\Models\StudentAnswer;
 use App\Models\TutorResponseEvaluation;
 use App\Models\User;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Str;
 
 class TeacherGradebookService
 {
@@ -110,7 +112,7 @@ class TeacherGradebookService
         ];
 
         foreach ($columns as $column) {
-            $headings[] = $column['name'] . ' (' . $column['group_name'] . ')';
+            $headings[] = $column['title'] . ' (' . $column['group_name'] . ')';
         }
 
         $headings[] = 'Assessment Average %';
@@ -233,7 +235,7 @@ class TeacherGradebookService
                     'assessment_id' => $assessment->id,
                     'group_id' => $group->id,
                     'group_name' => $group->group_name,
-                    'name' => $assessment->name,
+                    'title' => $assessment->title,
                     'type' => $assessment->type,
                     'delivery_mode' => $assessment->delivery_mode,
                     'due_date' => $assessment->due_date ? (string) $assessment->due_date : null,
@@ -257,7 +259,7 @@ class TeacherGradebookService
                 'session:id,group_id,topic_id,learning_period_id',
                 'session.group:id,group_name',
                 'session.topic:id,topic_name,unit_id',
-                'session.topic.unit:id,name',
+                'session.topic.unit:id,title',
                 'sessionObjective:id,learning_objective_id,tutor_session_id',
                 'sessionObjective.learningObjective:id,topic_id,code,objective',
             ])
@@ -291,7 +293,7 @@ class TeacherGradebookService
                 'student_name' => $evaluation->student?->name,
                 'group_id' => $evaluation->session?->group_id,
                 'group_name' => $evaluation->session?->group?->group_name,
-                'unit' => $topic?->unit?->name,
+                'unit' => $topic?->unit?->title,
                 'topic' => $topic?->topic_name,
                 'learning_objective_id' => $objective?->id,
                 'objective_code' => $objective?->code,
@@ -430,6 +432,287 @@ class TeacherGradebookService
             ->sortBy('unit')
             ->sortBy('topic')
             ->values();
+    }
+
+
+
+    public function studentProfile(User $teacher, User $student, array $filters = []): array
+    {
+        $this->ensureTeacherOrAdmin($teacher);
+
+        $groups = $this->accessibleGroups($teacher, $filters)
+            ->filter(fn (Group $group) => $group->students->contains('id', $student->id))
+            ->values();
+
+        abort_if(
+            $groups->isEmpty(),
+            403,
+            'This student is not enrolled in a class you can manage.'
+        );
+
+        $groupIds = $groups->pluck('id')->all();
+
+        $attemptQuery = StudentAssessment::query()
+            ->where('student_id', $student->id)
+            ->whereHas('assessment.groups', fn ($q) => $q->whereIn('groups.id', $groupIds));
+
+        if (!empty($filters['assessment_type'])) {
+            $attemptQuery->whereHas('assessment', fn ($q) =>
+                $q->where('type', $filters['assessment_type'])
+            );
+        }
+
+        if (!empty($filters['from'])) {
+            $attemptQuery->whereDate('completed_at', '>=', $filters['from']);
+        }
+
+        if (!empty($filters['to'])) {
+            $attemptQuery->whereDate('completed_at', '<=', $filters['to']);
+        }
+
+        $attempts = $attemptQuery
+            ->with([
+                'assessment:id,title,type,creator_id,due_date,delivery_mode,status',
+                'assessment.groups' => fn ($q) => $q
+                    ->whereIn('groups.id', $groupIds)
+                    ->select('groups.id', 'group_name', 'grade_subject_id', 'academic_year'),
+                'assessment.assessmentQuestions.question:id,marks',
+                'studentAnswers.question:id,question_type,question,marks,correct_answer,explanation,question_image,correct_answer_image,learning_objective_id',
+                'studentAnswers.question.learningObjective:id,code,objective',
+            ])
+            ->orderByDesc('completed_at')
+            ->orderByDesc('assigned_at')
+            ->get()
+            ->map(function (StudentAssessment $attempt) {
+                $fallbackMax = $attempt->assessment?->assessmentQuestions
+                    ?->sum(fn ($aq) => (float) ($aq->question?->marks ?? 0)) ?? 0;
+
+                $maxScore = (float) $attempt->max_score > 0
+                    ? (float) $attempt->max_score
+                    : (float) $fallbackMax;
+
+                $percentage = $maxScore > 0
+                    ? round(((float) $attempt->score / $maxScore) * 100, 1)
+                    : null;
+
+                return [
+                    'id' => $attempt->id,
+                    'assessment_id' => $attempt->assessment_id,
+                    'title' => $attempt->assessment?->title,
+                    'type' => $attempt->assessment?->type,
+                    'delivery_mode' => $attempt->assessment?->delivery_mode,
+                    'status' => $attempt->status,
+                    'score' => round((float) $attempt->score, 2),
+                    'max_score' => round($maxScore, 2),
+                    'percentage' => $percentage,
+                    'assigned_at' => optional($attempt->assigned_at)->toDateTimeString(),
+                    'completed_at' => optional($attempt->completed_at)->toDateTimeString(),
+                    'classes' => $attempt->assessment?->groups?->pluck('group_name')->values()->all() ?? [],
+                    'answers' => $attempt->studentAnswers->map(function (StudentAnswer $answer) {
+                        $question = $answer->question;
+
+                        return [
+                            'id' => $answer->id,
+                            'question_id' => $answer->question_id,
+                            'question_type' => $question?->question_type,
+                            'question' => $question?->question,
+                            'question_image_url' => $question?->question_image_url,
+                            'answer' => $answer->answer,
+                            'points_earned' => (float) ($answer->points_earned ?? 0),
+                            'marks' => (float) ($question?->marks ?? 0),
+                            'is_correct' => $answer->is_correct,
+                            'reviewed_at' => optional($answer->reviewed_at)->toDateTimeString(),
+                            'teacher_feedback' => $answer->teacher_feedback,
+                            'objective_code' => $question?->learningObjective?->code,
+                            'objective' => $question?->learningObjective?->objective,
+                        ];
+                    })->values()->all(),
+                ];
+            });
+
+        $checks = $this->understandingChecks($groupIds, $filters)
+            ->where('student_id', $student->id)
+            ->values();
+
+        $assessmentPercentages = $attempts
+            ->pluck('percentage')
+            ->filter(fn ($value) => $value !== null);
+
+        return [
+            'student' => [
+                'id' => $student->id,
+                'name' => $student->name,
+                'email' => $student->email,
+            ],
+            'classes' => $groups->map(fn (Group $group) => [
+                'id' => $group->id,
+                'name' => $group->group_name,
+                'academic_year' => $group->academic_year,
+                'subject' => $group->gradeSubject?->subject?->name,
+                'grade' => $group->gradeSubject?->gradeLevel?->grade_name,
+            ])->values()->all(),
+            'summary' => [
+                'assessment_average' => $this->average($assessmentPercentages),
+                'assessments_completed' => $attempts
+                    ->filter(fn ($row) => in_array($row['status'], ['graded', 'completed', 'under_review'], true))
+                    ->count(),
+                'check_average' => $this->average($checks->pluck('score')),
+                'checks_completed' => $checks->count(),
+                'misconceptions' => $checks->filter(fn ($row) => !empty($row['misconception']))->count(),
+            ],
+            'assessments' => $attempts->values()->all(),
+            'understanding_checks' => $checks->values()->all(),
+        ];
+    }
+
+    public function manualReviewQueue(User $teacher, array $filters = []): Collection
+    {
+        $this->ensureTeacherOrAdmin($teacher);
+
+        $groups = $this->accessibleGroups($teacher, $filters);
+        $groupIds = $groups->pluck('id')->all();
+
+        if (empty($groupIds)) {
+            return collect();
+        }
+
+        $query = StudentAnswer::query()
+            ->whereNull('reviewed_at')
+            ->whereHas('question', fn ($q) => $q->where('question_type', 'open_ended'))
+            ->whereHas('studentAssessment', function ($q) use ($groupIds, $filters) {
+                $q->where('status', 'under_review')
+                    ->whereHas('assessment.groups', fn ($g) => $g->whereIn('groups.id', $groupIds));
+
+                if (!empty($filters['assessment_type'])) {
+                    $q->whereHas('assessment', fn ($assessment) =>
+                        $assessment->where('type', $filters['assessment_type'])
+                    );
+                }
+
+                if (!empty($filters['from'])) {
+                    $q->whereDate('completed_at', '>=', $filters['from']);
+                }
+
+                if (!empty($filters['to'])) {
+                    $q->whereDate('completed_at', '<=', $filters['to']);
+                }
+            });
+
+        return $query
+            ->with([
+                'question:id,question_type,question,marks,question_image,learning_objective_id',
+                'question.learningObjective:id,code,objective',
+                'studentAssessment:id,student_id,assessment_id,status,score,max_score,completed_at',
+                'studentAssessment.student:id,name,email',
+                'studentAssessment.assessment:id,title,type,creator_id',
+                'studentAssessment.assessment.groups' => fn ($q) => $q
+                    ->whereIn('groups.id', $groupIds)
+                    ->select('groups.id', 'group_name'),
+            ])
+            ->orderBy('student_assessment_id')
+            ->orderBy('id')
+            ->get()
+            ->map(function (StudentAnswer $answer) {
+                $question = $answer->question;
+                $attempt = $answer->studentAssessment;
+
+                return [
+                    'answer_id' => $answer->id,
+                    'student_assessment_id' => $attempt?->id,
+                    'student_id' => $attempt?->student_id,
+                    'student_name' => $attempt?->student?->name,
+                    'student_email' => $attempt?->student?->email,
+                    'assessment_id' => $attempt?->assessment_id,
+                    'assessment_title' => $attempt?->assessment?->title,
+                    'assessment_type' => $attempt?->assessment?->type,
+                    'classes' => $attempt?->assessment?->groups?->pluck('group_name')->values()->all() ?? [],
+                    'question_id' => $answer->question_id,
+                    'question' => $question?->question,
+                    'question_image_url' => $question?->question_image_url,
+                    'answer' => $answer->answer,
+                    'marks' => (float) ($question?->marks ?? 0),
+                    'objective_code' => $question?->learningObjective?->code,
+                    'objective' => $question?->learningObjective?->objective,
+                    'completed_at' => optional($attempt?->completed_at)->toDateTimeString(),
+                ];
+            })
+            ->values();
+    }
+
+    public function reviewAnswer(
+        User $teacher,
+        StudentAnswer $answer,
+        float $points,
+        ?string $feedback = null
+    ): array {
+        $this->ensureTeacherOrAdmin($teacher);
+
+        $answer->loadMissing([
+            'question:id,question_type,marks',
+            'studentAssessment.assessment.groups:id,group_name,created_by,grade_subject_id',
+        ]);
+
+        abort_unless(
+            $answer->question?->question_type === 'open_ended',
+            422,
+            'Only open-ended answers are manually graded in this queue.'
+        );
+
+        $accessibleGroupIds = $this->accessibleGroups($teacher)
+            ->pluck('id');
+
+        $answerGroupIds = $answer->studentAssessment?->assessment?->groups
+            ?->pluck('id') ?? collect();
+
+        abort_if(
+            $answerGroupIds->intersect($accessibleGroupIds)->isEmpty(),
+            403,
+            'You are not authorized to grade this response.'
+        );
+
+        $maxMarks = (float) ($answer->question?->marks ?? 0);
+
+        abort_if(
+            $points < 0 || $points > $maxMarks,
+            422,
+            'Points must be between 0 and ' . $maxMarks . '.'
+        );
+
+        $answer->update([
+            'points_earned' => $points,
+            'is_correct' => $maxMarks > 0 && $points >= $maxMarks,
+            'reviewed_by' => $teacher->id,
+            'reviewed_at' => now(),
+            'teacher_feedback' => $feedback ? trim($feedback) : null,
+        ]);
+
+        $attempt = $answer->studentAssessment()->with('assessment.assessmentQuestions.question')->firstOrFail();
+
+        $remaining = $attempt->studentAnswers()
+            ->whereNull('reviewed_at')
+            ->whereHas('question', fn ($q) => $q->where('question_type', 'open_ended'))
+            ->count();
+
+        $score = (float) $attempt->studentAnswers()->sum('points_earned');
+        $maxScore = (float) $attempt->assessment->assessmentQuestions
+            ->sum(fn ($aq) => (float) ($aq->question?->marks ?? 0));
+
+        $attempt->update([
+            'score' => $score,
+            'max_score' => $maxScore,
+            'status' => $remaining === 0 ? 'graded' : 'under_review',
+        ]);
+
+        return [
+            'answer_id' => $answer->id,
+            'points_earned' => (float) $answer->points_earned,
+            'reviewed_at' => optional($answer->reviewed_at)->toDateTimeString(),
+            'student_assessment_id' => $attempt->id,
+            'assessment_status' => $attempt->status,
+            'assessment_score' => (float) $attempt->score,
+            'assessment_max_score' => (float) $attempt->max_score,
+            'remaining_manual_answers' => $remaining,
+        ];
     }
 
     protected function average(Collection $values): ?float

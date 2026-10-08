@@ -87,7 +87,7 @@ Route::post('/refresh-token', [AuthController::class, 'refreshToken']);
 
 // Public class invitation preview
 Route::get('/class-invitations/{classCode}', [ClassInvitationController::class, 'show']);
-
+Route::post('/class-invitations/{classCode}/resolve-account')->middleware('throttle:10,1');
 Route::get('/auth/google', [AuthController::class, 'redirectToGoogle']);
 Route::get('/auth/google/callback', [AuthController::class, 'handleGoogleCallback']);
 
@@ -266,6 +266,8 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     Route::post('/tutor/sessions/{tutorSession}/continue', [TutorController::class, 'continueLearning']);
     Route::post('/tutor/sessions/{tutorSession}/checkpoints/{checkpointMessage}/answer', [TutorController::class, 'answerCheckpoint']);
     Route::post('/tutor/sessions/{tutorSession}/checkpoints/{checkpointMessage}/skip', [TutorController::class, 'skipCheckpoint']);
+    Route::post('/tutor/sessions/{tutorSession}/next-objective', [TutorController::class, 'nextObjective']
+);
     /*
     |--------------------------------------------------------------------------
     | Legacy Tutor Endpoint
@@ -490,5 +492,8 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     Route::prefix('teacher/gradebook')->group(function () {
     Route::get('/', [TeacherGradebookController::class, 'index']);
     Route::get('/export', [TeacherGradebookController::class, 'export']);
+    Route::get('/review-queue', [TeacherGradebookController::class, 'reviewQueue']);
+    Route::get('/students/{student}', [TeacherGradebookController::class, 'student']);
+    Route::put('/answers/{answer}', [TeacherGradebookController::class, 'reviewAnswer']);
 });
 });

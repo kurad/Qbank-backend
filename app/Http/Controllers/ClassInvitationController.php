@@ -45,6 +45,79 @@ class ClassInvitationController extends Controller
      * Shared class-code enrollment used by both the existing manual
      * join flow and the new invitation-link flow.
      */
+
+    /**
+     * Resolve the next step for a student invitation using the email address.
+     *
+     * This endpoint intentionally does not authenticate the user. It only tells
+     * the invitation page whether the student should sign in or create a new
+     * student account. The invitation itself scopes the lookup to one school.
+     */
+    public function resolveAccount(Request $request, string $classCode)
+    {
+        $validated = $request->validate([
+            'email' => ['required', 'email', 'max:255'],
+        ]);
+
+        $classCode = strtoupper(trim($classCode));
+        $email = strtolower(trim($validated['email']));
+
+        $group = Group::with([
+            'gradeSubject.school:id,school_name',
+        ])
+            ->whereRaw('UPPER(class_code) = ?', [$classCode])
+            ->first();
+
+        if (!$group || !$group->gradeSubject) {
+            throw ValidationException::withMessages([
+                'class_code' => ['This class invitation is invalid or no longer exists.'],
+            ]);
+        }
+
+        $schoolId = (int) $group->gradeSubject->school_id;
+
+        $user = \App\Models\User::query()
+            ->whereRaw('LOWER(email) = ?', [$email])
+            ->first();
+
+        if (!$user) {
+            return response()->json([
+                'action' => 'register',
+                'email' => $email,
+                'message' => 'No RevisionHub student account was found for this email. Continue to create one.',
+            ]);
+        }
+
+        if ($user->role !== 'student') {
+            return response()->json([
+                'action' => 'blocked',
+                'email' => $email,
+                'message' => 'This email is already linked to a non-student RevisionHub account. Please use a student email address.',
+            ], 422);
+        }
+
+        if ($schoolId && (int) $user->school_id !== $schoolId) {
+            return response()->json([
+                'action' => 'blocked',
+                'email' => $email,
+                'message' => 'This student account belongs to a different school.',
+            ], 403);
+        }
+
+        $alreadyJoined = $group->students()
+            ->where('users.id', $user->id)
+            ->exists();
+
+        return response()->json([
+            'action' => 'login',
+            'email' => $email,
+            'already_joined' => $alreadyJoined,
+            'message' => $alreadyJoined
+                ? 'Your account already belongs to this class. Sign in to open it.'
+                : 'We found your RevisionHub account. Sign in to join this class.',
+        ]);
+    }
+
     public function join(Request $request, ?string $classCode = null)
     {
         $user = $request->user();

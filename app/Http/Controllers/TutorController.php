@@ -1,4 +1,5 @@
 <?php
+
 namespace App\Http\Controllers;
 
 use App\Models\CourseMaterial;
@@ -73,7 +74,6 @@ class TutorController extends Controller
             ),
 
         ]);
-
     }
 
     public function learningPeriods(
@@ -84,7 +84,8 @@ class TutorController extends Controller
 
         $periods = $this->context
             ->learningPeriodsForStudent($request->user(), $group, false)
-            ->filter(fn (LearningPeriod $period) =>
+            ->filter(
+                fn(LearningPeriod $period) =>
                 $period->start_date->toDateString() <= $today
             )
             ->map(function (LearningPeriod $period) use ($today) {
@@ -129,7 +130,6 @@ class TutorController extends Controller
             ),
 
         ]);
-
     }
 
     public function units(
@@ -155,7 +155,6 @@ class TutorController extends Controller
             ),
 
         ]);
-
     }
 
     public function topics(
@@ -187,7 +186,6 @@ class TutorController extends Controller
             ),
 
         ]);
-
     }
 
     public function objectives(
@@ -225,7 +223,6 @@ class TutorController extends Controller
             ),
 
         ]);
-
     }
 
     public function createSession(Request $request)
@@ -291,7 +288,6 @@ class TutorController extends Controller
             'data' => $session,
 
         ], 201);
-
     }
 
     public function message(
@@ -469,7 +465,6 @@ class TutorController extends Controller
             ],
 
         ]);
-
     }
 
     public function introduceCurrentObjective(
@@ -530,20 +525,20 @@ class TutorController extends Controller
                 'session_id' => $tutorSession->id,
                 'answer' => $answer,
                 'assistant_message' =>
-                    $this->publicMessage(
-                        $assistantMessage
-                    ),
+                $this->publicMessage(
+                    $assistantMessage
+                ),
                 'current_objective' =>
-                    $this->publicObjective(
-                        $currentObjective
-                    ),
+                $this->publicObjective(
+                    $currentObjective
+                ),
                 'progress' => [
                     'objective_completed' => false,
                     'session_completed' => false,
                     'current_objective' =>
-                        $this->publicObjective(
-                            $currentObjective
-                        ),
+                    $this->publicObjective(
+                        $currentObjective
+                    ),
                     ...$this->difficulty->profile(
                         $tutorSession,
                         $currentObjective
@@ -552,7 +547,6 @@ class TutorController extends Controller
                 'session' => $freshSession,
             ],
         ]);
-
     }
 
     public function continueLearning(
@@ -648,7 +642,6 @@ class TutorController extends Controller
             ],
 
         ]);
-
     }
 
     public function answerCheckpoint(
@@ -736,7 +729,6 @@ class TutorController extends Controller
                 ],
 
             ]);
-
         } else {
 
             $responseDepth =
@@ -752,7 +744,6 @@ class TutorController extends Controller
                 'medium' => 8000,
 
                 default => 4000,
-
             };
 
             $data = $request->validate([
@@ -768,7 +759,6 @@ class TutorController extends Controller
                 ],
 
             ]);
-
         }
 
         $result =
@@ -998,7 +988,37 @@ class TutorController extends Controller
             ],
 
         ]);
+    }
 
+    public function nextObjective(
+        TutorSession $tutorSession,
+        TutorAIService $tutorAIService
+    ) {
+        $user = auth()->user();
+
+        abort_unless(
+            $user &&
+                $user->role === 'student' &&
+                (int) $tutorSession->student_id === (int) $user->id,
+            403
+        );
+
+        $tutorSession->load([
+            'objectives.learningObjective',
+            'topic',
+            'unit',
+        ]);
+
+        $message = $tutorAIService->introduceCurrentObjective(
+            $tutorSession
+        );
+
+        return response()->json([
+            'message' => $message,
+            'session' => $tutorSession->fresh([
+                'objectives.learningObjective',
+            ]),
+        ]);
     }
 
     public function skipCheckpoint(
@@ -1060,7 +1080,6 @@ class TutorController extends Controller
             ],
 
         ]);
-
     }
 
     public function sessions(Request $request)
@@ -1226,7 +1245,6 @@ class TutorController extends Controller
             'data' => $sessions,
 
         ]);
-
     }
 
     public function showSession(
@@ -1294,11 +1312,9 @@ class TutorController extends Controller
                         'created_at' => $message->created_at,
 
                     ];
-
                 }
 
                 return $this->publicMessage($message);
-
             })
 
             ->values();
@@ -1376,7 +1392,6 @@ class TutorController extends Controller
             'data' => $sessionData,
 
         ]);
-
     }
 
     /**
@@ -1434,7 +1449,6 @@ class TutorController extends Controller
             ),
 
         ]);
-
     }
 
     /**
@@ -1576,7 +1590,6 @@ class TutorController extends Controller
                 )
 
                 ->firstOrFail();
-
         }
 
         if (!$session) {
@@ -1610,7 +1623,6 @@ class TutorController extends Controller
                     now(),
 
                 ]);
-
         }
 
         $messages =
@@ -1678,7 +1690,6 @@ class TutorController extends Controller
                 )
 
                 ->all();
-
         }
 
         $messages[] = [
@@ -1705,27 +1716,27 @@ class TutorController extends Controller
 
         $session->messages()->createMany([
 
-                [
+            [
 
-                    'role' => 'user',
+                'role' => 'user',
 
-                    'message_type' => 'text',
+                'message_type' => 'text',
 
-                    'content' => $data['message'],
+                'content' => $data['message'],
 
-                ],
+            ],
 
-                [
+            [
 
-                    'role' => 'assistant',
+                'role' => 'assistant',
 
-                    'message_type' => 'text',
+                'message_type' => 'text',
 
-                    'content' => $answer,
+                'content' => $answer,
 
-                ],
+            ],
 
-            ]);
+        ]);
 
         $session->update(['last_activity_at' => now(),]);
 
@@ -1752,7 +1763,6 @@ class TutorController extends Controller
             ],
 
         ]);
-
     }
 
     protected function authorizeStudentSession(
@@ -1764,7 +1774,6 @@ class TutorController extends Controller
     ): void {
 
         abort_unless((int) $session->student_id === (int) $request->user()->id, 403);
-
     }
 
     protected function ensureActiveSession(
@@ -1774,7 +1783,6 @@ class TutorController extends Controller
     ): void {
 
         abort_if($session->status !== 'active', 422, 'This Tutor session is no longer active.');
-
     }
 
     protected function publicMessage(
@@ -1798,7 +1806,6 @@ class TutorController extends Controller
             'created_at' => $message->created_at,
 
         ];
-
     }
 
     protected function publicObjective(
@@ -1810,7 +1817,6 @@ class TutorController extends Controller
         if (!$sessionObjective) {
 
             return null;
-
         }
 
         $objective = $sessionObjective->learningObjective;
@@ -1838,7 +1844,5 @@ class TutorController extends Controller
             ] : null,
 
         ];
-
     }
-
 }
