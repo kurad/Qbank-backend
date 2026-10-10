@@ -22,7 +22,7 @@ class QuestionnaireImportController extends Controller
             ->where('user_id', $user->id)
             ->with([
                 'gradeSubject.subject:id,name',
-                'gradeSubject.gradeLevel:id,name',
+                'gradeSubject.gradeLevel:id,grade_name',
             ])
             ->latest()
             ->paginate(
@@ -457,7 +457,7 @@ class QuestionnaireImportController extends Controller
     ): QuestionnaireImport {
         return $import->load([
             'gradeSubject.subject:id,name',
-            'gradeSubject.gradeLevel:id,name',
+            'gradeSubject.gradeLevel:id,grade_name',
             'gradeSubject.units:id,grade_subject_id,name,order,status',
             'gradeSubject.units.topics:id,unit_id,grade_subject_id,topic_name,order,status',
             'gradeSubject.units.topics.learningObjectives:id,topic_id,code,objective,order,status',
