@@ -17,6 +17,7 @@ use App\Http\Controllers\ModernAssessmentBuilderController;
 use App\Http\Controllers\PaperGeneratorController;
 use App\Http\Controllers\PracticePaperController;
 use App\Http\Controllers\QuestionController;
+use App\Http\Controllers\QuestionnaireImportController;
 use App\Http\Controllers\SchoolController;
 use App\Http\Controllers\StudentAnswerController;
 use App\Http\Controllers\StudentAssessmentController;
@@ -266,8 +267,10 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     Route::post('/tutor/sessions/{tutorSession}/continue', [TutorController::class, 'continueLearning']);
     Route::post('/tutor/sessions/{tutorSession}/checkpoints/{checkpointMessage}/answer', [TutorController::class, 'answerCheckpoint']);
     Route::post('/tutor/sessions/{tutorSession}/checkpoints/{checkpointMessage}/skip', [TutorController::class, 'skipCheckpoint']);
-    Route::post('/tutor/sessions/{tutorSession}/next-objective', [TutorController::class, 'nextObjective']
-);
+    Route::post(
+        '/tutor/sessions/{tutorSession}/next-objective',
+        [TutorController::class, 'nextObjective']
+    );
     /*
     |--------------------------------------------------------------------------
     | Legacy Tutor Endpoint
@@ -490,10 +493,20 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     });
 
     Route::prefix('teacher/gradebook')->group(function () {
-    Route::get('/', [TeacherGradebookController::class, 'index']);
-    Route::get('/export', [TeacherGradebookController::class, 'export']);
-    Route::get('/review-queue', [TeacherGradebookController::class, 'reviewQueue']);
-    Route::get('/students/{student}', [TeacherGradebookController::class, 'student']);
-    Route::put('/answers/{answer}', [TeacherGradebookController::class, 'reviewAnswer']);
-});
+        Route::get('/', [TeacherGradebookController::class, 'index']);
+        Route::get('/export', [TeacherGradebookController::class, 'export']);
+        Route::get('/review-queue', [TeacherGradebookController::class, 'reviewQueue']);
+        Route::get('/students/{student}', [TeacherGradebookController::class, 'student']);
+        Route::put('/answers/{answer}', [TeacherGradebookController::class, 'reviewAnswer']);
+    });
+
+    Route::prefix('teacher/questionnaire-imports')->group(function () {
+        Route::get('/', [QuestionnaireImportController::class, 'index']);
+        Route::post('/', [QuestionnaireImportController::class, 'store']);
+        Route::get('/{questionnaireImport}', [QuestionnaireImportController::class, 'show']);
+        Route::post('/{questionnaireImport}/reprocess', [QuestionnaireImportController::class, 'reprocess']);
+        Route::put('/{questionnaireImport}/items/{item}', [QuestionnaireImportController::class, 'updateItem']);
+        Route::post('/{questionnaireImport}/approve', [QuestionnaireImportController::class, 'approve']);
+        Route::delete('/{questionnaireImport}', [QuestionnaireImportController::class, 'destroy']);
+    });
 });
