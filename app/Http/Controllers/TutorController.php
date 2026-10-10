@@ -1032,33 +1032,133 @@ class TutorController extends Controller
     }
 
     public function nextObjective(
-        TutorSession $tutorSession,
-        TutorAIService $tutorAIService
+        Request $request,
+        TutorSession $tutorSession
     ) {
-        $user = auth()->user();
-
-        abort_unless(
-            $user &&
-                $user->role === 'student' &&
-                (int) $tutorSession->student_id === (int) $user->id,
-            403
-        );
-
-        $tutorSession->load([
-            'objectives.learningObjective',
-            'topic',
-            'unit',
-        ]);
-
-        $message = $tutorAIService->introduceCurrentObjective(
+        /*
+         * Use the same introduction flow as introduceCurrentObjective().
+         *
+         * The older implementation returned:
+         *
+         *   { message, session }
+         *
+         * while the Vue client expects:
+         *
+         *   { data: { assistant_message, progress, session, ... } }
+         *
+         * Because of that mismatch, the new objective introduction was never
+         * added to the conversation and the UI kept the previous learning
+         * support state, making "Check understanding" appear immediately.
+         */
+        $this->authorizeStudentSession(
+            $request,
             $tutorSession
         );
 
+        $this->ensureActiveSession(
+            $tutorSession
+        );
+
+        $currentObjective =
+            $this->sessionsService->currentObjective(
+                $tutorSession
+            );
+
+        abort_unless(
+            $currentObjective,
+            422,
+            'There is no active learning objective to introduce.'
+        );
+
+        /*
+         * Generate a proper teaching introduction for the newly activated
+         * objective. TutorAIService is explicitly instructed not to create a
+         * formal checkpoint here.
+         */
+        $answer =
+            $this->ai->introduceCurrentObjective(
+                $tutorSession
+            );
+
+        /*
+         * Persist the introduction in the Tutor conversation. This is
+         * important both for the learner UI and for later AI context.
+         */
+        $assistantMessage =
+            $tutorSession
+            ->messages()
+            ->create([
+                'role' => 'assistant',
+                'message_type' => 'objective_intro',
+                'content' => $answer,
+                'metadata' => [
+                    'objective_id' =>
+                        $currentObjective->id,
+                ],
+            ]);
+
+        $tutorSession->update([
+            'last_activity_at' => now(),
+        ]);
+
+        $freshSession =
+            $this->sessionsService->freshSession(
+                $tutorSession
+            );
+
         return response()->json([
-            'message' => $message,
-            'session' => $tutorSession->fresh([
-                'objectives.learningObjective',
-            ]),
+            'data' => [
+                'session_id' =>
+                    $tutorSession->id,
+
+                'answer' =>
+                    $answer,
+
+                'assistant_message' =>
+                    $this->publicMessage(
+                        $assistantMessage
+                    ),
+
+                'current_objective' =>
+                    $this->publicObjective(
+                        $currentObjective
+                    ),
+
+                /*
+                 * Refresh the adaptive state for the NEW objective.
+                 * This prevents stale checkpoint_ready / learning_state
+                 * values from the completed objective leaking into the UI.
+                 */
+                'progress' => [
+                    'objective_completed' =>
+                        false,
+
+                    'objective_resolved' =>
+                        false,
+
+                    'session_completed' =>
+                        false,
+
+                    'learning_state' =>
+                        'teaching',
+
+                    'current_objective' =>
+                        $this->publicObjective(
+                            $currentObjective
+                        ),
+
+                    ...$this->difficulty->profile(
+                        $tutorSession,
+                        $currentObjective
+                    ),
+                ],
+
+                'pending_checkpoint' =>
+                    null,
+
+                'session' =>
+                    $freshSession,
+            ],
         ]);
     }
 
