@@ -501,7 +501,7 @@ PROMPT;
             'Teaching Area ID ' .
             $gradeSubject->id .
             ': ' .
-            ($gradeSubject->gradeLevel?->name ?? 'Grade') .
+            ($gradeSubject->gradeLevel?->grade_name ?? 'Grade') .
             ' / ' .
             ($gradeSubject->subject?->name ?? 'Subject');
 
