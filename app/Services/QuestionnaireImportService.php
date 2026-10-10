@@ -32,7 +32,7 @@ class QuestionnaireImportService
         try {
             $gradeSubject = GradeSubject::with([
                 'subject:id,name',
-                'gradeLevel:id,name',
+                'gradeLevel:id,grade_name',
                 'units.topics.learningObjectives',
             ])->findOrFail($import->grade_subject_id);
 

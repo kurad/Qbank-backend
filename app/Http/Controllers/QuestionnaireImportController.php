@@ -74,12 +74,9 @@ class QuestionnaireImportController extends Controller
         $import = QuestionnaireImport::create([
             'user_id' => $request->user()->id,
             'grade_subject_id' => $gradeSubject->id,
-            'original_name' =>
-                $file->getClientOriginalName(),
+            'original_name' => $file->getClientOriginalName(),
             'file_path' => $path,
-            'mime_type' =>
-                $file->getMimeType()
-                ?: $file->getClientMimeType(),
+            'mime_type' => $file->getMimeType() ?: $file->getClientMimeType(),
             'status' => 'queued',
         ]);
 
@@ -88,8 +85,7 @@ class QuestionnaireImportController extends Controller
         );
 
         return response()->json([
-            'message' =>
-                'Questionnaire uploaded. Extraction has started.',
+            'message' => 'Questionnaire uploaded. Extraction has started.',
             'data' => $this->loadImport($import),
         ], 202);
     }
@@ -104,10 +100,7 @@ class QuestionnaireImportController extends Controller
         );
 
         return response()->json([
-            'data' =>
-                $this->loadImport(
-                    $questionnaireImport
-                ),
+            'data' => $this->loadImport($questionnaireImport),
         ]);
     }
 
