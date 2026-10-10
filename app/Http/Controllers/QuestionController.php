@@ -1415,6 +1415,18 @@ class QuestionController extends Controller
         $createdBy =
             $request->input('created_by');
 
+        $gradeSubjectId =
+            $request->input('grade_subject_id');
+
+        $unitId =
+            $request->input('unit_id');
+
+        $source =
+            $request->input('source');
+
+        $status =
+            $request->input('status');
+
         $pageSize = min(
             (int)$request->input('page_size', 10),
             100
@@ -1472,6 +1484,42 @@ class QuestionController extends Controller
                     'grade_level_id',
                     $gradeLevelId
                 )
+            );
+        }
+
+        if (!empty($gradeSubjectId)) {
+            $query->whereHas(
+                'topic',
+                fn($q) =>
+                $q->where(
+                    'grade_subject_id',
+                    $gradeSubjectId
+                )
+            );
+        }
+
+        if (!empty($unitId)) {
+            $query->whereHas(
+                'topic',
+                fn($q) =>
+                $q->where(
+                    'unit_id',
+                    $unitId
+                )
+            );
+        }
+
+        if (!empty($source)) {
+            $query->where(
+                'source',
+                $source
+            );
+        }
+
+        if (!empty($status)) {
+            $query->where(
+                'status',
+                $status
             );
         }
 
