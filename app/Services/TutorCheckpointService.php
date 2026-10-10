@@ -26,7 +26,10 @@ class TutorCheckpointService
         protected TutorDifficultyService $difficulty
     ) {}
 
-    public function generate(TutorSession $session): TutorMessage
+    public function generate(
+        TutorSession $session,
+        bool $forceFollowUp = false
+    ): TutorMessage
     {
         $this->ensureActive($session);
 
@@ -40,7 +43,19 @@ class TutorCheckpointService
 
         $difficulty = $this->difficulty->profile($session, $objective);
 
-        if (!($difficulty['checkpoint_ready'] ?? true)) {
+        /*
+         * Normal learner-triggered checks respect the support-turn gate.
+         * An automatic follow-up immediately after feedback may bypass that
+         * gate so the learner does not have to click "Check again".
+         *
+         * This does NOT bypass mastery rules: the new checkpoint is still
+         * evaluated normally and the objective still requires its configured
+         * evidence before it can be resolved.
+         */
+        if (
+            !$forceFollowUp
+            && !($difficulty['checkpoint_ready'] ?? true)
+        ) {
             throw ValidationException::withMessages([
                 'checkpoint' => 'Spend a little more time working through the explanation with your Tutor before trying another learning check.',
             ]);
