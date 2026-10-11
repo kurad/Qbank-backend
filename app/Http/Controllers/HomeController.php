@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Question;
+use App\Models\LearningPeriod;
 use App\Models\StudentAssessment;
 use App\Models\Subject;
 use App\Models\Topic;
@@ -132,25 +133,49 @@ class HomeController extends Controller
             })
             ->values();
 
-        $tutorObjectives = TutorSessionObjective::query()
-            ->whereHas('session', fn ($query) => $query->where('student_id', $user->id))
-            ->get(['id', 'tutor_session_id', 'status', 'attempts', 'correct_attempts', 'completed_at']);
+        /*
+         * ---------------------------------------------------------
+         * CURRENT LEARNING REALITY
+         * ---------------------------------------------------------
+         *
+         * Dashboard Tutor statistics must describe what the learner
+         * is currently expected to learn, not every Tutor session they
+         * have ever completed.
+         *
+         * We therefore scope Tutor progress to the learner's CURRENT
+         * published learning periods.
+         */
+        $groupIds = $user
+            ->groups()
+            ->pluck('groups.id');
 
-        $totalTutorObjectives = $tutorObjectives->count();
-        $masteredObjectives = $tutorObjectives->where('status', 'completed')->count();
-        $reviewObjectives = $tutorObjectives->where('status', 'needs_review')->count();
-        $activeObjectives = $tutorObjectives->where('status', 'in_progress')->count();
-        $coveredObjectives = $masteredObjectives + $reviewObjectives;
+        $today = now()->toDateString();
 
-        $masteryRate = $totalTutorObjectives > 0
-            ? round(($masteredObjectives / $totalTutorObjectives) * 100, 1)
-            : 0;
+        $currentLearningPeriods = LearningPeriod::query()
+            ->whereIn('group_id', $groupIds)
+            ->where('status', 'published')
+            ->whereDate('start_date', '<=', $today)
+            ->whereDate('end_date', '>=', $today)
+            ->with([
+                'gradeSubject.subject:id,name',
+                'gradeSubject.gradeLevel:id,grade_name',
+                'topics' => function ($query) {
+                    $query
+                        ->orderBy('display_order')
+                        ->with([
+                            'unit:id,name',
+                            'topic:id,topic_name,unit_id,grade_subject_id',
+                            'topic.learningObjectives:id,topic_id,code,objective,status,order',
+                        ]);
+                },
+            ])
+            ->orderByDesc('start_date')
+            ->get();
 
-        $coverageRate = $totalTutorObjectives > 0
-            ? round(($coveredObjectives / $totalTutorObjectives) * 100, 1)
-            : 0;
+        $currentPeriodIds =
+            $currentLearningPeriods->pluck('id');
 
-        $activeTutorSession = TutorSession::query()
+        $currentTutorSessions = TutorSession::query()
             ->with([
                 'subject:id,name',
                 'unit:id,name',
@@ -159,36 +184,453 @@ class HomeController extends Controller
                 'objectives.learningObjective:id,objective,code',
             ])
             ->where('student_id', $user->id)
-            ->where('status', 'active')
+            ->when(
+                $currentPeriodIds->isNotEmpty(),
+                fn ($query) =>
+                    $query->whereIn(
+                        'learning_period_id',
+                        $currentPeriodIds
+                    ),
+                fn ($query) =>
+                    $query->whereRaw('1 = 0')
+            )
             ->orderByDesc('last_activity_at')
-            ->first();
+            ->get();
 
-        $currentLearning = null;
-        if ($activeTutorSession) {
-            $sessionObjectives = $activeTutorSession->objectives;
-            $currentObjective = $sessionObjectives->firstWhere('status', 'in_progress');
-            $sessionCovered = $sessionObjectives
-                ->whereIn('status', ['completed', 'needs_review'])
+        $currentTutorObjectives =
+            TutorSessionObjective::query()
+                ->whereHas(
+                    'session',
+                    fn ($query) =>
+                        $query
+                            ->where(
+                                'student_id',
+                                $user->id
+                            )
+                            ->when(
+                                $currentPeriodIds->isNotEmpty(),
+                                fn ($sessionQuery) =>
+                                    $sessionQuery->whereIn(
+                                        'learning_period_id',
+                                        $currentPeriodIds
+                                    ),
+                                fn ($sessionQuery) =>
+                                    $sessionQuery->whereRaw(
+                                        '1 = 0'
+                                    )
+                            )
+                )
+                ->get([
+                    'id',
+                    'tutor_session_id',
+                    'status',
+                    'attempts',
+                    'correct_attempts',
+                    'completed_at',
+                ]);
+
+        /*
+         * Count all objectives assigned in current learning periods,
+         * including topics that the learner has not started yet.
+         */
+        $assignedObjectiveCount =
+            $currentLearningPeriods
+                ->flatMap(
+                    fn ($period) =>
+                        $period->topics
+                )
+                ->sum(
+                    fn ($periodTopic) =>
+                        $periodTopic
+                            ->topic
+                            ?->learningObjectives
+                            ?->where(
+                                'status',
+                                'active'
+                            )
+                            ->count()
+                        ?? 0
+                );
+
+        $masteredObjectives =
+            $currentTutorObjectives
+                ->where(
+                    'status',
+                    'completed'
+                )
                 ->count();
 
-            $currentLearning = [
-                'session_id' => $activeTutorSession->id,
-                'title' => $activeTutorSession->title,
-                'subject' => $activeTutorSession->subject?->name,
-                'unit' => $activeTutorSession->unit?->name,
-                'topic' => $activeTutorSession->topic?->topic_name,
-                'current_objective' => $currentObjective?->learningObjective?->objective,
-                'current_objective_code' => $currentObjective?->learningObjective?->code,
-                'objective_position' => $currentObjective?->objective_order,
-                'total_objectives' => $sessionObjectives->count(),
-                'covered_objectives' => $sessionCovered,
-                'mastered_objectives' => $sessionObjectives->where('status', 'completed')->count(),
-                'review_objectives' => $sessionObjectives->where('status', 'needs_review')->count(),
-                'progress_percent' => $sessionObjectives->count() > 0
-                    ? round(($sessionCovered / $sessionObjectives->count()) * 100, 1)
-                    : 0,
-                'last_activity_at' => optional($activeTutorSession->last_activity_at)?->toIso8601String(),
-            ];
+        $reviewObjectives =
+            $currentTutorObjectives
+                ->where(
+                    'status',
+                    'needs_review'
+                )
+                ->count();
+
+        $activeObjectives =
+            $currentTutorObjectives
+                ->where(
+                    'status',
+                    'in_progress'
+                )
+                ->count();
+
+        $coveredObjectives =
+            $masteredObjectives
+            + $reviewObjectives;
+
+        $totalTutorObjectives =
+            max(
+                $assignedObjectiveCount,
+                $currentTutorObjectives->count()
+            );
+
+        $masteryRate =
+            $totalTutorObjectives > 0
+                ? round(
+                    (
+                        $masteredObjectives
+                        / $totalTutorObjectives
+                    ) * 100,
+                    1
+                )
+                : 0;
+
+        $coverageRate =
+            $totalTutorObjectives > 0
+                ? round(
+                    (
+                        $coveredObjectives
+                        / $totalTutorObjectives
+                    ) * 100,
+                    1
+                )
+                : 0;
+
+        /*
+         * Topic-level progress for the current periods.
+         */
+        $currentTopicAssignments =
+            $currentLearningPeriods
+                ->flatMap(function ($period) {
+                    return $period->topics->map(
+                        function ($periodTopic) use ($period) {
+                            $periodTopic->dashboard_period =
+                                $period;
+
+                            return $periodTopic;
+                        }
+                    );
+                })
+                ->values();
+
+        $coveredTopicKeys =
+            $currentTutorSessions
+                ->where(
+                    'status',
+                    'completed'
+                )
+                ->map(
+                    fn ($session) =>
+                        $session->learning_period_id
+                        . ':'
+                        . $session->topic_id
+                )
+                ->unique()
+                ->values();
+
+        $totalCurrentTopics =
+            $currentTopicAssignments->count();
+
+        $coveredCurrentTopics =
+            $currentTopicAssignments
+                ->filter(
+                    fn ($assignment) =>
+                        $coveredTopicKeys->contains(
+                            $assignment
+                                ->learning_period_id
+                            . ':'
+                            . $assignment
+                                ->topic_id
+                        )
+                )
+                ->count();
+
+        /*
+         * Prefer an ACTIVE Tutor session in a current learning
+         * period. This is the learner's real ongoing topic.
+         */
+        $activeTutorSession =
+            $currentTutorSessions
+                ->firstWhere(
+                    'status',
+                    'active'
+                );
+
+        $focusPeriod = null;
+        $focusTopicAssignment = null;
+        $currentLearningStatus = null;
+
+        if ($activeTutorSession) {
+            $focusPeriod =
+                $currentLearningPeriods
+                    ->firstWhere(
+                        'id',
+                        $activeTutorSession
+                            ->learning_period_id
+                    );
+
+            $focusTopicAssignment =
+                $focusPeriod
+                    ?->topics
+                    ?->firstWhere(
+                        'topic_id',
+                        $activeTutorSession
+                            ->topic_id
+                    );
+
+            $currentLearningStatus =
+                'ongoing';
+        } elseif ($currentLearningPeriods->isNotEmpty()) {
+            /*
+             * No active session:
+             * choose the first CURRENTLY ASSIGNED topic that has not
+             * already been completed. Never blindly point to topic #1.
+             */
+            foreach (
+                $currentLearningPeriods
+                as $period
+            ) {
+                $nextAssignment =
+                    $period
+                        ->topics
+                        ->first(
+                            function (
+                                $periodTopic
+                            ) use (
+                                $coveredTopicKeys,
+                                $period
+                            ) {
+                                return !$coveredTopicKeys
+                                    ->contains(
+                                        $period->id
+                                        . ':'
+                                        . $periodTopic
+                                            ->topic_id
+                                    );
+                            }
+                        );
+
+                if ($nextAssignment) {
+                    $focusPeriod = $period;
+                    $focusTopicAssignment =
+                        $nextAssignment;
+                    $currentLearningStatus =
+                        'next_topic';
+                    break;
+                }
+            }
+
+            if (
+                !$focusTopicAssignment
+                && $totalCurrentTopics > 0
+            ) {
+                $focusPeriod =
+                    $currentLearningPeriods->first();
+
+                $currentLearningStatus =
+                    'all_topics_covered';
+            }
+        }
+
+        $currentLearning = null;
+
+        if ($focusPeriod) {
+            if (
+                $currentLearningStatus ===
+                'all_topics_covered'
+            ) {
+                $currentLearning = [
+                    'status' =>
+                        'all_topics_covered',
+                    'all_topics_covered' =>
+                        true,
+                    'group_id' =>
+                        $focusPeriod->group_id,
+                    'learning_period_id' =>
+                        $focusPeriod->id,
+                    'learning_period' =>
+                        $focusPeriod->title,
+                    'subject' =>
+                        $focusPeriod
+                            ->gradeSubject
+                            ?->subject
+                            ?->name,
+                    'total_topics' =>
+                        $totalCurrentTopics,
+                    'covered_topics' =>
+                        $coveredCurrentTopics,
+                    'progress_percent' =>
+                        $totalCurrentTopics > 0
+                            ? round(
+                                (
+                                    $coveredCurrentTopics
+                                    / $totalCurrentTopics
+                                ) * 100,
+                                1
+                            )
+                            : 100,
+                    'message' =>
+                        'You have covered all topics currently assigned by your teacher.',
+                ];
+            } elseif ($focusTopicAssignment) {
+                $focusSession =
+                    $activeTutorSession
+                    && (int) $activeTutorSession
+                        ->learning_period_id
+                        === (int) $focusPeriod->id
+                    && (int) $activeTutorSession
+                        ->topic_id
+                        === (int) $focusTopicAssignment
+                            ->topic_id
+                        ? $activeTutorSession
+                        : null;
+
+                $sessionObjectives =
+                    $focusSession
+                        ?->objectives
+                    ?? collect();
+
+                $currentObjective =
+                    $sessionObjectives
+                        ->firstWhere(
+                            'status',
+                            'in_progress'
+                        );
+
+                $resolvedInTopic =
+                    $sessionObjectives
+                        ->whereIn(
+                            'status',
+                            [
+                                'completed',
+                                'needs_review',
+                            ]
+                        )
+                        ->count();
+
+                $topicObjectiveCount =
+                    $focusTopicAssignment
+                        ->topic
+                        ?->learningObjectives
+                        ?->where(
+                            'status',
+                            'active'
+                        )
+                        ->count()
+                    ?? $sessionObjectives->count();
+
+                $currentLearning = [
+                    'status' =>
+                        $currentLearningStatus,
+                    'all_topics_covered' =>
+                        false,
+                    'session_id' =>
+                        $focusSession?->id,
+                    'group_id' =>
+                        $focusPeriod->group_id,
+                    'learning_period_id' =>
+                        $focusPeriod->id,
+                    'learning_period' =>
+                        $focusPeriod->title,
+                    'grade_subject_id' =>
+                        $focusPeriod
+                            ->grade_subject_id,
+                    'unit_id' =>
+                        $focusTopicAssignment
+                            ->unit_id,
+                    'topic_id' =>
+                        $focusTopicAssignment
+                            ->topic_id,
+                    'title' =>
+                        $focusTopicAssignment
+                            ->topic
+                            ?->topic_name,
+                    'subject' =>
+                        $focusPeriod
+                            ->gradeSubject
+                            ?->subject
+                            ?->name,
+                    'unit' =>
+                        $focusTopicAssignment
+                            ->unit
+                            ?->name,
+                    'topic' =>
+                        $focusTopicAssignment
+                            ->topic
+                            ?->topic_name,
+                    'current_objective' =>
+                        $currentObjective
+                            ?->learningObjective
+                            ?->objective,
+                    'current_objective_code' =>
+                        $currentObjective
+                            ?->learningObjective
+                            ?->code,
+                    'objective_position' =>
+                        $currentObjective
+                            ?->objective_order,
+                    'total_objectives' =>
+                        $topicObjectiveCount,
+                    'covered_objectives' =>
+                        $resolvedInTopic,
+                    'mastered_objectives' =>
+                        $sessionObjectives
+                            ->where(
+                                'status',
+                                'completed'
+                            )
+                            ->count(),
+                    'review_objectives' =>
+                        $sessionObjectives
+                            ->where(
+                                'status',
+                                'needs_review'
+                            )
+                            ->count(),
+                    'topic_progress_percent' =>
+                        $topicObjectiveCount > 0
+                            ? round(
+                                (
+                                    $resolvedInTopic
+                                    / $topicObjectiveCount
+                                ) * 100,
+                                1
+                            )
+                            : 0,
+                    'total_topics' =>
+                        $totalCurrentTopics,
+                    'covered_topics' =>
+                        $coveredCurrentTopics,
+                    'progress_percent' =>
+                        $totalCurrentTopics > 0
+                            ? round(
+                                (
+                                    $coveredCurrentTopics
+                                    / $totalCurrentTopics
+                                ) * 100,
+                                1
+                            )
+                            : 0,
+                    'last_activity_at' =>
+                        optional(
+                            $focusSession
+                                ?->last_activity_at
+                        )
+                        ?->toIso8601String(),
+                ];
+            }
         }
 
         $tutorSessions = TutorSession::query()
@@ -260,6 +702,9 @@ class HomeController extends Controller
                 'covered_objectives' => $coveredObjectives,
                 'mastery_rate' => $masteryRate,
                 'coverage_rate' => $coverageRate,
+                'total_topics' => $totalCurrentTopics,
+                'covered_topics' => $coveredCurrentTopics,
+                'current_periods' => $currentLearningPeriods->count(),
             ],
             'current_learning' => $currentLearning,
             'subjectPerformance' => $subjectPerformance,
