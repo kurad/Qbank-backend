@@ -18,7 +18,6 @@ use App\Http\Controllers\PaperGeneratorController;
 use App\Http\Controllers\PracticePaperController;
 use App\Http\Controllers\QuestionController;
 use App\Http\Controllers\QuestionnaireImportController;
-use App\Http\Controllers\StudentPracticeController;
 use App\Http\Controllers\SchoolController;
 use App\Http\Controllers\StudentAnswerController;
 use App\Http\Controllers\StudentAssessmentController;
@@ -40,6 +39,8 @@ use Illuminate\Support\Facades\Route;
 |--------------------------------------------------------------------------
 */
 
+use App\Http\Controllers\StudentPracticeController;
+use App\Http\Controllers\TeacherLearningActivityController;
 Route::get('/email/verify/{id}/{hash}', function (Request $request, $id, $hash) {
     $user = User::findOrFail($id);
 
@@ -384,16 +385,6 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     |--------------------------------------------------------------------------
     */
 
-    Route::get(
-        '/student/practice/context',
-        [StudentPracticeController::class, 'context']
-    );
-
-    Route::get(
-        '/student/practice/topics/{topic}/questions',
-        [StudentPracticeController::class, 'questions']
-    );
-
     Route::get('/student/practice-assessments', [AssessmentController::class, 'practice']);
     Route::get('/student/assigned-assessments', [AssessmentController::class, 'assignedAssessments']);
     Route::get('/student/assessment-results/{id}', [AssessmentController::class, 'showResults']);
@@ -491,6 +482,21 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     Route::post('/course-materials/{courseMaterial}/extract', [CourseMaterialController::class, 'extract']);
     Route::post('/course-materials/{courseMaterial}/analyze-content', [CourseMaterialController::class, 'analyzeContent']);
     Route::get('/course-materials/{courseMaterial}/processing-status', [CourseMaterialController::class, 'processingStatus']);
+
+
+    Route::get('/student/practice/context', [StudentPracticeController::class, 'context']);
+    Route::get('/student/practice/topics/{topic}/questions', [StudentPracticeController::class, 'questions']);
+    Route::post('/student/practice/attempts', [StudentPracticeController::class, 'startAttempt']);
+    Route::post('/student/practice/attempts/{practiceAttempt}/answers', [StudentPracticeController::class, 'saveAttemptAnswer']);
+    Route::post('/student/practice/attempts/{practiceAttempt}/complete', [StudentPracticeController::class, 'completeAttempt']);
+    Route::get('/student/practice/history', [StudentPracticeController::class, 'history']);
+    Route::get('/student/practice/attempts/{practiceAttempt}', [StudentPracticeController::class, 'reviewAttempt']);
+
+
+    Route::prefix('teacher/learning-activity')->group(function () {
+        Route::get('/', [TeacherLearningActivityController::class, 'index']);
+        Route::get('/students/{student}', [TeacherLearningActivityController::class, 'student']);
+    });
 
     Route::prefix('teacher/progress')->group(function () {
 

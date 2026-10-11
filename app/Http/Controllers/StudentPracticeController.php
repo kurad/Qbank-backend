@@ -5,6 +5,8 @@ namespace App\Http\Controllers;
 use App\Models\Group;
 use App\Models\LearningPeriod;
 use App\Models\Question;
+use App\Models\PracticeAttempt;
+use App\Models\PracticeAttemptAnswer;
 use App\Models\Topic;
 use App\Services\TutorContextService;
 use Illuminate\Http\Request;
@@ -436,4 +438,304 @@ class StudentPracticeController extends Controller
             ],
         ]);
     }
+
+    /**
+     * Start a persistent practice attempt.
+     *
+     * Practice scores are learning analytics, not formal grades.
+     */
+    public function startAttempt(Request $request)
+    {
+        $student = $request->user();
+
+        abort_unless(
+            $student && $student->role === 'student',
+            403,
+            'Only students can access practice.'
+        );
+
+        $validated = $request->validate([
+            'group_id' => ['required', 'integer', 'exists:groups,id'],
+            'learning_period_id' => ['required', 'integer', 'exists:learning_periods,id'],
+            'topic_id' => ['required', 'integer', 'exists:topics,id'],
+            'question_ids' => ['required', 'array', 'min:1'],
+            'question_ids.*' => ['integer', 'exists:questions,id'],
+            'mode' => ['nullable', 'in:full,retry_incorrect'],
+            'parent_attempt_id' => ['nullable', 'integer', 'exists:practice_attempts,id'],
+        ]);
+
+        $group = Group::findOrFail($validated['group_id']);
+        $period = LearningPeriod::with('topics')
+            ->findOrFail($validated['learning_period_id']);
+        $topic = Topic::findOrFail($validated['topic_id']);
+
+        $allowedPeriods = $this->context->learningPeriodsForStudent(
+            $student,
+            $group,
+            false
+        );
+
+        abort_unless(
+            $allowedPeriods->contains('id', $period->id),
+            403,
+            'This learning period is not available to you.'
+        );
+
+        abort_unless(
+            $period->topics->contains(
+                fn ($item) =>
+                    (int) $item->topic_id === (int) $topic->id
+            ),
+            403,
+            'This topic is not scheduled in the selected learning period.'
+        );
+
+        $questions = Question::query()
+            ->whereIn('id', $validated['question_ids'])
+            ->where('topic_id', $topic->id)
+            ->whereNull('parent_question_id')
+            ->where('status', 'approved')
+            ->where('is_assessment_eligible', true)
+            ->get();
+
+        abort_unless(
+            $questions->count() === count(array_unique($validated['question_ids'])),
+            422,
+            'One or more practice questions are no longer available.'
+        );
+
+        $attempt = PracticeAttempt::create([
+            'student_id' => $student->id,
+            'group_id' => $group->id,
+            'learning_period_id' => $period->id,
+            'topic_id' => $topic->id,
+            'parent_attempt_id' => $validated['parent_attempt_id'] ?? null,
+            'mode' => $validated['mode'] ?? 'full',
+            'status' => 'in_progress',
+            'total_questions' => $questions->count(),
+            'total_marks' => $questions->sum(
+                fn ($question) => (float) ($question->marks ?? 1)
+            ),
+            'started_at' => now(),
+        ]);
+
+        return response()->json([
+            'data' => $this->attemptSummary($attempt),
+        ]);
+    }
+
+    /**
+     * Save one learner response.
+     *
+     * The client sends the same practice evaluation already displayed
+     * to the learner. This is advisory practice analytics, not a formal
+     * assessment grade.
+     */
+    public function saveAttemptAnswer(
+        Request $request,
+        PracticeAttempt $practiceAttempt
+    ) {
+        abort_unless(
+            (int) $practiceAttempt->student_id === (int) $request->user()->id,
+            403
+        );
+
+        abort_unless(
+            $practiceAttempt->status === 'in_progress',
+            409,
+            'This practice attempt is already closed.'
+        );
+
+        $validated = $request->validate([
+            'question_id' => ['required', 'integer', 'exists:questions,id'],
+            'answer' => ['nullable'],
+            'is_correct' => ['nullable', 'boolean'],
+            'review_only' => ['nullable', 'boolean'],
+            'marks_awarded' => ['nullable', 'numeric', 'min:0'],
+        ]);
+
+        $question = Question::findOrFail($validated['question_id']);
+
+        abort_unless(
+            (int) $question->topic_id === (int) $practiceAttempt->topic_id,
+            422,
+            'This question does not belong to the practice topic.'
+        );
+
+        $marks = (float) ($question->marks ?? 1);
+        $awarded = min(
+            $marks,
+            max(0, (float) ($validated['marks_awarded'] ?? 0))
+        );
+
+        $answer = PracticeAttemptAnswer::updateOrCreate(
+            [
+                'practice_attempt_id' => $practiceAttempt->id,
+                'question_id' => $question->id,
+            ],
+            [
+                'answer' => [
+                    'value' => $validated['answer'] ?? null,
+                ],
+                'is_correct' => $validated['is_correct'] ?? null,
+                'review_only' => (bool) ($validated['review_only'] ?? false),
+                'marks_awarded' => $awarded,
+                'answered_at' => now(),
+            ]
+        );
+
+        $this->refreshAttempt($practiceAttempt);
+
+        return response()->json([
+            'data' => [
+                'id' => $answer->id,
+            ],
+        ]);
+    }
+
+    public function completeAttempt(
+        Request $request,
+        PracticeAttempt $practiceAttempt
+    ) {
+        abort_unless(
+            (int) $practiceAttempt->student_id === (int) $request->user()->id,
+            403
+        );
+
+        $this->refreshAttempt($practiceAttempt);
+
+        $practiceAttempt->update([
+            'status' => 'completed',
+            'completed_at' => now(),
+        ]);
+
+        return response()->json([
+            'data' => $this->attemptSummary(
+                $practiceAttempt->fresh()
+            ),
+        ]);
+    }
+
+    public function history(Request $request)
+    {
+        $attempts = PracticeAttempt::query()
+            ->with([
+                'group:id,group_name',
+                'learningPeriod:id,title',
+                'topic:id,topic_name',
+            ])
+            ->where('student_id', $request->user()->id)
+            ->where('status', 'completed')
+            ->orderByDesc('completed_at')
+            ->limit(50)
+            ->get()
+            ->map(
+                fn ($attempt) =>
+                    $this->attemptSummary($attempt, true)
+            );
+
+        return response()->json([
+            'data' => $attempts,
+        ]);
+    }
+
+    public function reviewAttempt(
+        Request $request,
+        PracticeAttempt $practiceAttempt
+    ) {
+        abort_unless(
+            (int) $practiceAttempt->student_id === (int) $request->user()->id,
+            403
+        );
+
+        $practiceAttempt->load([
+            'group:id,group_name',
+            'learningPeriod:id,title',
+            'topic:id,topic_name',
+            'answers.question',
+        ]);
+
+        return response()->json([
+            'data' => [
+                'attempt' => $this->attemptSummary(
+                    $practiceAttempt,
+                    true
+                ),
+                'answers' => $practiceAttempt
+                    ->answers
+                    ->map(fn ($answer) => [
+                        'id' => $answer->id,
+                        'question_id' => $answer->question_id,
+                        'question' => $answer->question,
+                        'answer' => $answer->answer,
+                        'is_correct' => $answer->is_correct,
+                        'review_only' => $answer->review_only,
+                        'marks_awarded' => (float) $answer->marks_awarded,
+                    ])
+                    ->values(),
+            ],
+        ]);
+    }
+
+    protected function refreshAttempt(
+        PracticeAttempt $attempt
+    ): void {
+        $answers = $attempt->answers()->get();
+
+        $attempt->update([
+            'correct_count' => $answers
+                ->where('review_only', false)
+                ->where('is_correct', true)
+                ->count(),
+            'earned_marks' => $answers
+                ->sum(fn ($answer) => (float) $answer->marks_awarded),
+        ]);
+    }
+
+    protected function attemptSummary(
+        PracticeAttempt $attempt,
+        bool $includeContext = false
+    ): array {
+        $incorrect = $attempt
+            ->answers()
+            ->where('review_only', false)
+            ->where('is_correct', false)
+            ->count();
+
+        $gradable = $attempt
+            ->answers()
+            ->where('review_only', false)
+            ->count();
+
+        $summary = [
+            'id' => $attempt->id,
+            'parent_attempt_id' => $attempt->parent_attempt_id,
+            'mode' => $attempt->mode,
+            'status' => $attempt->status,
+            'total_questions' => $attempt->total_questions,
+            'correct_count' => $attempt->correct_count,
+            'incorrect_count' => $incorrect,
+            'total_marks' => (float) $attempt->total_marks,
+            'earned_marks' => (float) $attempt->earned_marks,
+            'score_percent' => $gradable > 0
+                ? round(($attempt->correct_count / $gradable) * 100, 1)
+                : null,
+            'started_at' => optional($attempt->started_at)?->toIso8601String(),
+            'completed_at' => optional($attempt->completed_at)?->toIso8601String(),
+        ];
+
+        if ($includeContext) {
+            $summary += [
+                'group_id' => $attempt->group_id,
+                'group_name' => $attempt->group?->group_name,
+                'learning_period_id' => $attempt->learning_period_id,
+                'learning_period' => $attempt->learningPeriod?->title,
+                'topic_id' => $attempt->topic_id,
+                'topic' => $attempt->topic?->topic_name,
+            ];
+        }
+
+        return $summary;
+    }
+
 }
