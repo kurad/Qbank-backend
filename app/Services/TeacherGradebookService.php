@@ -9,7 +9,6 @@ use App\Models\StudentAnswer;
 use App\Models\TutorResponseEvaluation;
 use App\Models\User;
 use Illuminate\Support\Collection;
-use Illuminate\Support\Str;
 
 class TeacherGradebookService
 {
@@ -259,7 +258,7 @@ class TeacherGradebookService
                 'session:id,group_id,topic_id,learning_period_id',
                 'session.group:id,group_name',
                 'session.topic:id,topic_name,unit_id',
-                'session.topic.unit:id,title',
+                'session.topic.unit:id,name',
                 'sessionObjective:id,learning_objective_id,tutor_session_id',
                 'sessionObjective.learningObjective:id,topic_id,code,objective',
             ])
@@ -293,7 +292,7 @@ class TeacherGradebookService
                 'student_name' => $evaluation->student?->name,
                 'group_id' => $evaluation->session?->group_id,
                 'group_name' => $evaluation->session?->group?->group_name,
-                'unit' => $topic?->unit?->title,
+                'unit' => $topic?->unit?->name,
                 'topic' => $topic?->topic_name,
                 'learning_objective_id' => $objective?->id,
                 'objective_code' => $objective?->code,
@@ -658,17 +657,9 @@ class TeacherGradebookService
             'Only open-ended answers are manually graded in this queue.'
         );
 
-        $accessibleGroupIds = $this->accessibleGroups($teacher)
-            ->pluck('id');
-
-        $answerGroupIds = $answer->studentAssessment?->assessment?->groups
-            ?->pluck('id') ?? collect();
-
-        abort_if(
-            $answerGroupIds->intersect($accessibleGroupIds)->isEmpty(),
-            403,
-            'You are not authorized to grade this response.'
-        );
+        $accessibleGroupIds = $this->accessibleGroups($teacher)->pluck('id');
+        $answerGroupIds = $answer->studentAssessment?->assessment?->groups?->pluck('id') ?? collect();
+        abort_if($answerGroupIds->intersect($accessibleGroupIds)->isEmpty(), 403, 'You are not authorized to grade this response.');
 
         $maxMarks = (float) ($answer->question?->marks ?? 0);
 
@@ -718,10 +709,7 @@ class TeacherGradebookService
     protected function average(Collection $values): ?float
     {
         $filtered = $values->filter(fn ($value) => $value !== null && $value !== '');
-
-        return $filtered->isEmpty()
-            ? null
-            : round((float) $filtered->avg(), 1);
+        return $filtered->isEmpty() ? null : round((float) $filtered->avg(), 1);
     }
 
     protected function ensureTeacherOrAdmin(User $user): void
