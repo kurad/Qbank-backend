@@ -18,6 +18,7 @@ use App\Http\Controllers\PaperGeneratorController;
 use App\Http\Controllers\PracticePaperController;
 use App\Http\Controllers\QuestionController;
 use App\Http\Controllers\QuestionnaireImportController;
+use App\Http\Controllers\StudentPracticeController;
 use App\Http\Controllers\SchoolController;
 use App\Http\Controllers\StudentAnswerController;
 use App\Http\Controllers\StudentAssessmentController;
@@ -382,6 +383,16 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     | Student Assessment Practice & Results
     |--------------------------------------------------------------------------
     */
+
+    Route::get(
+        '/student/practice/context',
+        [StudentPracticeController::class, 'context']
+    );
+
+    Route::get(
+        '/student/practice/topics/{topic}/questions',
+        [StudentPracticeController::class, 'questions']
+    );
 
     Route::get('/student/practice-assessments', [AssessmentController::class, 'practice']);
     Route::get('/student/assigned-assessments', [AssessmentController::class, 'assignedAssessments']);
