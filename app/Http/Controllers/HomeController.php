@@ -12,6 +12,7 @@ use App\Models\TutorSessionObjective;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use App\Services\LearningPeriodFormativeService;
 
 class HomeController extends Controller
 {
@@ -20,7 +21,9 @@ class HomeController extends Controller
      *
      * GET /student/statistics
      */
-    public function statistics()
+    public function statistics(
+        LearningPeriodFormativeService $formativeService
+    )
     {
         $user = Auth::user();
 
@@ -451,6 +454,12 @@ class HomeController extends Controller
                 $currentLearningStatus ===
                 'all_topics_covered'
             ) {
+                $formative = $formativeService
+                    ->statusForStudent(
+                        $user,
+                        $focusPeriod
+                    );
+
                 $currentLearning = [
                     'status' =>
                         'all_topics_covered',
@@ -482,7 +491,17 @@ class HomeController extends Controller
                             )
                             : 100,
                     'message' =>
-                        'You have covered all topics currently assigned by your teacher.',
+                        ($formative['status'] ?? null) === 'completed'
+                            ? 'You have covered all topics and completed the required formative assessment for this learning period.'
+                            : 'You have covered all topics. Complete the required formative assessment to finish this learning period.',
+                    'formative_assessment' =>
+                        $formative,
+                    'period_complete' =>
+                        in_array(
+                            $formative['status'] ?? null,
+                            ['completed', 'graded'],
+                            true
+                        ),
                 ];
             } elseif ($focusTopicAssignment) {
                 $focusSession =

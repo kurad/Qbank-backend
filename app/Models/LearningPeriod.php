@@ -51,6 +51,13 @@ class LearningPeriod extends Model
             ->orderBy('display_order');
     }
 
+
+    public function formativeAssessment()
+    {
+        return $this->hasOne(Assessment::class)
+            ->where('purpose', 'period_formative');
+    }
+
     public function isPublished(): bool
     {
         return $this->status === 'published';

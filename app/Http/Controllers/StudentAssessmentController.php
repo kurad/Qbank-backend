@@ -6,13 +6,22 @@ use App\Models\Assessment;
 use Illuminate\Http\Request;
 use App\Models\StudentAnswer;
 use App\Models\StudentAssessment;
+use App\Services\LearningPeriodFormativeService;
 
 class StudentAssessmentController extends Controller
 {
-    public function startAssessment($assessmentId)
+    public function startAssessment(
+        $assessmentId,
+        LearningPeriodFormativeService $formativeService
+    )
     {
         $studentId = auth()->id();
         $assessment = Assessment::findOrFail($assessmentId);
+
+        $formativeService->assertStudentReadyForAssessment(
+            auth()->user(),
+            $assessment
+        );
         $studentAssessment = StudentAssessment::firstOrCreate(
             [
                 'student_id' => $studentId,

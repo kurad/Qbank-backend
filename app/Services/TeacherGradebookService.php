@@ -73,6 +73,7 @@ class TeacherGradebookService
                     ['value' => 'exam', 'label' => 'Exam'],
                     ['value' => 'homework', 'label' => 'Homework'],
                     ['value' => 'practice', 'label' => 'Practice'],
+                    ['value' => 'formative', 'label' => 'Formative'],
                 ],
             ],
 

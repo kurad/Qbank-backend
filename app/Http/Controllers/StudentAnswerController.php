@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\DB;
 use App\Http\Controllers\Controller;
 use Illuminate\Support\Facades\Auth;
 use App\Models\StudentQuestionHistory;
+use App\Services\LearningPeriodFormativeService;
 
 class StudentAnswerController extends Controller
 {
@@ -207,8 +208,16 @@ class StudentAnswerController extends Controller
         // ------------------------------------------------------------------------
 
         // 1) Load assessment with groups & students
-        $assessment = Assessment::with('groups.students')->findOrFail($assessmentId);
+        $assessment = Assessment::with(['groups.students', 'learningPeriod'])->findOrFail($assessmentId);
         $isPractice = $assessment->type === 'practice';
+
+        if ($assessment->type === 'formative') {
+            app(LearningPeriodFormativeService::class)
+                ->assertStudentReadyForAssessment(
+                    auth()->user(),
+                    $assessment
+                );
+        }
 
         // 2) Authorization (skip for practice)
         if (!$isPractice) {
@@ -453,6 +462,7 @@ class StudentAnswerController extends Controller
             'max_score' => round($maxScore, 2),
             'status' => 'completed',
             'completed_at' => $studentAssessment->completed_at,
+            'student_assessment_id' => $studentAssessment->id,
         ]);
     }
 

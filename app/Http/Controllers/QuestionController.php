@@ -1514,6 +1514,13 @@ class QuestionController extends Controller
                 'source',
                 $source
             );
+        } else {
+            // Automatic formative-only questions are attempt content,
+            // not permanent Question Bank records.
+            $query->where(function ($q) {
+                $q->whereNull('source')
+                    ->orWhere('source', '!=', 'ai_mastery');
+            });
         }
 
         if (!empty($status)) {

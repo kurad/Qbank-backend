@@ -13,6 +13,7 @@ use App\Models\StudentAssessment;
 use App\Models\AssessmentQuestion;
 use Illuminate\Support\Facades\DB;
 use App\Services\AssessmentAssigner;
+use App\Services\LearningPeriodFormativeService;
 use Illuminate\Support\Facades\Auth;
 use App\Models\StudentQuestionHistory;
 
@@ -231,8 +232,19 @@ class AssessmentController extends Controller
         return response()->json(['assessment' => $assessment], 200);
     }
     // Get assessment details (questions) for answering
-    public function questionsForPractice($id, AssessmentAssigner $assigner)
+    public function questionsForPractice(
+        $id,
+        AssessmentAssigner $assigner,
+        LearningPeriodFormativeService $formativeService
+    )
     {
+        $assessment = Assessment::findOrFail($id);
+
+        $formativeService->assertStudentReadyForAssessment(
+            Auth::user(),
+            $assessment
+        );
+
         $data = $assigner->questionsForPractice($id);
         return response()->json($data);
     }

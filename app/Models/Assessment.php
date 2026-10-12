@@ -15,6 +15,10 @@ class Assessment extends Model
         'type',
         'title',
         'creator_id',
+        'learning_period_id',
+        'is_system_generated',
+        'is_mandatory',
+        'purpose',
         'question_count',
         'delivery_mode',
         'due_date',
@@ -27,6 +31,8 @@ class Assessment extends Model
 
     protected $casts = [
         'is_timed' => 'boolean',
+        'is_system_generated' => 'boolean',
+        'is_mandatory' => 'boolean',
         'question_blueprint' => 'array',
     ];
 
@@ -112,6 +118,12 @@ class Assessment extends Model
     public function students()
     {
         return $this->belongsToMany(User::class, 'group_students', 'group_id', 'student_id');
+    }
+
+
+    public function learningPeriod()
+    {
+        return $this->belongsTo(LearningPeriod::class);
     }
 
     public function gradeSubject()
