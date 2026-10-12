@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Jobs\PrepareLearningPeriodFormativeAssessment;
 use App\Models\Assessment;
 use App\Models\KnowledgeChunk;
 use App\Models\LearningPeriod;
@@ -61,26 +62,22 @@ class LearningPeriodFormativeService
             ->first();
 
         if ($ready && !$assessment) {
-            try {
-                $assessment = $this->ensureForPeriod($period);
-            } catch (Throwable $e) {
-                Log::error(
-                    'Mandatory period formative generation failed.',
-                    [
-                        'learning_period_id' => $period->id,
-                        'student_id' => $student->id,
-                        'error' => $e->getMessage(),
-                    ]
-                );
+            /*
+             * Fallback trigger. Normally this job is dispatched immediately
+             * when the learner completes the final topic. If that event was
+             * missed, queue it here without blocking this request.
+             */
+            PrepareLearningPeriodFormativeAssessment::dispatch(
+                $period->id
+            )->afterResponse();
 
-                return [
-                    'required' => true,
-                    'ready' => true,
-                    'status' => 'preparing',
-                    'message' =>
-                        'Your required formative assessment is being prepared. Please try again shortly.',
-                ];
-            }
+            return [
+                'required' => true,
+                'ready' => true,
+                'status' => 'preparing',
+                'message' =>
+                    'Your required formative assessment is being prepared automatically.',
+            ];
         }
 
         if (!$assessment) {

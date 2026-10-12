@@ -2,6 +2,8 @@
 
 namespace App\Services;
 
+use App\Jobs\PrepareLearningPeriodFormativeAssessment;
+use App\Models\LearningPeriod;
 use App\Models\TutorSession;
 use App\Models\TutorSessionObjective;
 use App\Models\User;
@@ -368,7 +370,73 @@ class TutorSessionService
             'last_activity_at' => now(),
         ]);
 
+        /*
+         * As soon as the learner completes the final assigned topic in a
+         * learning period, queue preparation of the shared mandatory
+         * formative assessment. The request does not wait for AI.
+         */
+        if (
+            $status === 'completed'
+            && $session->learning_period_id
+            && $this->studentCoveredLearningPeriod(
+                $student,
+                (int) $session->learning_period_id
+            )
+        ) {
+            PrepareLearningPeriodFormativeAssessment::dispatch(
+                (int) $session->learning_period_id
+            )->afterResponse();
+        }
+
         return $this->freshSession($session);
+    }
+
+    protected function studentCoveredLearningPeriod(
+        User $student,
+        int $learningPeriodId
+    ): bool {
+        $period = LearningPeriod::with([
+            'topics:id,learning_period_id,topic_id',
+        ])->find($learningPeriodId);
+
+        if (!$period || $period->topics->isEmpty()) {
+            return false;
+        }
+
+        $assignedTopicIds = $period
+            ->topics
+            ->pluck('topic_id')
+            ->filter()
+            ->unique()
+            ->values();
+
+        if ($assignedTopicIds->isEmpty()) {
+            return false;
+        }
+
+        $completedTopicIds = TutorSession::query()
+            ->where(
+                'student_id',
+                $student->id
+            )
+            ->where(
+                'learning_period_id',
+                $period->id
+            )
+            ->where(
+                'status',
+                'completed'
+            )
+            ->whereIn(
+                'topic_id',
+                $assignedTopicIds
+            )
+            ->pluck('topic_id')
+            ->unique();
+
+        return $assignedTopicIds
+            ->diff($completedTopicIds)
+            ->isEmpty();
     }
 
     public function freshSession(TutorSession $session): TutorSession
