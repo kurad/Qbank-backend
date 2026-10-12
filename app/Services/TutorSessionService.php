@@ -20,6 +20,12 @@ class TutorSessionService
 
     public function create(User $student, array $data): TutorSession
     {
+        /*
+         * Repair stale active rows left by older deployments before deciding
+         * whether a topic already has an active Tutor session.
+         */
+        $this->reconcileCompletedSessionsForStudent($student);
+
         $resolved = $this->context->resolveSessionContext($student, $data);
         $objectives = $resolved['objectives'] ?? collect();
 
@@ -389,6 +395,98 @@ class TutorSessionService
         }
 
         return $this->freshSession($session);
+    }
+
+    /**
+     * Repair legacy Tutor sessions whose objectives are already fully
+     * resolved but whose session row still says active.
+     */
+    public function reconcileCompletedSessionsForStudent(
+        User $student
+    ): void {
+        TutorSession::query()
+            ->where(
+                'student_id',
+                $student->id
+            )
+            ->where(
+                'status',
+                'active'
+            )
+            ->whereDoesntHave(
+                'objectives',
+                fn ($query) =>
+                    $query->whereNotIn(
+                        'status',
+                        [
+                            'completed',
+                            'mastered',
+                            'needs_review',
+                        ]
+                    )
+            )
+            ->get()
+            ->each(
+                fn (TutorSession $session) =>
+                    $this->reconcileCompletionState(
+                        $student,
+                        $session
+                    )
+            );
+    }
+
+    public function reconcileCompletionState(
+        User $student,
+        TutorSession $session
+    ): TutorSession {
+        abort_unless(
+            (int) $session->student_id ===
+            (int) $student->id,
+            403
+        );
+
+        if ($session->status !== 'active') {
+            return $session;
+        }
+
+        $hasUnfinished =
+            $session
+                ->objectives()
+                ->whereNotIn(
+                    'status',
+                    [
+                        'completed',
+                        'mastered',
+                        'needs_review',
+                    ]
+                )
+                ->exists();
+
+        if ($hasUnfinished) {
+            return $session;
+        }
+
+        $session->update([
+            'status' => 'completed',
+            'ended_at' =>
+                $session->ended_at ?? now(),
+            'last_activity_at' =>
+                $session->last_activity_at ?? now(),
+        ]);
+
+        if (
+            $session->learning_period_id &&
+            $this->studentCoveredLearningPeriod(
+                $student,
+                (int) $session->learning_period_id
+            )
+        ) {
+            PrepareLearningPeriodFormativeAssessment::dispatch(
+                (int) $session->learning_period_id
+            )->afterResponse();
+        }
+
+        return $session->fresh();
     }
 
     protected function studentCoveredLearningPeriod(

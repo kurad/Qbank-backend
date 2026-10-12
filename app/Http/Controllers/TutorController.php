@@ -1227,6 +1227,16 @@ class TutorController extends Controller
 
     {
 
+        /*
+         * Older sessions could remain marked active even after every learning
+         * objective had been resolved. Reconcile them before returning the
+         * session list so the frontend receives the real learning state.
+         */
+        $this->sessionsService
+            ->reconcileCompletedSessionsForStudent(
+                $request->user()
+            );
+
         $data = $request->validate([
 
             'status' => [
@@ -1403,6 +1413,13 @@ class TutorController extends Controller
             $tutorSession
 
         );
+
+        $tutorSession =
+            $this->sessionsService
+                ->reconcileCompletionState(
+                    $request->user(),
+                    $tutorSession
+                );
 
         $session =
 
