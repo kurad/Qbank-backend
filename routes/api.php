@@ -42,6 +42,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\StudentPracticeController;
 use App\Http\Controllers\TeacherLearningActivityController;
 use App\Http\Controllers\StudentFormativeAssessmentController;
+use App\Http\Controllers\StudentLearnerFormativeController;
 Route::get('/email/verify/{id}/{hash}', function (Request $request, $id, $hash) {
     $user = User::findOrFail($id);
 
@@ -391,6 +392,10 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     Route::get('/student/assessment-results/{id}', [AssessmentController::class, 'showResults']);
     Route::get('/student/statistics', [HomeController::class, 'statistics']);
     Route::get('/student/learning-periods/{learningPeriod}/formative', [StudentFormativeAssessmentController::class, 'show']);
+    Route::get('/student/learning-periods/{learningPeriod}/learner-formative', [StudentLearnerFormativeController::class, 'show']);
+    Route::post('/student/learning-periods/{learningPeriod}/learner-formative/prepare', [StudentLearnerFormativeController::class, 'prepare']);
+    Route::get('/student/learner-formative-attempts/{attempt}/questions', [StudentLearnerFormativeController::class, 'questions']);
+    Route::post('/student/learner-formative-attempts/{attempt}/submit', [StudentLearnerFormativeController::class, 'submit']);
     Route::post('/assessments/submit-answers', [StudentAnswerController::class, 'storeStudentAnswers']);
     Route::post('/assessments/update-short-answer-confidence', [StudentAnswerController::class, 'updateShortAnswerConfidence']);
 
