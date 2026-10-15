@@ -925,12 +925,27 @@ class TutorCheckpointService
         string $value
     ): string {
         $value = Str::lower(trim($value));
+        $value = $this->stripOuterMathDelimiters($value);
 
-        $value = preg_replace(
-            '/\s+/u',
-            ' ',
+        // MathLive returns clean LaTeX without $...$ wrappers, while AI-
+        // generated accepted answers may include those wrappers. Normalize
+        // harmless LaTeX presentation differences before exact comparison.
+        $looksMathematical = preg_match(
+            '/[\\^_=+\-*\/<>]|\d/u',
             $value
-        );
+        ) === 1;
+
+        if ($looksMathematical) {
+            $value = str_replace(
+                ['\\left', '\\right', '\\,', '\\;', '\\!', '\\ '],
+                '',
+                $value
+            );
+
+            $value = preg_replace('/\s+/u', '', $value);
+        } else {
+            $value = preg_replace('/\s+/u', ' ', $value);
+        }
 
         $value = preg_replace(
             '/[.!?]+$/u',
@@ -939,6 +954,46 @@ class TutorCheckpointService
         );
 
         return trim($value);
+    }
+
+    protected function stripOuterMathDelimiters(
+        string $value
+    ): string {
+        $value = trim($value);
+
+        if (
+            str_starts_with($value, '$$')
+            && str_ends_with($value, '$$')
+            && mb_strlen($value) >= 4
+        ) {
+            return trim(mb_substr($value, 2, mb_strlen($value) - 4));
+        }
+
+        if (
+            str_starts_with($value, '\\[')
+            && str_ends_with($value, '\\]')
+            && mb_strlen($value) >= 4
+        ) {
+            return trim(mb_substr($value, 2, mb_strlen($value) - 4));
+        }
+
+        if (
+            str_starts_with($value, '\\(')
+            && str_ends_with($value, '\\)')
+            && mb_strlen($value) >= 4
+        ) {
+            return trim(mb_substr($value, 2, mb_strlen($value) - 4));
+        }
+
+        if (
+            str_starts_with($value, '$')
+            && str_ends_with($value, '$')
+            && mb_strlen($value) >= 2
+        ) {
+            return trim(mb_substr($value, 1, mb_strlen($value) - 2));
+        }
+
+        return $value;
     }
 
     protected function validateCheckpointOwnership(
