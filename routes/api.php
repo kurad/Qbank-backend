@@ -92,7 +92,8 @@ Route::post('/refresh-token', [AuthController::class, 'refreshToken']);
 
 // Public class invitation preview
 Route::get('/class-invitations/{classCode}', [ClassInvitationController::class, 'show']);
-Route::post('/class-invitations/{classCode}/resolve-account')->middleware('throttle:10,1');
+// Route::post('/class-invitations/{classCode}/resolve-account')->middleware('throttle:10,1');
+Route::post('/class-invitations/{classCode}/resolve-account',[ClassInvitationController::class, 'resolveAccount'])->middleware('throttle:10,1');
 Route::get('/auth/google', [AuthController::class, 'redirectToGoogle']);
 Route::get('/auth/google/callback', [AuthController::class, 'handleGoogleCallback']);
 
