@@ -126,6 +126,108 @@ class GeminiProvider
         }
         return trim($text);
     }
+
+    public function multimodalText(
+        array $messages,
+        array $attachments = [],
+        array $options = []
+    ): string {
+        $apiKey = config('services.gemini.key');
+        if (!$apiKey) {
+            throw new RuntimeException('Gemini API key is not configured.');
+        }
+
+        $model = $options['model'] ?? config('services.gemini.model', 'gemini-3.6-flash');
+        $url = rtrim(config('services.gemini.url', 'https://generativelanguage.googleapis.com/v1beta'), '/');
+
+        $contents = [];
+        $systemInstruction = null;
+
+        foreach ($messages as $index => $message) {
+            $role = $message['role'] ?? 'user';
+            $content = (string) ($message['content'] ?? '');
+
+            if ($role === 'system') {
+                $systemInstruction = $content;
+                continue;
+            }
+
+            $parts = [['text' => $content]];
+
+            // Attachments belong to the latest learner turn only.
+            if ($index === array_key_last($messages) && $role === 'user') {
+                foreach ($attachments as $attachment) {
+                    $data = $attachment['data'] ?? null;
+                    $mime = $attachment['mime_type'] ?? null;
+
+                    if (!$data || !$mime) {
+                        continue;
+                    }
+
+                    $parts[] = [
+                        'inlineData' => [
+                            'mimeType' => $mime,
+                            'data' => $data,
+                        ],
+                    ];
+                }
+            }
+
+            $contents[] = [
+                'role' => $role === 'assistant' ? 'model' : 'user',
+                'parts' => $parts,
+            ];
+        }
+
+        if (empty($contents)) {
+            throw new RuntimeException('Gemini request contains no messages.');
+        }
+
+        $payload = ['contents' => $contents];
+
+        if ($systemInstruction) {
+            $payload['systemInstruction'] = [
+                'parts' => [['text' => $systemInstruction]],
+            ];
+        }
+
+        $generationConfig = [];
+        if (isset($options['temperature'])) {
+            $generationConfig['temperature'] = $options['temperature'];
+        }
+        if (isset($options['max_tokens'])) {
+            $generationConfig['maxOutputTokens'] = $options['max_tokens'];
+        }
+        if (!empty($generationConfig)) {
+            $payload['generationConfig'] = $generationConfig;
+        }
+
+        $response = Http::withHeaders([
+            'x-goog-api-key' => $apiKey,
+            'Content-Type' => 'application/json',
+        ])->timeout(120)->post("{$url}/models/{$model}:generateContent", $payload);
+
+        if ($response->failed()) {
+            $json = $response->json();
+            $message = is_array($json)
+                ? ($json['error']['message'] ?? 'Unknown Gemini provider error.')
+                : 'Unknown Gemini provider error.';
+            throw new RuntimeException('Gemini provider error: ' . $message);
+        }
+
+        $data = $response->json();
+        $finishReason = $data['candidates'][0]['finishReason'] ?? null;
+        $text = $data['candidates'][0]['content']['parts'][0]['text'] ?? null;
+
+        if (!$text) {
+            throw new RuntimeException('Gemini returned an empty multimodal response.');
+        }
+        if ($finishReason === 'MAX_TOKENS') {
+            throw new RuntimeException('Gemini response was truncated because the output token limit was reached.');
+        }
+
+        return trim($text);
+    }
     public function json(array $messages, array $schema, array $options = []): array
     {
         $options['response_mime_type'] = 'application/json';

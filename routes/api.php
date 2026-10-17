@@ -201,6 +201,8 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     Route::post('/course-materials', [CourseMaterialController::class, 'store']);
     Route::post('/course-materials/{courseMaterial}/approve', [CourseMaterialController::class, 'approve']);
     Route::delete('/course-materials/{courseMaterial}', [CourseMaterialController::class, 'destroy']);
+
+
     /*
     |--------------------------------------------------------------------------
     | Learning Periods
@@ -268,6 +270,7 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     Route::get('/tutor/sessions', [TutorController::class, 'sessions']);
     Route::get('/tutor/sessions/{tutorSession}', [TutorController::class, 'showSession']);
     Route::post('/tutor/sessions/{tutorSession}/messages', [TutorController::class, 'message']);
+    Route::get('/tutor/messages/{tutorMessage}/attachments/{index}', [TutorController::class, 'messageAttachment'])->whereNumber('index');
     Route::post('/tutor/sessions/{tutorSession}/end', [TutorController::class, 'endSession']);
     Route::post('/tutor/sessions/{tutorSession}/continue', [TutorController::class, 'continueLearning']);
     Route::post('/tutor/sessions/{tutorSession}/move-on', [TutorController::class, 'moveOnTopic']);

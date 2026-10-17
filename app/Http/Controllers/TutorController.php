@@ -18,6 +18,8 @@ use App\Services\TutorDifficultyService;
 use App\Services\TutorSessionService;
 use App\Services\StudentTopicLearningService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 
 class TutorController extends Controller
 
@@ -322,253 +324,231 @@ class TutorController extends Controller
     ) {
 
         $this->authorizeStudentSession(
-
             $request,
-
             $tutorSession
-
         );
 
         $this->ensureActiveSession($tutorSession);
 
         $data = $request->validate([
-
             'message' => [
-
-                'required',
-
+                'nullable',
                 'string',
-
                 'max:4000',
-
+                'required_without:attachments',
             ],
-
+            'attachments' => [
+                'nullable',
+                'array',
+                'max:4',
+            ],
+            'attachments.*' => [
+                'file',
+                'max:6144',
+                'mimetypes:image/jpeg,image/png,image/webp,application/pdf,text/plain,text/markdown',
+            ],
         ]);
 
+        $uploadedFiles = $request->file('attachments', []);
+        if (!is_array($uploadedFiles)) {
+            $uploadedFiles = [$uploadedFiles];
+        }
+
+        $studentText = trim((string) ($data['message'] ?? ''));
+        if ($studentText === '' && count($uploadedFiles)) {
+            $studentText = 'Please help me understand the attached material.';
+        }
+
         $currentObjective =
-
             $this->sessionsService->currentObjective(
-
                 $tutorSession
-
             );
 
         abort_unless($currentObjective, 422, 'There is no active learning objective in this session.');
 
+        $turnFocus = $this->ai->classifyStudentTurn(
+            $tutorSession,
+            $studentText,
+            count($uploadedFiles) > 0
+        );
+
+        /*
+         * Do not let an unrelated learner message steer retrieval away from
+         * the active curriculum. For off-topic/social turns we retrieve from
+         * the active objective itself so the Tutor has the right material to
+         * make a natural return to the lesson.
+         */
+        $retrievalMessage = !empty($turnFocus['redirect_needed'])
+            ? ''
+            : $studentText;
+
         $knowledge =
-
             $this->ai->teachingContext(
-
                 $tutorSession,
-
-                $data['message'],
-
+                $retrievalMessage,
                 6
-
             );
+
+        $aiAttachments = [];
+        $totalBytes = 0;
+
+        foreach ($uploadedFiles as $file) {
+            if (!$file || !$file->isValid()) {
+                continue;
+            }
+
+            $bytes = (int) $file->getSize();
+            $totalBytes += $bytes;
+
+            abort_if(
+                $totalBytes > 10 * 1024 * 1024,
+                422,
+                'The combined Tutor attachments must be 10 MB or less.'
+            );
+
+            $contents = file_get_contents($file->getRealPath());
+            abort_if($contents === false, 422, 'One of the attached files could not be read.');
+
+            $aiAttachments[] = [
+                'name' => $file->getClientOriginalName(),
+                'mime_type' => $file->getMimeType() ?: $file->getClientMimeType(),
+                'data' => base64_encode($contents),
+            ];
+        }
 
         $answer =
-
             $this->ai->respondToStudentMessage(
-
                 $tutorSession,
-
-                $data['message'],
-
-                $knowledge
-
+                $studentText,
+                $knowledge,
+                $aiAttachments,
+                $turnFocus
             );
 
+        $storedAttachments = [];
+
+        foreach ($uploadedFiles as $file) {
+            if (!$file || !$file->isValid()) {
+                continue;
+            }
+
+            $extension = strtolower((string) $file->getClientOriginalExtension());
+            $filename = (string) Str::uuid() . ($extension !== '' ? ".{$extension}" : '');
+            $path = $file->storeAs(
+                "tutor-chat/{$request->user()->id}/{$tutorSession->id}",
+                $filename,
+                'local'
+            );
+
+            $storedAttachments[] = [
+                'original_name' => $file->getClientOriginalName(),
+                'mime_type' => $file->getMimeType() ?: $file->getClientMimeType(),
+                'size' => (int) $file->getSize(),
+                'path' => $path,
+            ];
+        }
+
         $userMessage =
-
             $tutorSession
-
             ->messages()
-
             ->create([
-
                 'role' => 'user',
-
                 'message_type' => 'text',
-
-                'content' => $data['message'],
-
+                'content' => trim((string) ($data['message'] ?? '')) ?: 'Shared an attachment with the Tutor.',
+                'metadata' => count($storedAttachments)
+                    ? ['attachments' => $storedAttachments]
+                    : null,
             ]);
 
         $assistantMessage =
-
             $tutorSession
-
             ->messages()
-
             ->create([
-
                 'role' => 'assistant',
-
                 'message_type' => 'text',
-
                 'content' => $answer,
-
+                'metadata' => [
+                    'turn_focus' => [
+                        'focus' => $turnFocus['focus'] ?? 'on_track',
+                        'redirected' => !empty($turnFocus['redirect_needed']),
+                    ],
+                ],
             ]);
 
         $tutorSession->update(['last_activity_at' => now(),]);
 
         $pendingCheckpoint =
-
             $this->checkpoints
-
             ->pendingCheckpoint(
-
                 $tutorSession
-
             );
 
         $freshSession =
-
             $this->sessionsService
-
             ->freshSession(
-
                 $tutorSession
-
             );
 
         return response()->json([
-
             'data' => [
-
                 'session_id' => $tutorSession->id,
-
                 'answer' => $answer,
-
                 'message' => $this->publicMessage($assistantMessage),
-
+                'assistant_message' => $this->publicMessage($assistantMessage),
                 'student_message' => $this->publicMessage($userMessage),
-
+                'user_message' => $this->publicMessage($userMessage),
                 'pending_checkpoint' =>
-
                 $pendingCheckpoint
-
                     ? $this->checkpoints
-
                     ->publicCheckpoint(
-
                         $pendingCheckpoint
-
                     )
-
                     : null,
-
                 'progress' => [
-
                     'objective_completed' => false,
-
                     'session_completed' => false,
-
                     'current_objective' =>
-
                     $this->publicObjective(
-
                         $currentObjective
-
                     ),
-
                     ...$this->difficulty->profile(
-
                         $tutorSession,
-
                         $currentObjective
-
                     ),
-
                 ],
-
                 'session' => $freshSession,
-
             ],
-
         ]);
     }
 
-    public function introduceCurrentObjective(
-
+    public function messageAttachment(
         Request $request,
-
-        TutorSession $tutorSession
-
+        TutorMessage $tutorMessage,
+        int $index
     ) {
+        $tutorMessage->loadMissing('session');
+        abort_unless($tutorMessage->session, 404);
 
         $this->authorizeStudentSession(
             $request,
-            $tutorSession
+            $tutorMessage->session
         );
 
-        $this->ensureActiveSession($tutorSession);
+        $attachments = $tutorMessage->metadata['attachments'] ?? [];
+        abort_unless(isset($attachments[$index]), 404, 'Attachment not found.');
 
-        $currentObjective =
-            $this->sessionsService->currentObjective(
-                $tutorSession
-            );
+        $attachment = $attachments[$index];
+        $path = $attachment['path'] ?? null;
 
-        abort_unless(
-            $currentObjective,
-            422,
-            'There is no active learning objective to introduce.'
-        );
+        abort_unless($path && Storage::disk('local')->exists($path), 404, 'Attachment file not found.');
 
-        $answer =
-            $this->ai->introduceCurrentObjective(
-                $tutorSession
-            );
+        $absolutePath = Storage::disk('local')->path($path);
+        $mime = $attachment['mime_type'] ?? 'application/octet-stream';
+        $name = $attachment['original_name'] ?? basename($path);
 
-        $assistantMessage =
-            $tutorSession
-            ->messages()
-            ->create([
-                'role' => 'assistant',
-                'message_type' => 'objective_intro',
-                'content' => $answer,
-                'metadata' => [
-                    'objective_id' => $currentObjective->id,
-                ],
-            ]);
-
-        $tutorSession->update([
-            'last_activity_at' => now(),
-        ]);
-
-        $freshSession =
-            $this->sessionsService
-            ->freshSession(
-                $tutorSession
-            );
-
-        return response()->json([
-            'data' => [
-                'session_id' => $tutorSession->id,
-                'answer' => $answer,
-                'assistant_message' =>
-                $this->publicMessage(
-                    $assistantMessage
-                ),
-                'current_objective' =>
-                $this->publicObjective(
-                    $currentObjective
-                ),
-                'progress' => [
-                    'objective_completed' => false,
-                    'session_completed' => false,
-                    'current_objective' =>
-                    $this->publicObjective(
-                        $currentObjective
-                    ),
-                    ...$this->difficulty->profile(
-                        $tutorSession,
-                        $currentObjective
-                    ),
-                ],
-                'session' => $freshSession,
-            ],
+        return response()->file($absolutePath, [
+            'Content-Type' => $mime,
+            'Content-Disposition' => 'inline; filename="' . addslashes($name) . '"',
         ]);
     }
 
@@ -823,44 +803,15 @@ class TutorController extends Controller
             );
 
         /*
-         * Keep a knowledge check flowing without another learner click.
+         * Do NOT auto-generate another formal checkpoint here.
          *
-         * When the current objective is still unresolved, the feedback has
-         * already been created by TutorCheckpointService::answer(). We now
-         * prepare the next checkpoint immediately and return it with the same
-         * response. This applies after correct, partially-correct, unclear,
-         * and incorrect answers.
-         *
-         * If the objective has just been resolved, we do not create another
-         * checkpoint here; the existing objective-transition flow takes over.
+         * After feedback, return control to the learning conversation. The
+         * learner can ask for clarification/practice and can explicitly choose
+         * "Check my understanding" when the support profile says another check
+         * is appropriate. This prevents formal checks from taking over the
+         * tutoring experience and restores the adaptive suggestion flow.
          */
         $nextCheckpoint = null;
-
-        if (
-            empty($progress['session_completed'])
-            && empty($progress['objective_resolved'])
-        ) {
-            try {
-                $nextCheckpointMessage =
-                    $this->checkpoints->generate(
-                        $tutorSession->fresh(),
-                        true
-                    );
-
-                $nextCheckpoint =
-                    $this->checkpoints->publicCheckpoint(
-                        $nextCheckpointMessage
-                    );
-            } catch (\Throwable $e) {
-                /*
-                 * The submitted answer and feedback are already safely saved.
-                 * Do not fail the whole response if follow-up generation has
-                 * a temporary AI/provider problem. The learner can still use
-                 * the normal continue/check action as a fallback.
-                 */
-                report($e);
-            }
-        }
 
         return response()->json([
 
@@ -2018,9 +1969,33 @@ class TutorController extends Controller
 
             'content' => $message->content,
 
+            'metadata' => $this->publicMessageMetadata($message),
+
             'created_at' => $message->created_at,
 
         ];
+    }
+
+    protected function publicMessageMetadata(TutorMessage $message): ?array
+    {
+        $metadata = is_array($message->metadata) ? $message->metadata : [];
+
+        if (isset($metadata['attachments']) && is_array($metadata['attachments'])) {
+            $metadata['attachments'] = collect($metadata['attachments'])
+                ->values()
+                ->map(function ($attachment, $index) use ($message) {
+                    return [
+                        'index' => $index,
+                        'original_name' => $attachment['original_name'] ?? 'Attachment',
+                        'mime_type' => $attachment['mime_type'] ?? 'application/octet-stream',
+                        'size' => (int) ($attachment['size'] ?? 0),
+                        'url' => "/api/tutor/messages/{$message->id}/attachments/{$index}",
+                    ];
+                })
+                ->all();
+        }
+
+        return $metadata ?: null;
     }
 
     protected function publicObjective(

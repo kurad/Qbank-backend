@@ -49,6 +49,38 @@ class AIGateway
     }
 
     /**
+     * Multimodal text request for Tutor attachments.
+     *
+     * Attachments are sent to Gemini as inline data so the model can inspect
+     * learner images, PDFs, or plain-text notes in the current turn.
+     */
+    public function multimodalText(
+        array $messages,
+        array $attachments = [],
+        array $options = []
+    ): string {
+        if (empty($attachments)) {
+            return $this->text($messages, $options);
+        }
+
+        try {
+            return $this->gemini->multimodalText(
+                $messages,
+                $attachments,
+                $options
+            );
+        } catch (Throwable $e) {
+            Log::error('Gemini multimodal request failed.', [
+                'message' => $e->getMessage(),
+            ]);
+
+            throw new RuntimeException(
+                'The Tutor could not read the attached file or image. Please try again or send the question without the attachment.'
+            );
+        }
+    }
+
+    /**
      * General JSON request.
      *
      * Uses the configured default provider with fallback support.

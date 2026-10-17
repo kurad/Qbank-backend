@@ -50,11 +50,45 @@ class TutorMediaService
             $media['graphs'] = $graphs;
         }
 
+        $grounding = [
+            'source_chunk_ids' => $chunks
+                ->pluck('id')
+                ->filter()
+                ->map(fn ($id) => (int) $id)
+                ->unique()
+                ->values()
+                ->all(),
+            'course_material_ids' => $chunks
+                ->pluck('course_material_id')
+                ->filter()
+                ->map(fn ($id) => (int) $id)
+                ->unique()
+                ->values()
+                ->all(),
+            'page_ids' => $chunks
+                ->pluck('course_material_page_id')
+                ->filter()
+                ->map(fn ($id) => (int) $id)
+                ->unique()
+                ->values()
+                ->all(),
+        ];
+
+        $metadata = [];
+
+        if (!empty($media)) {
+            $metadata['media'] = $media;
+        }
+
+        if (!empty($grounding['source_chunk_ids'])) {
+            $metadata['grounding'] = $grounding;
+        }
+
         return [
             'content' => trim($cleanContent),
-            'metadata' => empty($media)
+            'metadata' => empty($metadata)
                 ? null
-                : ['media' => $media],
+                : $metadata,
         ];
     }
 
@@ -141,6 +175,7 @@ class TutorMediaService
     {
         $graphs = [];
 
+        // Preferred machine-readable format.
         $clean = preg_replace_callback(
             '/```tutor-graph\s*([\s\S]*?)```/i',
             function (array $matches) use (&$graphs) {
@@ -158,6 +193,29 @@ class TutorMediaService
                 return '';
             },
             $content
+        );
+
+        /*
+         * Be tolerant when the model accidentally emits the same graph payload
+         * in a normal JSON/code fence.  This prevents raw plotting JSON from
+         * being shown to the learner while still refusing unrelated JSON.
+         */
+        $clean = preg_replace_callback(
+            '/```(?:json)?\s*([\s\S]*?)```/i',
+            function (array $matches) use (&$graphs) {
+                $raw = trim($matches[1] ?? '');
+                $decoded = json_decode($raw, true);
+                $graph = $this->normalizeGraph($decoded);
+
+                if ($graph === null) {
+                    return $matches[0];
+                }
+
+                $graphs[] = $graph;
+
+                return '';
+            },
+            (string) $clean
         );
 
         $clean = preg_replace("/\n{3,}/", "\n\n", (string) $clean);
