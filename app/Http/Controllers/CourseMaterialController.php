@@ -90,6 +90,14 @@ class CourseMaterialController extends Controller
         |--------------------------------------------------------------------------
         */
 
+        if ($request->filled('grade_subject_id')) {
+            $gradeSubjectId = $request->integer('grade_subject_id');
+
+            $query->whereHas('unit', function ($q) use ($gradeSubjectId) {
+                $q->where('grade_subject_id', $gradeSubjectId);
+            });
+        }
+
         if ($request->filled('unit_id')) {
             $query->where(
                 'unit_id',
@@ -130,6 +138,52 @@ class CourseMaterialController extends Controller
                 ->paginate(
                     $request->integer('per_page', 20)
                 )
+        );
+    }
+
+    /**
+     * Stream the teacher's original uploaded PDF in the browser.
+     */
+    public function viewOriginal(CourseMaterial $courseMaterial)
+    {
+        $this->ownsMaterial($courseMaterial);
+
+        $resolved = $this->resolveOriginalPdf($courseMaterial);
+
+        if (!$resolved) {
+            return response()->json([
+                'message' => 'The original uploaded PDF could not be found on the server.',
+                'stored_path' => $courseMaterial->original_file_path,
+            ], 404);
+        }
+
+        return response()->file($resolved, [
+            'Content-Type' => 'application/pdf',
+            'Content-Disposition' => 'inline; filename="' . $this->safePdfName($courseMaterial) . '"',
+            'Cache-Control' => 'private, no-store, max-age=0',
+        ]);
+    }
+
+    /**
+     * Download the teacher's original uploaded PDF.
+     */
+    public function downloadOriginal(CourseMaterial $courseMaterial)
+    {
+        $this->ownsMaterial($courseMaterial);
+
+        $resolved = $this->resolveOriginalPdf($courseMaterial);
+
+        if (!$resolved) {
+            return response()->json([
+                'message' => 'The original uploaded PDF could not be found on the server.',
+                'stored_path' => $courseMaterial->original_file_path,
+            ], 404);
+        }
+
+        return response()->download(
+            $resolved,
+            $this->safePdfName($courseMaterial),
+            ['Content-Type' => 'application/pdf']
         );
     }
 
@@ -872,6 +926,82 @@ class CourseMaterialController extends Controller
      *     ↓
      * Teacher + School
      */
+    /**
+     * Resolve both current and older values of original_file_path to a readable
+     * file on the local disk. Older deployments may have persisted prefixes
+     * such as storage/app/ while newer uploads store paths relative to the
+     * configured local disk.
+     */
+    private function resolveOriginalPdf(CourseMaterial $courseMaterial): ?string
+    {
+        $storedPath = trim((string) $courseMaterial->original_file_path);
+
+        if ($storedPath === '') {
+            return null;
+        }
+
+        // Normal Laravel local-disk path: course-materials/abc.pdf
+        $relativeCandidates = [ltrim($storedPath, '/\\')];
+
+        foreach (['storage/app/', 'storage/app/private/', 'app/', 'private/'] as $prefix) {
+            if (str_starts_with($storedPath, $prefix)) {
+                $relativeCandidates[] = substr($storedPath, strlen($prefix));
+            }
+        }
+
+        foreach (array_unique($relativeCandidates) as $relativePath) {
+            $relativePath = ltrim((string) $relativePath, '/\\');
+
+            if ($relativePath === '') {
+                continue;
+            }
+
+            if (Storage::disk('local')->exists($relativePath)) {
+                $absolutePath = Storage::disk('local')->path($relativePath);
+
+                if (is_file($absolutePath) && is_readable($absolutePath)) {
+                    return $absolutePath;
+                }
+            }
+
+            // Compatibility with installations whose local root changed
+            // between storage/app and storage/app/private.
+            foreach ([
+                storage_path('app/' . $relativePath),
+                storage_path('app/private/' . $relativePath),
+            ] as $absolutePath) {
+                if (is_file($absolutePath) && is_readable($absolutePath)) {
+                    return $absolutePath;
+                }
+            }
+        }
+
+        // Last resort for an absolute path persisted by an older deployment.
+        if (str_starts_with($storedPath, DIRECTORY_SEPARATOR)
+            && is_file($storedPath)
+            && is_readable($storedPath)) {
+            return $storedPath;
+        }
+
+        return null;
+    }
+
+    private function safePdfName(CourseMaterial $courseMaterial): string
+    {
+        $name = trim((string) ($courseMaterial->file_name ?: 'course-material.pdf'));
+        $name = basename(str_replace('\\', '/', $name));
+
+        if (!str_ends_with(strtolower($name), '.pdf')) {
+            $name .= '.pdf';
+        }
+
+        // BinaryFileResponse requires an ASCII-safe fallback filename on some
+        // production servers. Keep common filename characters only.
+        $safe = preg_replace('/[^A-Za-z0-9._ -]+/', '_', $name) ?: 'course-material.pdf';
+
+        return $safe;
+    }
+
     private function ownsMaterial(
         CourseMaterial $courseMaterial
     ): void {

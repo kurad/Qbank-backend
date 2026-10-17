@@ -27,7 +27,7 @@ return new class extends Migration
 
             $table->unique(['student_id', 'learning_period_id', 'topic_id'], 'student_topic_learning_state_unique');
             $table->index(['learning_period_id', 'mastery_status'], 'stls_period_mastery_idx');
-            $table->index(['student_id', 'progression_status']);
+            $table->index(['student_id', 'progression_status'], 'stls_student_progress_idx');
         });
     }
 

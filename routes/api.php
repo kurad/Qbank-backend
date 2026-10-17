@@ -196,11 +196,11 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     */
 
     Route::get('/course-materials', [CourseMaterialController::class, 'index']);
+    Route::get('/course-materials/{courseMaterial}/view', [CourseMaterialController::class, 'viewOriginal']);
+    Route::get('/course-materials/{courseMaterial}/download', [CourseMaterialController::class, 'downloadOriginal']);
     Route::post('/course-materials', [CourseMaterialController::class, 'store']);
     Route::post('/course-materials/{courseMaterial}/approve', [CourseMaterialController::class, 'approve']);
     Route::delete('/course-materials/{courseMaterial}', [CourseMaterialController::class, 'destroy']);
-
-
     /*
     |--------------------------------------------------------------------------
     | Learning Periods
