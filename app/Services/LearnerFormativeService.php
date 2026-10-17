@@ -18,6 +18,10 @@ use RuntimeException;
 
 class LearnerFormativeService
 {
+    public function __construct(
+        protected StudentTopicLearningService $topicLearning
+    ) {}
+
     private const QUESTIONS_PER_TOPIC = 3;
 
     private const AUTO_GRADABLE_TYPES = [
@@ -332,27 +336,7 @@ class LearnerFormativeService
 
     public function studentCoveredPeriod(User $student, LearningPeriod $period): bool
     {
-        $period->loadMissing('topics:id,learning_period_id,topic_id');
-
-        $topicIds = $period->topics
-            ->pluck('topic_id')
-            ->filter()
-            ->unique()
-            ->values();
-
-        if ($topicIds->isEmpty()) {
-            return false;
-        }
-
-        $covered = TutorSession::query()
-            ->where('student_id', $student->id)
-            ->where('learning_period_id', $period->id)
-            ->where('status', 'completed')
-            ->whereIn('topic_id', $topicIds)
-            ->pluck('topic_id')
-            ->unique();
-
-        return $topicIds->diff($covered)->isEmpty();
+        return (bool) ($this->topicLearning->periodSummary($student, $period)['coverage_complete'] ?? false);
     }
 
     protected function ensureContainerAssessment(LearningPeriod $period, int $questionCount): Assessment

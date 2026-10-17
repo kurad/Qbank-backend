@@ -15,7 +15,8 @@ class TutorSessionService
     public function __construct(
         protected TutorContextService $context,
         protected TutorAIService $ai,
-        protected TutorDifficultyService $difficulty
+        protected TutorDifficultyService $difficulty,
+        protected StudentTopicLearningService $topicLearning
     ) {}
 
     public function create(User $student, array $data): TutorSession
@@ -85,6 +86,8 @@ class TutorSessionService
             return $session;
         });
 
+        $this->topicLearning->markStarted($student, $session);
+
         $opening = $this->ai->opening($session);
 
         $session->messages()->create([
@@ -152,6 +155,11 @@ class TutorSessionService
 
             $classification = strtolower((string) ($evaluation['classification'] ?? 'unclear'));
             $score = max(0, min(100, (int) ($evaluation['understanding_score'] ?? 0)));
+
+            $student = $session->student()->first();
+            if ($student && $session->learning_period_id && $session->topic_id) {
+                $this->topicLearning->recordEvaluation($student, $session, $score);
+            }
 
             // A mastery-confirming response must satisfy BOTH conditions.
             $qualifyingCorrect = $classification === 'correct' && $score >= 80;
@@ -376,6 +384,15 @@ class TutorSessionService
             'last_activity_at' => now(),
         ]);
 
+        if ($status === 'completed' && $session->learning_period_id && $session->topic_id) {
+            $hasReview = $session->objectives()->where('status', 'needs_review')->exists();
+            if ($hasReview) {
+                $this->topicLearning->markNeedsReview($student, $session);
+            } else {
+                $this->topicLearning->markMastered($student, $session);
+            }
+        }
+
         /*
          * As soon as the learner completes the final assigned topic in a
          * learning period, queue preparation of the shared mandatory
@@ -474,6 +491,15 @@ class TutorSessionService
                 $session->last_activity_at ?? now(),
         ]);
 
+        if ($session->learning_period_id && $session->topic_id) {
+            $hasReview = $session->objectives()->where('status', 'needs_review')->exists();
+            if ($hasReview) {
+                $this->topicLearning->markNeedsReview($student, $session);
+            } else {
+                $this->topicLearning->markMastered($student, $session);
+            }
+        }
+
         if (
             $session->learning_period_id &&
             $this->studentCoveredLearningPeriod(
@@ -487,6 +513,44 @@ class TutorSessionService
         }
 
         return $session->fresh();
+    }
+
+    public function moveOnWithReview(
+        User $student,
+        TutorSession $session,
+        ?string $reason = null
+    ): TutorSession {
+        abort_unless((int) $session->student_id === (int) $student->id, 403);
+        abort_unless($session->status === 'active', 409, 'This Tutor session is no longer active.');
+
+        $current = $this->currentObjective($session);
+        abort_unless($current, 422, 'There is no current objective to move on from.');
+
+        $profile = $this->difficulty->profile($session, $current);
+        abort_unless(
+            !empty($profile['move_on_available']),
+            422,
+            'Continue learning for a little longer before choosing to move on.'
+        );
+
+        DB::transaction(function () use ($student, $session, $reason) {
+            $session->objectives()
+                ->whereNotIn('status', ['completed', 'mastered', 'needs_review'])
+                ->update([
+                    'status' => 'needs_review',
+                    'completed_at' => now(),
+                ]);
+
+            $session->update([
+                'status' => 'completed',
+                'ended_at' => now(),
+                'last_activity_at' => now(),
+            ]);
+
+            $this->topicLearning->markNeedsReview($student, $session, $reason);
+        });
+
+        return $this->freshSession($session);
     }
 
     protected function studentCoveredLearningPeriod(

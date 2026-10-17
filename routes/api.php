@@ -13,6 +13,7 @@ use App\Http\Controllers\GroupController;
 use App\Http\Controllers\HomeController;
 use App\Http\Controllers\LearningObjectiveController;
 use App\Http\Controllers\LearningPeriodController;
+use App\Http\Controllers\LearningSupportController;
 use App\Http\Controllers\ModernAssessmentBuilderController;
 use App\Http\Controllers\PaperGeneratorController;
 use App\Http\Controllers\PracticePaperController;
@@ -92,8 +93,7 @@ Route::post('/refresh-token', [AuthController::class, 'refreshToken']);
 
 // Public class invitation preview
 Route::get('/class-invitations/{classCode}', [ClassInvitationController::class, 'show']);
-// Route::post('/class-invitations/{classCode}/resolve-account')->middleware('throttle:10,1');
-Route::post('/class-invitations/{classCode}/resolve-account',[ClassInvitationController::class, 'resolveAccount'])->middleware('throttle:10,1');
+Route::post('/class-invitations/{classCode}/resolve-account')->middleware('throttle:10,1');
 Route::get('/auth/google', [AuthController::class, 'redirectToGoogle']);
 Route::get('/auth/google/callback', [AuthController::class, 'handleGoogleCallback']);
 
@@ -270,6 +270,7 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     Route::post('/tutor/sessions/{tutorSession}/messages', [TutorController::class, 'message']);
     Route::post('/tutor/sessions/{tutorSession}/end', [TutorController::class, 'endSession']);
     Route::post('/tutor/sessions/{tutorSession}/continue', [TutorController::class, 'continueLearning']);
+    Route::post('/tutor/sessions/{tutorSession}/move-on', [TutorController::class, 'moveOnTopic']);
     Route::post('/tutor/sessions/{tutorSession}/checkpoints/{checkpointMessage}/answer', [TutorController::class, 'answerCheckpoint']);
     Route::post('/tutor/sessions/{tutorSession}/checkpoints/{checkpointMessage}/skip', [TutorController::class, 'skipCheckpoint']);
     Route::post(
@@ -500,6 +501,16 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     Route::get('/student/practice/history', [StudentPracticeController::class, 'history']);
     Route::get('/student/practice/attempts/{practiceAttempt}', [StudentPracticeController::class, 'reviewAttempt']);
 
+
+    Route::get('/student/support/threads', [LearningSupportController::class, 'studentThreads']);
+    Route::post('/student/support/threads/{thread}/messages', [LearningSupportController::class, 'addMessage']);
+
+    Route::get('/teacher/support/needs-review', [LearningSupportController::class, 'teacherNeedsReview']);
+    Route::get('/teacher/support/threads', [LearningSupportController::class, 'teacherThreads']);
+    Route::post('/teacher/support/threads', [LearningSupportController::class, 'createThread']);
+    Route::post('/teacher/support/threads/{thread}/messages', [LearningSupportController::class, 'addMessage']);
+    Route::post('/teacher/support/threads/{thread}/check-ins', [LearningSupportController::class, 'scheduleCheckIn']);
+    Route::patch('/teacher/support/check-ins/{checkIn}', [LearningSupportController::class, 'updateCheckIn']);
 
     Route::prefix('teacher/learning-activity')->group(function () {
         Route::get('/', [TeacherLearningActivityController::class, 'index']);

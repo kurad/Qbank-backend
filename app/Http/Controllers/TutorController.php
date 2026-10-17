@@ -16,6 +16,7 @@ use App\Services\TutorCheckpointService;
 use App\Services\TutorContextService;
 use App\Services\TutorDifficultyService;
 use App\Services\TutorSessionService;
+use App\Services\StudentTopicLearningService;
 use Illuminate\Http\Request;
 
 class TutorController extends Controller
@@ -27,7 +28,8 @@ class TutorController extends Controller
         protected TutorSessionService $sessionsService,
         protected TutorAIService $ai,
         protected TutorCheckpointService $checkpoints,
-        protected TutorDifficultyService $difficulty
+        protected TutorDifficultyService $difficulty,
+        protected StudentTopicLearningService $topicLearning
 
     ) {}
 
@@ -88,12 +90,33 @@ class TutorController extends Controller
                 fn(LearningPeriod $period) =>
                 $period->start_date->toDateString() <= $today
             )
-            ->map(function (LearningPeriod $period) use ($today) {
+            ->map(function (LearningPeriod $period) use ($today, $request) {
                 $period->setAttribute(
                     'learning_state',
                     $period->end_date->toDateString() < $today
                         ? 'previous'
                         : 'current'
+                );
+
+                $states = $this->topicLearning
+                    ->periodStates($request->user(), $period);
+
+                $period->topics->each(function ($item) use ($states) {
+                    $state = $states->get($item->topic_id);
+                    $item->setAttribute('student_state', $state ? [
+                        'progression_status' => $state->progression_status,
+                        'mastery_status' => $state->mastery_status,
+                        'attempt_count' => (int) $state->attempt_count,
+                        'best_score' => $state->best_score,
+                        'last_score' => $state->last_score,
+                        'move_on_chosen' => (bool) $state->move_on_chosen,
+                        'move_on_reason' => $state->move_on_reason,
+                    ] : null);
+                });
+
+                $period->setAttribute(
+                    'student_summary',
+                    $this->topicLearning->periodSummary($request->user(), $period)
                 );
 
                 return $period;
@@ -1003,6 +1026,10 @@ class TutorController extends Controller
 
                     (bool) ($progress['max_persistence_reached'] ?? false),
 
+                    'move_on_available' =>
+
+                    (bool) ($progress['move_on_available'] ?? false),
+
                     'current_objective' =>
 
                     $currentObjective
@@ -1028,6 +1055,36 @@ class TutorController extends Controller
 
             ],
 
+        ]);
+    }
+
+    public function moveOnTopic(
+        Request $request,
+        TutorSession $tutorSession
+    ) {
+        $this->authorizeStudentSession($request, $tutorSession);
+
+        $data = $request->validate([
+            'reason' => ['nullable', 'string', 'max:80'],
+        ]);
+
+        $session = $this->sessionsService->moveOnWithReview(
+            $request->user(),
+            $tutorSession,
+            $data['reason'] ?? null
+        );
+
+        return response()->json([
+            'message' => 'You can continue to another topic. This topic remains marked for review.',
+            'data' => [
+                'session' => $session,
+                'topic_state' => [
+                    'progression_status' => 'covered',
+                    'mastery_status' => 'needs_review',
+                    'move_on_chosen' => true,
+                    'move_on_reason' => $data['reason'] ?? null,
+                ],
+            ],
         ]);
     }
 

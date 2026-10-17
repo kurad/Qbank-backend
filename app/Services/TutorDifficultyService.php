@@ -52,7 +52,11 @@ class TutorDifficultyService
         );
 
         $teacherAttention = $struggleLevel >= 3;
-        $maxPersistenceReached = $consecutiveUnsuccessful >= 5;
+        // After three unsuccessful formal checks, the learner may choose to
+        // continue practising or move to the next topic. This is deliberately
+        // not an automatic mastery/completion decision.
+        $moveOnAvailable = $consecutiveUnsuccessful >= 3;
+        $maxPersistenceReached = false; // retained for backward-compatible API shape
         $requiredSupportTurns = match (true) {
             $latestQualifyingCorrect => 0,
             $struggleLevel >= 3 => 2,
@@ -72,6 +76,7 @@ class TutorDifficultyService
             'repeated_misconception' => $repeatedMisconception,
             'teacher_attention' => $teacherAttention,
             'max_persistence_reached' => $maxPersistenceReached,
+            'move_on_available' => $moveOnAvailable,
             'teacher_attention_reason' => $teacherAttention
                 ? $this->teacherAttentionReason(
                     $consecutiveUnsuccessful,
@@ -82,8 +87,8 @@ class TutorDifficultyService
             'support_turns_since_check' => $supportTurns,
             'required_support_turns' => $requiredSupportTurns,
             'checkpoint_ready' => $supportTurns >= $requiredSupportTurns,
-            'learning_state' => $maxPersistenceReached
-                ? 'needs_review'
+            'learning_state' => $moveOnAvailable && !$latestQualifyingCorrect
+                ? 'choice_available'
                 : ($latestQualifyingCorrect
                 ? 'ready_for_checkpoint'
                 : ($supportTurns >= $requiredSupportTurns
@@ -102,6 +107,7 @@ class TutorDifficultyService
             'teacher_attention' => false,
             'teacher_attention_reason' => null,
             'max_persistence_reached' => false,
+            'move_on_available' => false,
             'support_turns_since_check' => 0,
             'required_support_turns' => 0,
             'checkpoint_ready' => true,
@@ -156,7 +162,7 @@ class TutorDifficultyService
             return 0;
         }
 
-        if ($consecutiveUnsuccessful >= 5) {
+        if ($consecutiveUnsuccessful >= 4) {
             return 4;
         }
 
