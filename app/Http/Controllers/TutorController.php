@@ -20,6 +20,7 @@ use App\Services\StudentTopicLearningService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 
 class TutorController extends Controller
 
@@ -335,7 +336,6 @@ class TutorController extends Controller
                 'nullable',
                 'string',
                 'max:4000',
-                'required_without:attachments',
             ],
             'attachments' => [
                 'nullable',
@@ -355,6 +355,13 @@ class TutorController extends Controller
         }
 
         $studentText = trim((string) ($data['message'] ?? ''));
+
+        if ($studentText === '' && count($uploadedFiles) === 0) {
+            throw ValidationException::withMessages([
+                'message' => ['Write a message or attach a file.'],
+            ]);
+        }
+
         if ($studentText === '' && count($uploadedFiles)) {
             $studentText = 'Please help me understand the attached material.';
         }
@@ -366,26 +373,10 @@ class TutorController extends Controller
 
         abort_unless($currentObjective, 422, 'There is no active learning objective in this session.');
 
-        $turnFocus = $this->ai->classifyStudentTurn(
-            $tutorSession,
-            $studentText,
-            count($uploadedFiles) > 0
-        );
-
-        /*
-         * Do not let an unrelated learner message steer retrieval away from
-         * the active curriculum. For off-topic/social turns we retrieve from
-         * the active objective itself so the Tutor has the right material to
-         * make a natural return to the lesson.
-         */
-        $retrievalMessage = !empty($turnFocus['redirect_needed'])
-            ? ''
-            : $studentText;
-
         $knowledge =
             $this->ai->teachingContext(
                 $tutorSession,
-                $retrievalMessage,
+                $studentText,
                 6
             );
 
@@ -421,8 +412,7 @@ class TutorController extends Controller
                 $tutorSession,
                 $studentText,
                 $knowledge,
-                $aiAttachments,
-                $turnFocus
+                $aiAttachments
             );
 
         $storedAttachments = [];
@@ -467,12 +457,6 @@ class TutorController extends Controller
                 'role' => 'assistant',
                 'message_type' => 'text',
                 'content' => $answer,
-                'metadata' => [
-                    'turn_focus' => [
-                        'focus' => $turnFocus['focus'] ?? 'on_track',
-                        'redirected' => !empty($turnFocus['redirect_needed']),
-                    ],
-                ],
             ]);
 
         $tutorSession->update(['last_activity_at' => now(),]);
@@ -803,15 +787,44 @@ class TutorController extends Controller
             );
 
         /*
-         * Do NOT auto-generate another formal checkpoint here.
+         * Keep a knowledge check flowing without another learner click.
          *
-         * After feedback, return control to the learning conversation. The
-         * learner can ask for clarification/practice and can explicitly choose
-         * "Check my understanding" when the support profile says another check
-         * is appropriate. This prevents formal checks from taking over the
-         * tutoring experience and restores the adaptive suggestion flow.
+         * When the current objective is still unresolved, the feedback has
+         * already been created by TutorCheckpointService::answer(). We now
+         * prepare the next checkpoint immediately and return it with the same
+         * response. This applies after correct, partially-correct, unclear,
+         * and incorrect answers.
+         *
+         * If the objective has just been resolved, we do not create another
+         * checkpoint here; the existing objective-transition flow takes over.
          */
         $nextCheckpoint = null;
+
+        if (
+            empty($progress['session_completed'])
+            && empty($progress['objective_resolved'])
+        ) {
+            try {
+                $nextCheckpointMessage =
+                    $this->checkpoints->generate(
+                        $tutorSession->fresh(),
+                        true
+                    );
+
+                $nextCheckpoint =
+                    $this->checkpoints->publicCheckpoint(
+                        $nextCheckpointMessage
+                    );
+            } catch (\Throwable $e) {
+                /*
+                 * The submitted answer and feedback are already safely saved.
+                 * Do not fail the whole response if follow-up generation has
+                 * a temporary AI/provider problem. The learner can still use
+                 * the normal continue/check action as a fallback.
+                 */
+                report($e);
+            }
+        }
 
         return response()->json([
 
