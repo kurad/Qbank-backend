@@ -18,7 +18,12 @@ class TeacherAccessController extends Controller
     private function requireAdmin(Request $request): User
     {
         $admin = $request->user();
-        abort_unless($admin && $admin->role === 'admin', 403, 'Only an administrator can manage teacher access.');
+        abort_unless(
+            $admin instanceof User && $admin->isSchoolAdmin(),
+            403,
+            'Teacher management belongs to a School Admin.'
+        );
+        abort_unless($admin->school_id, 422, 'This School Admin is not attached to a school.');
 
         return $admin;
     }
@@ -87,8 +92,8 @@ class TeacherAccessController extends Controller
                 'admin_scope' => $this->isSystemAdmin($admin) ? 'system' : 'school',
                 'school_id' => $admin->school_id,
             ],
-            'can_select_school' => $this->isSystemAdmin($admin),
-            'can_transfer_teachers' => $this->isSystemAdmin($admin),
+            'can_select_school' => false,
+            'can_transfer_teachers' => false,
             'selected_school' => null,
             'summary' => [
                 'teachers' => 0,
@@ -158,15 +163,9 @@ class TeacherAccessController extends Controller
             'school_id' => 'nullable|integer|exists:schools,id',
         ]);
 
-        $schoolId = $this->isSchoolAdmin($admin)
-            ? (int) $admin->school_id
-            : (int) ($validated['school_id'] ?? 0);
-
-        if (!$schoolId) {
-            return response()->json(['message' => 'Select the school that is inviting this teacher.'], 422);
-        }
-
-        abort_unless($this->schoolAllowedForAdmin($admin, $schoolId), 403, 'You cannot invite teachers to another school.');
+        // School Admins can only invite into their own school.
+        // Ignore any school_id supplied by the browser.
+        $schoolId = (int) $admin->school_id;
 
         $email = strtolower(trim($validated['email']));
         $school = School::findOrFail($schoolId);
@@ -182,13 +181,6 @@ class TeacherAccessController extends Controller
             && $existing->role === 'teacher'
             && $existing->school_id
             && (int) $existing->school_id !== $schoolId;
-
-        if ($isTransfer && !$this->isSystemAdmin($admin)) {
-            return response()->json([
-                'message' => 'This teacher currently belongs to another school. Only a System Admin can initiate a school transfer.',
-                'requires_system_admin' => true,
-            ], 403);
-        }
 
         if ($existing
             && $existing->role === 'teacher'

@@ -11,12 +11,12 @@ class SubjectController extends Controller
     public function index()
     {
         $user = auth()->user();
-abort_unless($user, 401, 'Unauthenticated.');
-        $query = Subject::with('gradeLevels');
+        abort_unless($user, 401, 'Unauthenticated.');
+        abort_if($user->isSystemAdmin(), 403, 'Academic setup is managed by each school.');
+        abort_unless($user->school_id, 403, 'Your account is not attached to a school.');
 
-        if ($user->role !== 'admin') {
-            $query->where('school_id', $user->school_id);
-        }
+        $query = Subject::with('gradeLevels')
+            ->where('school_id', $user->school_id);
 
         return response()->json($query->orderBy('name')->get());
     }
@@ -77,6 +77,8 @@ abort_unless($user, 401, 'Unauthenticated.');
     public function createSubject(Request $request)
     {
         $user = auth()->user();
+        abort_if($user->isSystemAdmin(), 403, 'Academic setup is managed by each school.');
+        abort_unless($user->school_id, 403, 'Your account is not attached to a school.');
 
         $validated = $request->validate([
             'grade_levels' => 'required|array',
@@ -138,9 +140,9 @@ abort_unless($user, 401, 'Unauthenticated.');
             ->orderBy('name')
             ->limit(10);
 
-        if ($user->role !== 'admin') {
-            $query->where('school_id', $user->school_id);
-        }
+        abort_if($user->isSystemAdmin(), 403, 'Academic setup is managed by each school.');
+        abort_unless($user->school_id, 403, 'Your account is not attached to a school.');
+        $query->where('school_id', $user->school_id);
 
         $subjects = $query->get()->map(function ($subject) {
             $grades = $subject->gradeSubjects
@@ -162,6 +164,8 @@ abort_unless($user, 401, 'Unauthenticated.');
     public function store(Request $request)
     {
         $user = auth()->user();
+        abort_if($user->isSystemAdmin(), 403, 'Academic setup is managed by each school.');
+        abort_unless($user->school_id, 403, 'Your account is not attached to a school.');
 
         $validated = $request->validate([
             'name' => 'required|string|max:255',
@@ -190,6 +194,8 @@ abort_unless($user, 401, 'Unauthenticated.');
     public function update(Request $request, $id)
     {
         $user = auth()->user();
+        abort_if($user->isSystemAdmin(), 403, 'Academic setup is managed by each school.');
+        abort_unless($user->school_id, 403, 'Your account is not attached to a school.');
 
         $subject = Subject::find($id);
 
@@ -200,8 +206,12 @@ abort_unless($user, 401, 'Unauthenticated.');
         }
 
         abort_unless(
-            $user->role === 'admin' ||
             (
+                $user->role === 'admin' &&
+                (int) $subject->school_id === (int) $user->school_id
+            ) ||
+            (
+                $user->role === 'teacher' &&
                 (int) $subject->school_id === (int) $user->school_id &&
                 (int) $subject->created_by === (int) $user->id
             ),

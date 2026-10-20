@@ -17,13 +17,21 @@ class TopicController extends Controller
     {
         $user = auth()->user();
 
+        abort_unless($user, 401, 'Unauthenticated.');
+        abort_if($user->isSystemAdmin(), 403, 'Academic setup is managed by each school.');
+        abort_unless($user->school_id, 403, 'Your account is not attached to a school.');
+
         $query = Topic::with([
             'gradeSubject.subject',
             'gradeSubject.gradeLevel',
             'unit',
         ])->orderBy('created_at', 'desc');
 
-        if ($user->role !== 'admin') {
+        if ($user->role === 'admin') {
+            $query->whereHas('gradeSubject', function ($q) use ($user) {
+                $q->where('school_id', $user->school_id);
+            });
+        } else {
             $query->whereHas('gradeSubject', function ($q) use ($user) {
                 $q->where('teacher_id', $user->id)
                     ->where('school_id', $user->school_id);

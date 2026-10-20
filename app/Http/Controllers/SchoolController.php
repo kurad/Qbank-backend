@@ -6,13 +6,25 @@ use Illuminate\Http\Request;
 
 class SchoolController extends Controller
 {
-    public function index()
+    private function requireSystemAdmin(Request $request): void
     {
+        $user = $request->user();
+        abort_unless(
+            $user && method_exists($user, 'isSystemAdmin') && $user->isSystemAdmin(),
+            403,
+            'Only a System Admin can manage RevisionHub clients.'
+        );
+    }
+
+    public function index(Request $request)
+    {
+        $this->requireSystemAdmin($request);
         $schools = School::paginate(10);
         return response()->json($schools);
     }
     public function store(Request $request)
     {
+        $this->requireSystemAdmin($request);
         $validated = $request->validate([
             'school_name' => 'required|string|max:255',
             'district' => 'nullable|string|max:255',
@@ -35,6 +47,7 @@ class SchoolController extends Controller
 
     public function update(Request $request, $id)
     {
+        $this->requireSystemAdmin($request);
         $school = School::findOrFail($id);
         $validated = $request->validate([
             'school_name' => 'sometimes|required|string|max:255',

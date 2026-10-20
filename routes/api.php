@@ -21,6 +21,7 @@ use App\Http\Controllers\PracticePaperController;
 use App\Http\Controllers\QuestionController;
 use App\Http\Controllers\QuestionnaireImportController;
 use App\Http\Controllers\SchoolController;
+use App\Http\Controllers\SchoolStudentController;
 use App\Http\Controllers\StudentAnswerController;
 use App\Http\Controllers\StudentAssessmentController;
 use App\Http\Controllers\SubjectController;
@@ -135,6 +136,11 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     Route::post('/teacher-management/invitations/{teacherInvitation}/revoke', [TeacherAccessController::class, 'revoke']);
 
 
+    // School-level student management. System Admins do not manage student accounts.
+    Route::get('/school-management/students', [SchoolStudentController::class, 'index']);
+    Route::patch('/school-management/students/{student}/status', [SchoolStudentController::class, 'updateStatus']);
+
+
 
     /*
     |--------------------------------------------------------------------------
@@ -172,7 +178,7 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
 
     /*
     |--------------------------------------------------------------------------
-    | School & User Management
+    | School Client & Student Lookup
     |--------------------------------------------------------------------------
     */
 
@@ -180,9 +186,6 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     Route::get('/schools', [SchoolController::class, 'index']);
     Route::post('/schools', [SchoolController::class, 'store']);
     Route::match(['put', 'patch'], '/schools/{id}', [SchoolController::class, 'update']);
-    Route::get('/users', [AuthController::class, 'index']);
-    Route::put('/users/{id}', [AuthController::class, 'updateUser']);
-    Route::delete('/users/{id}', [AuthController::class, 'deleteUser']);
     Route::get('/students', [AuthController::class, 'getStudents']);
 
 
