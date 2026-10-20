@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\AdminDashboardController;
 use App\Http\Controllers\AssessmentBuilderController;
 use App\Http\Controllers\AssessmentController;
 use App\Http\Controllers\AssessmentSectionController;
@@ -123,6 +124,7 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     });
 
     Route::post('/logout', [AuthController::class, 'logout']);
+    Route::get('/admin/dashboard-summary', [AdminDashboardController::class, 'summary']);
 
     // Teacher access management / invitation acceptance
     Route::post('/teacher-invitations/{token}/accept', [TeacherAccessController::class, 'acceptExisting']);
@@ -204,6 +206,7 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     Route::post('/subjects', [SubjectController::class, 'createSubject']);
     Route::put('/subjects/{id}', [SubjectController::class, 'update']);
 
+    Route::post('/topics', [TopicController::class, 'store']);
     Route::put('/topics/{topic}', [TopicController::class, 'update']);
     Route::delete('/topics/{id}', [TopicController::class, 'destroy']);
 

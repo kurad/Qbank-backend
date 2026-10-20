@@ -114,12 +114,19 @@ class TopicController extends Controller
             ->where('school_id', $user->school_id)
             ->firstOrFail();
 
-        $gradeSubject = GradeSubject::firstOrCreate([
-            'grade_level_id' => $validated['grade_level_id'],
-            'subject_id' => $validated['subject_id'],
-            'school_id' => $user->school_id,
-            'teacher_id' => $user->id,
-        ]);
+        $gradeSubject = GradeSubject::firstOrCreate(
+            [
+                'grade_level_id' => $validated['grade_level_id'],
+                'subject_id' => $validated['subject_id'],
+                'school_id' => $user->school_id,
+            ],
+            [
+                // School Admins define the academic structure but do not
+                // become owners of Teaching Areas. Teacher assignment is
+                // handled separately.
+                'teacher_id' => $user->role === 'teacher' ? $user->id : null,
+            ]
+        );
 
         $topic = Topic::create([
             'grade_subject_id' => $gradeSubject->id,
