@@ -2,9 +2,9 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\GradeSubject;
 use App\Models\School;
 use App\Models\TeacherInvitation;
-use App\Models\GradeSubject;
 use App\Models\User;
 use App\Notifications\TeacherInvitationNotification;
 use Illuminate\Http\Request;
@@ -19,12 +19,47 @@ class TeacherAccessController extends Controller
     {
         $admin = $request->user();
         abort_unless($admin && $admin->role === 'admin', 403, 'Only an administrator can manage teacher access.');
+
         return $admin;
+    }
+
+    private function isSystemAdmin(User $admin): bool
+    {
+        // Backward-compatible fallback while existing admins are being migrated.
+        return $admin->admin_scope === 'system'
+            || ($admin->admin_scope === null && !$admin->school_id);
+    }
+
+    private function isSchoolAdmin(User $admin): bool
+    {
+        return $admin->admin_scope === 'school'
+            || ($admin->admin_scope === null && (bool) $admin->school_id);
+    }
+
+    private function managedSchoolId(Request $request, User $admin, bool $required = true): ?int
+    {
+        if ($this->isSchoolAdmin($admin)) {
+            abort_unless($admin->school_id, 422, 'This school administrator is not attached to a school.');
+            return (int) $admin->school_id;
+        }
+
+        $schoolId = $request->integer('school_id') ?: null;
+
+        if ($required && !$schoolId) {
+            abort(422, 'Select a school first.');
+        }
+
+        if ($schoolId) {
+            abort_unless(School::whereKey($schoolId)->exists(), 422, 'The selected school does not exist.');
+        }
+
+        return $schoolId;
     }
 
     private function schoolAllowedForAdmin(User $admin, int $schoolId): bool
     {
-        return !$admin->school_id || (int) $admin->school_id === (int) $schoolId;
+        return $this->isSystemAdmin($admin)
+            || ((int) $admin->school_id === (int) $schoolId);
     }
 
     private function resolveInvitation(string $token): TeacherInvitation
@@ -40,6 +75,80 @@ class TeacherAccessController extends Controller
         return $invitation->fresh(['school', 'previousSchool']);
     }
 
+    public function context(Request $request)
+    {
+        $admin = $this->requireAdmin($request);
+        $schoolId = $this->managedSchoolId($request, $admin, false);
+
+        $payload = [
+            'admin' => [
+                'id' => $admin->id,
+                'name' => $admin->name,
+                'admin_scope' => $this->isSystemAdmin($admin) ? 'system' : 'school',
+                'school_id' => $admin->school_id,
+            ],
+            'can_select_school' => $this->isSystemAdmin($admin),
+            'can_transfer_teachers' => $this->isSystemAdmin($admin),
+            'selected_school' => null,
+            'summary' => [
+                'teachers' => 0,
+                'pending' => 0,
+                'open_invitations' => 0,
+                'students' => 0,
+            ],
+        ];
+
+        if (!$schoolId) {
+            return response()->json($payload);
+        }
+
+        $school = School::findOrFail($schoolId);
+        $payload['selected_school'] = $school->only(['id', 'school_name', 'school_code']);
+        $payload['summary'] = [
+            'teachers' => User::query()
+                ->where('role', 'teacher')
+                ->where('school_id', $schoolId)
+                ->where('teacher_approval_status', 'approved')
+                ->count(),
+            'pending' => User::query()
+                ->where('role', 'teacher')
+                ->where('school_id', $schoolId)
+                ->where('teacher_approval_status', 'pending')
+                ->count(),
+            'open_invitations' => TeacherInvitation::query()
+                ->where('school_id', $schoolId)
+                ->where('status', 'pending')
+                ->where('expires_at', '>', now())
+                ->count(),
+            'students' => User::query()
+                ->where('role', 'student')
+                ->where('school_id', $schoolId)
+                ->count(),
+        ];
+
+        return response()->json($payload);
+    }
+
+    public function teachers(Request $request)
+    {
+        $admin = $this->requireAdmin($request);
+        $schoolId = $this->managedSchoolId($request, $admin);
+
+        $teachers = User::query()
+            ->with('school:id,school_name')
+            ->withCount('teachingAreas')
+            ->where('role', 'teacher')
+            ->where('school_id', $schoolId)
+            ->where('teacher_approval_status', 'approved')
+            ->orderBy('name')
+            ->get([
+                'id', 'name', 'email', 'school_id', 'status', 'teacher_approval_status',
+                'teacher_approved_at', 'email_verified_at', 'created_at',
+            ]);
+
+        return response()->json($teachers);
+    }
+
     public function invite(Request $request)
     {
         $admin = $this->requireAdmin($request);
@@ -49,11 +158,15 @@ class TeacherAccessController extends Controller
             'school_id' => 'nullable|integer|exists:schools,id',
         ]);
 
-        $schoolId = $admin->school_id ?: ($validated['school_id'] ?? null);
+        $schoolId = $this->isSchoolAdmin($admin)
+            ? (int) $admin->school_id
+            : (int) ($validated['school_id'] ?? 0);
+
         if (!$schoolId) {
             return response()->json(['message' => 'Select the school that is inviting this teacher.'], 422);
         }
-        abort_unless($this->schoolAllowedForAdmin($admin, (int) $schoolId), 403, 'You cannot invite teachers to another school.');
+
+        abort_unless($this->schoolAllowedForAdmin($admin, $schoolId), 403, 'You cannot invite teachers to another school.');
 
         $email = strtolower(trim($validated['email']));
         $school = School::findOrFail($schoolId);
@@ -62,6 +175,27 @@ class TeacherAccessController extends Controller
         if ($existing && $existing->role !== 'teacher') {
             return response()->json([
                 'message' => 'This email already belongs to a non-teacher Revision Hub account.',
+            ], 422);
+        }
+
+        $isTransfer = $existing
+            && $existing->role === 'teacher'
+            && $existing->school_id
+            && (int) $existing->school_id !== $schoolId;
+
+        if ($isTransfer && !$this->isSystemAdmin($admin)) {
+            return response()->json([
+                'message' => 'This teacher currently belongs to another school. Only a System Admin can initiate a school transfer.',
+                'requires_system_admin' => true,
+            ], 403);
+        }
+
+        if ($existing
+            && $existing->role === 'teacher'
+            && (int) $existing->school_id === $schoolId
+            && $existing->teacher_approval_status === 'approved') {
+            return response()->json([
+                'message' => 'This teacher already belongs to the selected school.',
             ], 422);
         }
 
@@ -78,16 +212,16 @@ class TeacherAccessController extends Controller
             'invited_by' => $admin->id,
             'status' => 'pending',
             'expires_at' => now()->addDays(7),
-            'previous_school_id' => $existing?->school_id && (int) $existing->school_id !== (int) $schoolId
-                ? $existing->school_id
-                : null,
+            'previous_school_id' => $isTransfer ? $existing->school_id : null,
         ]);
 
         $invitation->load('school');
         Notification::route('mail', $email)->notify(new TeacherInvitationNotification($invitation, $plainToken));
 
         return response()->json([
-            'message' => 'Teacher invitation sent successfully.',
+            'message' => $isTransfer
+                ? 'Teacher transfer invitation sent successfully.'
+                : 'Teacher invitation sent successfully.',
             'invitation' => $this->invitationPayload($invitation),
             'is_transfer' => (bool) $invitation->previous_school_id,
         ], 201);
@@ -96,12 +230,11 @@ class TeacherAccessController extends Controller
     public function invitations(Request $request)
     {
         $admin = $this->requireAdmin($request);
-        $query = TeacherInvitation::with(['school:id,school_name', 'inviter:id,name'])
-            ->latest();
+        $schoolId = $this->managedSchoolId($request, $admin);
 
-        if ($admin->school_id) {
-            $query->where('school_id', $admin->school_id);
-        }
+        $query = TeacherInvitation::with(['school:id,school_name', 'inviter:id,name'])
+            ->where('school_id', $schoolId)
+            ->latest();
 
         return response()->json($query->limit(100)->get()->map(fn ($i) => $this->invitationPayload($i)));
     }
@@ -122,14 +255,13 @@ class TeacherAccessController extends Controller
     public function pendingRequests(Request $request)
     {
         $admin = $this->requireAdmin($request);
+        $schoolId = $this->managedSchoolId($request, $admin);
+
         $query = User::with('school:id,school_name')
             ->where('role', 'teacher')
+            ->where('school_id', $schoolId)
             ->where('teacher_approval_status', 'pending')
             ->orderBy('created_at');
-
-        if ($admin->school_id) {
-            $query->where('school_id', $admin->school_id);
-        }
 
         return response()->json($query->get([
             'id', 'name', 'email', 'school_id', 'status', 'teacher_approval_status', 'email_verified_at', 'created_at'
@@ -140,7 +272,7 @@ class TeacherAccessController extends Controller
     {
         $admin = $this->requireAdmin($request);
         abort_unless($user->role === 'teacher', 422, 'This account is not a teacher account.');
-        abort_unless($this->schoolAllowedForAdmin($admin, (int) $user->school_id), 403);
+        abort_unless($user->school_id && $this->schoolAllowedForAdmin($admin, (int) $user->school_id), 403);
 
         $user->update([
             'teacher_approval_status' => 'approved',
@@ -159,7 +291,7 @@ class TeacherAccessController extends Controller
     {
         $admin = $this->requireAdmin($request);
         abort_unless($user->role === 'teacher', 422, 'This account is not a teacher account.');
-        abort_unless($this->schoolAllowedForAdmin($admin, (int) $user->school_id), 403);
+        abort_unless($user->school_id && $this->schoolAllowedForAdmin($admin, (int) $user->school_id), 403);
 
         $user->update([
             'teacher_approval_status' => 'rejected',
@@ -261,9 +393,6 @@ class TeacherAccessController extends Controller
         DB::transaction(function () use ($user, $invitation, $requiresTransfer) {
             $oldSchoolId = $user->school_id;
 
-            // A teacher belongs to one school at a time. When transferring,
-            // release the old school's teaching-area assignments but keep
-            // the teaching areas, classes, materials and assessments at that school.
             if ($requiresTransfer && $oldSchoolId) {
                 GradeSubject::query()
                     ->where('teacher_id', $user->id)
@@ -307,6 +436,7 @@ class TeacherAccessController extends Controller
             'expires_at' => $invitation->expires_at,
             'accepted_at' => $invitation->accepted_at,
             'transfer_confirmed' => (bool) $invitation->transfer_confirmed,
+            'previous_school_id' => $invitation->previous_school_id,
             'school' => $invitation->school?->only(['id', 'school_name']),
             'invited_by' => $invitation->inviter?->only(['id', 'name']),
         ];

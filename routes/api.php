@@ -125,6 +125,8 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
 
     // Teacher access management / invitation acceptance
     Route::post('/teacher-invitations/{token}/accept', [TeacherAccessController::class, 'acceptExisting']);
+    Route::get('/teacher-management/context', [TeacherAccessController::class, 'context']);
+    Route::get('/teacher-management/teachers', [TeacherAccessController::class, 'teachers']);
     Route::get('/teacher-management/requests', [TeacherAccessController::class, 'pendingRequests']);
     Route::post('/teacher-management/requests/{user}/approve', [TeacherAccessController::class, 'approve']);
     Route::post('/teacher-management/requests/{user}/reject', [TeacherAccessController::class, 'reject']);

@@ -28,6 +28,7 @@ class User extends Authenticatable implements MustVerifyEmail
         'email',
         'password',
         'role',
+        'admin_scope',
         'school_id',
         'status',
         'teacher_approval_status',
@@ -56,6 +57,18 @@ class User extends Authenticatable implements MustVerifyEmail
     public function sendEmailVerificationNotification(): void
     {
         $this->notify(new VerifyEmailForSpa);
+    }
+
+    public function isSystemAdmin(): bool
+    {
+        return $this->role === 'admin'
+            && ($this->admin_scope === 'system' || ($this->admin_scope === null && !$this->school_id));
+    }
+
+    public function isSchoolAdmin(): bool
+    {
+        return $this->role === 'admin'
+            && ($this->admin_scope === 'school' || ($this->admin_scope === null && (bool) $this->school_id));
     }
 
     /*
