@@ -30,6 +30,9 @@ class User extends Authenticatable implements MustVerifyEmail
         'role',
         'school_id',
         'status',
+        'teacher_approval_status',
+        'teacher_approved_at',
+        'teacher_approved_by',
         'email_verified_at',
     ];
 
@@ -40,6 +43,7 @@ class User extends Authenticatable implements MustVerifyEmail
 
     protected $casts = [
         'email_verified_at' => 'datetime',
+        'teacher_approved_at' => 'datetime',
         'password' => 'hashed',
     ];
 

@@ -4,6 +4,7 @@ use App\Http\Controllers\AssessmentBuilderController;
 use App\Http\Controllers\AssessmentController;
 use App\Http\Controllers\AssessmentSectionController;
 use App\Http\Controllers\AuthController;
+use App\Http\Controllers\TeacherAccessController;
 use App\Http\Controllers\ClassInvitationController;
 use App\Http\Controllers\CourseMaterialController;
 use App\Http\Controllers\CurriculumAnalysisController;
@@ -89,11 +90,14 @@ Route::post('/email/resend-verification', function (Request $request) {
 
 Route::post('/login', [AuthController::class, 'login']);
 Route::post('/register', [AuthController::class, 'register']);
+Route::get('/teacher-invitations/{token}', [TeacherAccessController::class, 'preview']);
+Route::post('/teacher-invitations/{token}/register', [TeacherAccessController::class, 'registerFromInvitation']);
+
 Route::post('/refresh-token', [AuthController::class, 'refreshToken']);
 
 // Public class invitation preview
 Route::get('/class-invitations/{classCode}', [ClassInvitationController::class, 'show']);
-Route::post('/class-invitations/{classCode}/resolve-account')->middleware('throttle:10,1');
+Route::post('/class-invitations/{classCode}/resolve-account', [ClassInvitationController::class, 'resolveAccount'])->middleware('throttle:10,1');
 Route::get('/auth/google', [AuthController::class, 'redirectToGoogle']);
 Route::get('/auth/google/callback', [AuthController::class, 'handleGoogleCallback']);
 
@@ -118,6 +122,16 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     });
 
     Route::post('/logout', [AuthController::class, 'logout']);
+
+    // Teacher access management / invitation acceptance
+    Route::post('/teacher-invitations/{token}/accept', [TeacherAccessController::class, 'acceptExisting']);
+    Route::get('/teacher-management/requests', [TeacherAccessController::class, 'pendingRequests']);
+    Route::post('/teacher-management/requests/{user}/approve', [TeacherAccessController::class, 'approve']);
+    Route::post('/teacher-management/requests/{user}/reject', [TeacherAccessController::class, 'reject']);
+    Route::get('/teacher-management/invitations', [TeacherAccessController::class, 'invitations']);
+    Route::post('/teacher-management/invitations', [TeacherAccessController::class, 'invite']);
+    Route::post('/teacher-management/invitations/{teacherInvitation}/revoke', [TeacherAccessController::class, 'revoke']);
+
 
 
     /*

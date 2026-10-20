@@ -116,22 +116,28 @@ class AuthController extends Controller
             )->firstOrFail();
         }
 
+        $isTeacher = $validated['role'] === 'teacher';
+
         $user = User::create([
             'name' => $validated['name'],
-            'email' => $validated['email'],
+            'email' => strtolower($validated['email']),
             'password' => bcrypt($validated['password']),
             'role' => $validated['role'],
             'school_id' => $school?->id,
-            'status' => 'active',
+            'status' => $isTeacher ? 'inactive' : 'active',
+            'teacher_approval_status' => $isTeacher ? 'pending' : null,
         ]);
 
 
         $user->sendEmailVerificationNotification();
 
         return response()->json([
-            'message' => 'Account created. Please check your email to verify your account before signing in.',
+            'message' => $isTeacher
+                ? 'Teacher account created. Please verify your email. Your school administrator must approve the account before you can sign in.'
+                : 'Account created. Please check your email to verify your account before signing in.',
             'email' => $user->email,
             'class_code' => $group?->class_code,
+            'approval_required' => $isTeacher,
         ], 201);
     }
 
@@ -165,6 +171,22 @@ class AuthController extends Controller
                 'message' => 'Please verify your email before signing in. A new verification email has been sent to your email address.',
                 'needs_verification' => true,
                 'email' => $user->email,
+            ], 403);
+        }
+
+        if ($user->role === 'teacher' && $user->teacher_approval_status === 'pending') {
+            Auth::logout();
+            return response()->json([
+                'message' => 'Your teacher account is awaiting approval from your school administrator.',
+                'approval_pending' => true,
+            ], 403);
+        }
+
+        if ($user->role === 'teacher' && $user->teacher_approval_status === 'rejected') {
+            Auth::logout();
+            return response()->json([
+                'message' => 'Your teacher registration was not approved. Please contact your school administrator.',
+                'approval_rejected' => true,
             ], 403);
         }
 
