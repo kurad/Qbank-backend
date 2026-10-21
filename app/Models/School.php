@@ -32,9 +32,21 @@ class School extends Model
         });
     }
 
-    public function teachers()
+    public function users()
     {
         return $this->hasMany(User::class);
+    }
+
+    public function teachers()
+    {
+        return $this->hasMany(User::class)->where('role', 'teacher');
+    }
+
+    public function schoolAdmins()
+    {
+        return $this->hasMany(User::class)
+            ->where('role', 'admin')
+            ->where('admin_scope', 'school');
     }
 
     public function subjects()
