@@ -11,9 +11,8 @@ return [
     'allowed_methods' => ['*'],
 
     'allowed_origins' => [
-        'https://test.revisionhub.rw',
-        'https://www.test.revisionhub.rw',
         'https://www.ai.revisionhub.rw',
+        'https://ai.revisionhub.rw',
         'http://localhost:8080',
     ],
 
