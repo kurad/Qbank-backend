@@ -14,8 +14,7 @@ class TeacherInvitationNotification extends Notification
     public function __construct(
         protected TeacherInvitation $invitation,
         protected string $plainToken
-    ) {
-    }
+    ) {}
 
     public function via(object $notifiable): array
     {
@@ -24,7 +23,7 @@ class TeacherInvitationNotification extends Notification
 
     public function toMail(object $notifiable): MailMessage
     {
-        $frontendUrl = rtrim(env('FRONTEND_URL', 'https://revisionhub.rw'), '/');
+        $frontendUrl = rtrim(config('app.frontend_url'), '/');
         $url = $frontendUrl . '/teacher-invitation/' . urlencode($this->plainToken);
 
         return (new MailMessage)
