@@ -231,6 +231,43 @@ class TeacherAccessController extends Controller
         return response()->json($query->limit(100)->get()->map(fn ($i) => $this->invitationPayload($i)));
     }
 
+    public function resend(Request $request, TeacherInvitation $teacherInvitation)
+    {
+        $admin = $this->requireAdmin($request);
+        abort_unless(
+            $this->schoolAllowedForAdmin($admin, (int) $teacherInvitation->school_id),
+            403,
+            'You cannot resend invitations for another school.'
+        );
+
+        if (in_array($teacherInvitation->status, ['accepted', 'revoked'], true)) {
+            return response()->json([
+                'message' => 'Accepted or revoked invitations cannot be resent.',
+            ], 422);
+        }
+
+        $plainToken = Str::random(64);
+
+        $teacherInvitation->update([
+            'token_hash' => hash('sha256', $plainToken),
+            'status' => 'pending',
+            'expires_at' => now()->addDays(7),
+            'accepted_by' => null,
+            'accepted_at' => null,
+            'transfer_confirmed' => false,
+        ]);
+
+        $teacherInvitation->load(['school', 'inviter']);
+
+        Notification::route('mail', $teacherInvitation->email)
+            ->notify(new TeacherInvitationNotification($teacherInvitation, $plainToken));
+
+        return response()->json([
+            'message' => 'Teacher invitation resent successfully.',
+            'invitation' => $this->invitationPayload($teacherInvitation->fresh()),
+        ]);
+    }
+
     public function revoke(Request $request, TeacherInvitation $teacherInvitation)
     {
         $admin = $this->requireAdmin($request);

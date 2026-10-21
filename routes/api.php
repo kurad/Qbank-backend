@@ -22,7 +22,6 @@ use App\Http\Controllers\PracticePaperController;
 use App\Http\Controllers\QuestionController;
 use App\Http\Controllers\QuestionnaireImportController;
 use App\Http\Controllers\SchoolController;
-use App\Http\Controllers\SchoolAdminInvitationController;
 use App\Http\Controllers\SchoolStudentController;
 use App\Http\Controllers\StudentAnswerController;
 use App\Http\Controllers\StudentAssessmentController;
@@ -95,8 +94,6 @@ Route::post('/login', [AuthController::class, 'login']);
 Route::post('/register', [AuthController::class, 'register']);
 Route::get('/teacher-invitations/{token}', [TeacherAccessController::class, 'preview']);
 Route::post('/teacher-invitations/{token}/register', [TeacherAccessController::class, 'registerFromInvitation']);
-Route::get('/school-admin-invitations/{token}', [SchoolAdminInvitationController::class, 'preview']);
-Route::post('/school-admin-invitations/{token}/register', [SchoolAdminInvitationController::class, 'registerFromInvitation']);
 
 Route::post('/refresh-token', [AuthController::class, 'refreshToken']);
 
@@ -131,7 +128,6 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
 
     // Teacher access management / invitation acceptance
     Route::post('/teacher-invitations/{token}/accept', [TeacherAccessController::class, 'acceptExisting']);
-    Route::post('/school-admin-invitations/{token}/accept', [SchoolAdminInvitationController::class, 'acceptExisting']);
     Route::get('/teacher-management/context', [TeacherAccessController::class, 'context']);
     Route::get('/teacher-management/teachers', [TeacherAccessController::class, 'teachers']);
     Route::get('/teacher-management/requests', [TeacherAccessController::class, 'pendingRequests']);
@@ -139,6 +135,7 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     Route::post('/teacher-management/requests/{user}/reject', [TeacherAccessController::class, 'reject']);
     Route::get('/teacher-management/invitations', [TeacherAccessController::class, 'invitations']);
     Route::post('/teacher-management/invitations', [TeacherAccessController::class, 'invite']);
+    Route::post('/teacher-management/invitations/{teacherInvitation}/resend', [TeacherAccessController::class, 'resend']);
     Route::post('/teacher-management/invitations/{teacherInvitation}/revoke', [TeacherAccessController::class, 'revoke']);
 
 
@@ -191,11 +188,7 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     Route::get('/grade-levels/{gradeId}/subjects', [SubjectController::class, 'subjectsByGrade']);
     Route::get('/schools', [SchoolController::class, 'index']);
     Route::post('/schools', [SchoolController::class, 'store']);
-    Route::get('/schools/{school}', [SchoolController::class, 'show']);
     Route::match(['put', 'patch'], '/schools/{id}', [SchoolController::class, 'update']);
-    Route::post('/schools/{school}/admin-invitations', [SchoolAdminInvitationController::class, 'invite']);
-    Route::post('/schools/{school}/admin-invitations/{schoolAdminInvitation}/resend', [SchoolAdminInvitationController::class, 'resend']);
-    Route::post('/schools/{school}/admin-invitations/{schoolAdminInvitation}/revoke', [SchoolAdminInvitationController::class, 'revoke']);
     Route::get('/students', [AuthController::class, 'getStudents']);
 
 
