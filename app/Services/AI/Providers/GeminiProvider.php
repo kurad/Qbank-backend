@@ -11,7 +11,7 @@ class GeminiProvider
         if (!$apiKey) {
             throw new RuntimeException('Gemini API key is not configured.');
         }
-        $model = $options['model'] ?? config('services.gemini.model', 'gemini-3.6-flash');
+        $model = $options['model'] ?? config('services.gemini.model');
         $url = rtrim(config('services.gemini.url', 'https://generativelanguage.googleapis.com/v1beta'), '/');
         $contents = [];
         $systemInstruction = null;
@@ -137,7 +137,7 @@ class GeminiProvider
             throw new RuntimeException('Gemini API key is not configured.');
         }
 
-        $model = $options['model'] ?? config('services.gemini.model', 'gemini-3.6-flash');
+        $model = $options['model'] ?? config('services.gemini.model');
         $url = rtrim(config('services.gemini.url', 'https://generativelanguage.googleapis.com/v1beta'), '/');
 
         $contents = [];

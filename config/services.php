@@ -37,14 +37,6 @@ return [
     |--------------------------------------------------------------------------
     */
 
-    'ai' => [
-        'provider' => env('AI_PROVIDER', 'gemini'),
-        'model' => env('AI_MODEL', 'gemini-1.5-flash'),
-        'fallback_models' => array_filter(
-            explode(',', env('AI_FALLBACK_MODELS', ''))
-        ),
-    ],
-
     'gemini' => [
         'key' => env('GEMINI_API_KEY'),
         'url' => env('GEMINI_URL', 'https://generativelanguage.googleapis.com/v1beta'),
