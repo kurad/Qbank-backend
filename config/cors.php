@@ -13,6 +13,7 @@ return [
     'allowed_origins' => [
         'https://test.revisionhub.rw',
         'https://www.test.revisionhub.rw',
+        'https://www.ai.revisionhub.rw',
         'http://localhost:8080',
     ],
 
