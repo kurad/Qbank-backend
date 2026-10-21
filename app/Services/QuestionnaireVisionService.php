@@ -21,7 +21,7 @@ class QuestionnaireVisionService
             );
         }
 
-        $model = config('services.gemini.model', 'gemini-3.6-flash');
+        $model = config('services.gemini.model');
         $baseUrl = rtrim(
             config(
                 'services.gemini.url',
