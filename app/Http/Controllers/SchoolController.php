@@ -4,55 +4,63 @@ namespace App\Http\Controllers;
 
 use App\Models\GradeSubject;
 use App\Models\School;
+use App\Models\SchoolAdminInvitation;
 use App\Models\Subject;
 use App\Models\Topic;
 use App\Models\User;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Hash;
-use Illuminate\Validation\Rule;
 
 class SchoolController extends Controller
 {
-    private function requireSystemAdmin(Request $request): User
+    private function requireSystemAdmin(Request $request): void
     {
         $user = $request->user();
-
         abort_unless(
             $user && method_exists($user, 'isSystemAdmin') && $user->isSystemAdmin(),
             403,
             'Only a System Admin can manage RevisionHub clients.'
         );
-
-        return $user;
     }
 
     public function index(Request $request)
     {
         $this->requireSystemAdmin($request);
 
-        $perPage = max(5, min((int) $request->input('per_page', 10), 100));
+        $perPage = max(5, min(100, (int) $request->input('per_page', 10)));
         $search = trim((string) $request->input('search', ''));
 
-        $schools = School::query()
-            ->when($search !== '', function ($query) use ($search) {
-                $query->where(function ($q) use ($search) {
-                    $q->where('school_name', 'like', "%{$search}%")
-                        ->orWhere('school_code', 'like', "%{$search}%")
-                        ->orWhere('district', 'like', "%{$search}%")
-                        ->orWhere('email', 'like', "%{$search}%");
-                });
-            })
-            ->withCount([
-                'users as users_count',
-                'teachers as teachers_count' => fn ($q) => $q->where('role', 'teacher'),
-                'schoolAdmins as school_admins_count',
-            ])
-            ->with(['schoolAdmins' => function ($query) {
-                $query->select('id', 'name', 'email', 'school_id', 'status', 'created_at')
-                    ->orderByDesc('created_at');
-            }])
-            ->orderBy('school_name')
-            ->paginate($perPage);
+        $query = School::query()->orderBy('school_name');
+
+        if ($search !== '') {
+            $query->where(function ($q) use ($search) {
+                $q->where('school_name', 'like', "%{$search}%")
+                    ->orWhere('school_code', 'like', "%{$search}%")
+                    ->orWhere('district', 'like', "%{$search}%")
+                    ->orWhere('email', 'like', "%{$search}%");
+            });
+        }
+
+        $schools = $query->paginate($perPage);
+        $schools->getCollection()->transform(function (School $school) {
+            $admin = User::query()
+                ->where('role', 'admin')
+                ->where('admin_scope', 'school')
+                ->where('school_id', $school->id)
+                ->where('status', 'active')
+                ->first(['id', 'name', 'email', 'status']);
+
+            $pending = SchoolAdminInvitation::query()
+                ->where('school_id', $school->id)
+                ->where('status', 'pending')
+                ->where('expires_at', '>', now())
+                ->latest()
+                ->first(['id', 'name', 'email', 'status', 'expires_at']);
+
+            $school->setAttribute('school_admin', $admin);
+            $school->setAttribute('pending_admin_invitation', $pending);
+
+            return $school;
+        });
 
         return response()->json($schools);
     }
@@ -61,68 +69,49 @@ class SchoolController extends Controller
     {
         $this->requireSystemAdmin($request);
 
-        $schoolAdmins = User::query()
+        $schoolAdmin = User::query()
             ->where('role', 'admin')
             ->where('admin_scope', 'school')
             ->where('school_id', $school->id)
-            ->orderByDesc('created_at')
-            ->get([
-                'id',
-                'name',
-                'email',
-                'school_id',
-                'status',
-                'email_verified_at',
-                'created_at',
-            ]);
+            ->where('status', 'active')
+            ->orderBy('name')
+            ->first(['id', 'name', 'email', 'status', 'email_verified_at', 'created_at']);
 
-        $teachers = User::query()
-            ->where('role', 'teacher')
-            ->where('school_id', $school->id);
+        $pendingInvitation = SchoolAdminInvitation::query()
+            ->where('school_id', $school->id)
+            ->where('status', 'pending')
+            ->latest()
+            ->first();
 
-        $students = User::query()
-            ->where('role', 'student')
-            ->where('school_id', $school->id);
-
-        $topics = Topic::query()
-            ->whereHas('gradeSubject', function ($query) use ($school) {
-                $query->where('school_id', $school->id);
-            });
+        if ($pendingInvitation && $pendingInvitation->expires_at->isPast()) {
+            $pendingInvitation->update(['status' => 'expired']);
+            $pendingInvitation = null;
+        }
 
         return response()->json([
             'school' => $school,
             'summary' => [
-                'school_admins' => $schoolAdmins->count(),
-                'teachers' => (clone $teachers)->count(),
-                'approved_teachers' => (clone $teachers)
-                    ->where('teacher_approval_status', 'approved')
-                    ->count(),
-                'pending_teachers' => (clone $teachers)
-                    ->where('teacher_approval_status', 'pending')
-                    ->count(),
-                'students' => (clone $students)->count(),
-                'active_students' => (clone $students)
-                    ->where('status', 'active')
-                    ->count(),
-                'subjects' => Subject::query()
-                    ->where('school_id', $school->id)
-                    ->count(),
-                'teaching_areas' => GradeSubject::query()
-                    ->where('school_id', $school->id)
-                    ->count(),
-                'topics' => (clone $topics)->count(),
-                'active_topics' => (clone $topics)
-                    ->where('status', 'active')
-                    ->count(),
+                'teachers' => User::query()->where('role', 'teacher')->where('school_id', $school->id)->count(),
+                'students' => User::query()->where('role', 'student')->where('school_id', $school->id)->count(),
+                'subjects' => Subject::query()->where('school_id', $school->id)->count(),
+                'teaching_areas' => GradeSubject::query()->where('school_id', $school->id)->count(),
+                'topics' => Topic::query()->whereHas('gradeSubject', fn ($q) => $q->where('school_id', $school->id))->count(),
             ],
-            'school_admins' => $schoolAdmins,
+            'school_admin' => $schoolAdmin,
+            'pending_admin_invitation' => $pendingInvitation ? [
+                'id' => $pendingInvitation->id,
+                'name' => $pendingInvitation->name,
+                'email' => $pendingInvitation->email,
+                'status' => $pendingInvitation->status,
+                'expires_at' => $pendingInvitation->expires_at,
+                'created_at' => $pendingInvitation->created_at,
+            ] : null,
         ]);
     }
 
     public function store(Request $request)
     {
         $this->requireSystemAdmin($request);
-
         $validated = $request->validate([
             'school_name' => 'required|string|max:255',
             'district' => 'nullable|string|max:255',
@@ -137,7 +126,6 @@ class SchoolController extends Controller
         }
 
         $school = School::create($validated);
-
         return response()->json([
             'school' => $school,
             'school_code' => $school->school_code,
@@ -147,7 +135,6 @@ class SchoolController extends Controller
     public function update(Request $request, $id)
     {
         $this->requireSystemAdmin($request);
-
         $school = School::findOrFail($id);
         $validated = $request->validate([
             'school_name' => 'sometimes|required|string|max:255',
@@ -163,55 +150,9 @@ class SchoolController extends Controller
         }
 
         $school->update($validated);
-
         return response()->json([
             'school' => $school,
             'school_code' => $school->school_code,
         ]);
-    }
-
-    public function createSchoolAdmin(Request $request, School $school)
-    {
-        $systemAdmin = $this->requireSystemAdmin($request);
-
-        $existingAdmin = User::query()
-            ->where('role', 'admin')
-            ->where('admin_scope', 'school')
-            ->where('school_id', $school->id)
-            ->first();
-
-        if ($existingAdmin) {
-            return response()->json([
-                'message' => 'This school already has a School Admin.',
-                'admin' => $existingAdmin->only([
-                    'id', 'name', 'email', 'status', 'school_id', 'created_at',
-                ]),
-            ], 422);
-        }
-
-        $validated = $request->validate([
-            'name' => ['required', 'string', 'max:255'],
-            'email' => ['required', 'email', 'max:255', Rule::unique('users', 'email')],
-            'password' => ['required', 'string', 'min:8', 'max:255'],
-        ]);
-
-        $admin = User::create([
-            'name' => $validated['name'],
-            'email' => strtolower($validated['email']),
-            'password' => Hash::make($validated['password']),
-            'role' => 'admin',
-            'admin_scope' => 'school',
-            'school_id' => $school->id,
-            'status' => 'active',
-            'email_verified_at' => now(),
-        ]);
-
-        return response()->json([
-            'message' => 'School Admin created successfully.',
-            'admin' => $admin->only([
-                'id', 'name', 'email', 'role', 'admin_scope', 'school_id', 'status', 'created_at',
-            ]),
-            'created_by' => $systemAdmin->id,
-        ], 201);
     }
 }

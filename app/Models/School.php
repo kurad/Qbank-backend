@@ -32,21 +32,9 @@ class School extends Model
         });
     }
 
-    public function users()
-    {
-        return $this->hasMany(User::class);
-    }
-
     public function teachers()
     {
-        return $this->hasMany(User::class)->where('role', 'teacher');
-    }
-
-    public function schoolAdmins()
-    {
-        return $this->hasMany(User::class)
-            ->where('role', 'admin')
-            ->where('admin_scope', 'school');
+        return $this->hasMany(User::class);
     }
 
     public function subjects()
@@ -57,5 +45,10 @@ class School extends Model
     public function teachingAreas()
     {
         return $this->hasMany(GradeSubject::class);
+    }
+
+    public function schoolAdminInvitations()
+    {
+        return $this->hasMany(SchoolAdminInvitation::class);
     }
 }
