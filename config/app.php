@@ -58,7 +58,7 @@ return [
     'url' => env('APP_URL', 'http://localhost'),
 
     'asset_url' => env('ASSET_URL'),
-    'frontend_url' => env('FRONTEND_URL', 'http://localhost:8080'),
+    'frontend_url' => env('FRONTEND_URL', 'https://ai.revisionhub.rw'),
 
     /*
     |--------------------------------------------------------------------------
