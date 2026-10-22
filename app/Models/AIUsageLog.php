@@ -10,6 +10,7 @@ class AIUsageLog extends Model
 {
     use HasFactory;
 
+    protected $table = 'ai_usage_logs';
     protected $fillable = [
         'user_id',
         'school_id',
