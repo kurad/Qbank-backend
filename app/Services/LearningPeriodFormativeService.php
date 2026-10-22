@@ -8,7 +8,6 @@ use App\Models\KnowledgeChunk;
 use App\Models\LearningPeriod;
 use App\Models\Question;
 use App\Models\StudentAssessment;
-use App\Models\TutorSession;
 use App\Models\User;
 use App\Services\AI\AIGateway;
 use Illuminate\Support\Collection;
@@ -30,7 +29,8 @@ class LearningPeriodFormativeService
     ];
 
     public function __construct(
-        protected AIGateway $ai
+        protected AIGateway $ai,
+        protected StudentTopicLearningService $topicLearning
     ) {
     }
 
@@ -351,27 +351,11 @@ class LearningPeriodFormativeService
         User $student,
         LearningPeriod $period
     ): bool {
-        $period->loadMissing('topics:id,learning_period_id,topic_id');
-
-        $topicIds = $period->topics
-            ->pluck('topic_id')
-            ->filter()
-            ->unique()
-            ->values();
-
-        if ($topicIds->isEmpty()) {
-            return false;
-        }
-
-        $covered = TutorSession::query()
-            ->where('student_id', $student->id)
-            ->where('learning_period_id', $period->id)
-            ->where('status', 'completed')
-            ->whereIn('topic_id', $topicIds)
-            ->pluck('topic_id')
-            ->unique();
-
-        return $topicIds->diff($covered)->isEmpty();
+        return (bool) (
+            $this->topicLearning
+                ->periodSummary($student, $period)['coverage_complete']
+            ?? false
+        );
     }
 
     protected function assignToAllLearners(

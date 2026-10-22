@@ -85,6 +85,15 @@ class TutorController extends Controller
         Request $request,
         Group $group
     ) {
+        /*
+         * A final checkpoint can resolve every objective before the learner
+         * returns to the period overview. Reconcile those sessions first so
+         * topic-learning state and period coverage are authoritative here.
+         */
+        $this->sessionsService->reconcileCompletedSessionsForStudent(
+            $request->user()
+        );
+
         $today = now()->toDateString();
 
         $periods = $this->context

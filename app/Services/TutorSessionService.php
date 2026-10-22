@@ -561,44 +561,15 @@ class TutorSessionService
             'topics:id,learning_period_id,topic_id',
         ])->find($learningPeriodId);
 
-        if (!$period || $period->topics->isEmpty()) {
+        if (!$period) {
             return false;
         }
 
-        $assignedTopicIds = $period
-            ->topics
-            ->pluck('topic_id')
-            ->filter()
-            ->unique()
-            ->values();
-
-        if ($assignedTopicIds->isEmpty()) {
-            return false;
-        }
-
-        $completedTopicIds = TutorSession::query()
-            ->where(
-                'student_id',
-                $student->id
-            )
-            ->where(
-                'learning_period_id',
-                $period->id
-            )
-            ->where(
-                'status',
-                'completed'
-            )
-            ->whereIn(
-                'topic_id',
-                $assignedTopicIds
-            )
-            ->pluck('topic_id')
-            ->unique();
-
-        return $assignedTopicIds
-            ->diff($completedTopicIds)
-            ->isEmpty();
+        return (bool) (
+            $this->topicLearning
+                ->periodSummary($student, $period)['coverage_complete']
+            ?? false
+        );
     }
 
     public function freshSession(TutorSession $session): TutorSession
