@@ -10,6 +10,7 @@ use Illuminate\Http\Request;
 use App\Models\QuestionUsage;
 use App\Models\AssessmentSection;
 use App\Models\StudentAssessment;
+use App\Models\LearnerFormativeAttempt;
 use App\Models\AssessmentQuestion;
 use Illuminate\Support\Facades\DB;
 use App\Services\AssessmentAssigner;
@@ -758,6 +759,85 @@ class AssessmentController extends Controller
         $assessment = $studentAssessment->assessment;
         $studentAnswers = $studentAssessment->studentAnswers;
 
+        // Personalized formative attempts persist the exact option order shown
+        // to the learner. Reuse that order on the results screen so review
+        // matches the assessment the learner actually saw.
+        $learnerAttempt = LearnerFormativeAttempt::query()
+            ->with('questions')
+            ->where('student_assessment_id', $studentAssessment->id)
+            ->first();
+
+        $attemptQuestionMap = $learnerAttempt
+            ? $learnerAttempt->questions->keyBy('question_id')
+            : collect();
+
+        $normalizeText = fn ($value) => mb_strtolower(trim((string) ($value ?? '')));
+
+        $resolveMcqAnswers = function ($correctRaw, array $options) use ($normalizeText) {
+            if (is_string($correctRaw)) {
+                $trimmed = trim($correctRaw);
+                if (
+                    (str_starts_with($trimmed, '[') && str_ends_with($trimmed, ']')) ||
+                    (str_starts_with($trimmed, '{') && str_ends_with($trimmed, '}'))
+                ) {
+                    $decoded = json_decode($trimmed, true);
+                    if (json_last_error() === JSON_ERROR_NONE) {
+                        $correctRaw = $decoded;
+                    }
+                }
+            }
+
+            $values = is_array($correctRaw) ? $correctRaw : [$correctRaw];
+
+            $optionTexts = array_map(function ($option) {
+                if (is_array($option)) {
+                    return (string) ($option['text'] ?? $option['label'] ?? $option['value'] ?? '');
+                }
+                return (string) $option;
+            }, $options);
+
+            $resolved = [];
+
+            foreach ($values as $value) {
+                if ($value === null || $value === '') {
+                    continue;
+                }
+
+                $raw = trim((string) $value);
+
+                // Exact option text is the most stable representation.
+                foreach ($optionTexts as $text) {
+                    if ($normalizeText($text) === $normalizeText($raw)) {
+                        $resolved[] = $text;
+                        continue 2;
+                    }
+                }
+
+                // Legacy A/B/C/D answer keys.
+                if (preg_match('/^[A-Za-z]$/', $raw)) {
+                    $index = ord(strtoupper($raw)) - 65;
+                    if (isset($optionTexts[$index])) {
+                        $resolved[] = $optionTexts[$index];
+                        continue;
+                    }
+                }
+
+                // Legacy zero-based numeric option indices. Only treat a number
+                // as an index if it does not already match an option text.
+                if (ctype_digit($raw)) {
+                    $index = (int) $raw;
+                    if (isset($optionTexts[$index])) {
+                        $resolved[] = $optionTexts[$index];
+                        continue;
+                    }
+                }
+
+                $resolved[] = $raw;
+            }
+
+            return array_values(array_unique(array_filter($resolved, fn ($v) => trim((string) $v) !== '')));
+        };
+
         // Convert completed_at and started_at to Carbon instances if they are strings
         $completedAt = $studentAssessment->completed_at;
         $startedAt = $studentAssessment->started_at;
@@ -793,7 +873,26 @@ class AssessmentController extends Controller
                 $options = json_decode($options, true);
             }
 
-            // Add image URLs to options if they exist
+            // Apply the exact personalized option order used for this learner.
+            $attemptQuestion = $attemptQuestionMap->get($question->id);
+            if (
+                is_array($options)
+                && $attemptQuestion
+                && is_array($attemptQuestion->option_order)
+                && $question->question_type === 'mcq'
+            ) {
+                $reordered = [];
+                foreach ($attemptQuestion->option_order as $originalIndex) {
+                    if (array_key_exists($originalIndex, $options)) {
+                        $reordered[] = $options[$originalIndex];
+                    }
+                }
+                if (count($reordered) === count($options)) {
+                    $options = $reordered;
+                }
+            }
+
+            // Add image URLs to options if they exist.
             if (is_array($options)) {
                 $options = array_map(function ($opt) {
                     if (is_array($opt) && isset($opt['image']) && $opt['image']) {
@@ -802,6 +901,13 @@ class AssessmentController extends Controller
                     return $opt;
                 }, $options);
             }
+
+            // Resolve legacy MCQ answer keys (A/B/C/D or indices) to semantic
+            // option text so the frontend can highlight the correct choice
+            // independently of option shuffling.
+            $resolvedCorrectAnswer = $question->question_type === 'mcq'
+                ? $resolveMcqAnswers($question->correct_answer, is_array($question->options) ? $question->options : (json_decode((string) $question->options, true) ?: []))
+                : $question->correct_answer;
 
             $results['questions'][] = [
                 'student_assessment_id' => $studentAssessment->id, // ✅ ADD THIS
@@ -812,7 +918,11 @@ class AssessmentController extends Controller
                 // Support multiple possible answer field names used across flows
                 'student_answer' => $answer->answer ?? $answer->answer_text ?? null,
                 'correct_answer' => $question->correct_answer,
+                'correct_answer_resolved' => $resolvedCorrectAnswer,
                 'is_correct' => (bool) ($answer->is_correct ?? false),
+                'is_math' => (bool) ($question->is_math ?? false),
+                'is_chemistry' => (bool) ($question->is_chemistry ?? false),
+                'multiple_answers' => (bool) ($question->multiple_answers ?? false),
                 // Prefer stored answer points, fallback to alternative fields or zero
                 'points_earned' => $answer->points_earned ?? $answer->points ?? 0,
                 // Use per-answer max if set, otherwise fall back to question marks or legacy max_points
