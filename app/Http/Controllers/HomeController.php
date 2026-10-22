@@ -13,6 +13,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use App\Services\LearningPeriodFormativeService;
+use App\Services\TutorSessionService;
 
 class HomeController extends Controller
 {
@@ -22,10 +23,15 @@ class HomeController extends Controller
      * GET /student/statistics
      */
     public function statistics(
-        LearningPeriodFormativeService $formativeService
+        LearningPeriodFormativeService $formativeService,
+        TutorSessionService $tutorSessionsService
     )
     {
         $user = Auth::user();
+
+        // Remove stale active sessions for topics that are already mastered
+        // and reconcile sessions whose objectives are fully resolved.
+        $tutorSessionsService->reconcileCompletedSessionsForStudent($user);
 
         $studentAssessments = StudentAssessment::query()
             ->with([
@@ -226,6 +232,7 @@ class HomeController extends Controller
                 ->get([
                     'id',
                     'tutor_session_id',
+                    'learning_objective_id',
                     'status',
                     'attempts',
                     'correct_attempts',
@@ -255,29 +262,43 @@ class HomeController extends Controller
                         ?? 0
                 );
 
-        $masteredObjectives =
-            $currentTutorObjectives
-                ->where(
-                    'status',
-                    'completed'
-                )
-                ->count();
+        /*
+         * The same learning objective may appear in more than one Tutor
+         * session (for example after a retry/review). Count each curriculum
+         * objective once and give resolved evidence precedence over a stale
+         * active copy. This prevents duplicate sessions from inflating the
+         * dashboard totals.
+         */
+        $objectiveStates = $currentTutorObjectives
+            ->filter(fn ($item) => $item->learning_objective_id)
+            ->groupBy('learning_objective_id')
+            ->map(function ($rows) {
+                if ($rows->contains('status', 'completed')) {
+                    return 'completed';
+                }
 
-        $reviewObjectives =
-            $currentTutorObjectives
-                ->where(
-                    'status',
-                    'needs_review'
-                )
-                ->count();
+                if ($rows->contains('status', 'needs_review')) {
+                    return 'needs_review';
+                }
 
-        $activeObjectives =
-            $currentTutorObjectives
-                ->where(
-                    'status',
-                    'in_progress'
-                )
-                ->count();
+                if ($rows->contains('status', 'in_progress')) {
+                    return 'in_progress';
+                }
+
+                return 'not_started';
+            });
+
+        $masteredObjectives = $objectiveStates
+            ->filter(fn ($status) => $status === 'completed')
+            ->count();
+
+        $reviewObjectives = $objectiveStates
+            ->filter(fn ($status) => $status === 'needs_review')
+            ->count();
+
+        $activeObjectives = $objectiveStates
+            ->filter(fn ($status) => $status === 'in_progress')
+            ->count();
 
         $coveredObjectives =
             $masteredObjectives
@@ -286,7 +307,7 @@ class HomeController extends Controller
         $totalTutorObjectives =
             max(
                 $assignedObjectiveCount,
-                $currentTutorObjectives->count()
+                $objectiveStates->count()
             );
 
         $masteryRate =

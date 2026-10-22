@@ -6,6 +6,7 @@ use App\Jobs\PrepareLearningPeriodFormativeAssessment;
 use App\Models\LearningPeriod;
 use App\Models\TutorSession;
 use App\Models\TutorSessionObjective;
+use App\Models\StudentTopicLearningState;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -33,6 +34,24 @@ class TutorSessionService
         if ($objectives->isEmpty()) {
             throw ValidationException::withMessages([
                 'topic_id' => 'The selected topic does not have any active learning objectives.',
+            ]);
+        }
+
+        /*
+         * A mastered topic is already complete for this learning period.
+         * Do not create a fresh normal Tutor session that resets the UI to
+         * objective 1. Review sessions for `needs_review` topics remain
+         * allowed until we introduce a dedicated review-session type.
+         */
+        $topicState = StudentTopicLearningState::query()
+            ->where('student_id', $student->id)
+            ->where('learning_period_id', $resolved['learningPeriod']->id)
+            ->where('topic_id', $resolved['topic']->id)
+            ->first();
+
+        if ($topicState?->mastery_status === 'mastered') {
+            throw ValidationException::withMessages([
+                'topic_id' => 'This topic is already mastered for the current learning period.',
             ]);
         }
 
@@ -456,6 +475,30 @@ class TutorSessionService
     public function reconcileCompletedSessionsForStudent(
         User $student
     ): void {
+        /*
+         * Older/start-again flows could create a new active Tutor session
+         * after the topic had already been mastered. Such a session must not
+         * become the learner's current topic or inflate objective counts.
+         */
+        $masteredStates = StudentTopicLearningState::query()
+            ->where('student_id', $student->id)
+            ->where('progression_status', 'covered')
+            ->where('mastery_status', 'mastered')
+            ->get(['learning_period_id', 'topic_id']);
+
+        foreach ($masteredStates as $state) {
+            TutorSession::query()
+                ->where('student_id', $student->id)
+                ->where('learning_period_id', $state->learning_period_id)
+                ->where('topic_id', $state->topic_id)
+                ->where('status', 'active')
+                ->update([
+                    'status' => 'abandoned',
+                    'ended_at' => now(),
+                    'last_activity_at' => now(),
+                ]);
+        }
+
         TutorSession::query()
             ->where(
                 'student_id',
