@@ -26,6 +26,7 @@ use App\Http\Controllers\SchoolController;
 use App\Http\Controllers\SchoolStudentController;
 use App\Http\Controllers\StudentAnswerController;
 use App\Http\Controllers\StudentAssessmentController;
+use App\Http\Controllers\StudentResultsController;
 use App\Http\Controllers\SubjectController;
 use App\Http\Controllers\TeacherGradebookController;
 use App\Http\Controllers\TeacherProgressController;
@@ -419,6 +420,7 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
 
     Route::get('/student/practice-assessments', [AssessmentController::class, 'practice']);
     Route::get('/student/assigned-assessments', [AssessmentController::class, 'assignedAssessments']);
+    Route::get('/student/results', [StudentResultsController::class, 'index']);
     Route::get('/student/assessment-results/{id}', [AssessmentController::class, 'showResults']);
     Route::get('/student/statistics', [HomeController::class, 'statistics']);
     Route::get('/student/learning-periods/{learningPeriod}/formative', [StudentFormativeAssessmentController::class, 'show']);
