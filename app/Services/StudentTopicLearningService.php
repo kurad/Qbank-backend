@@ -114,16 +114,38 @@ class StudentTopicLearningService
             ->unique('topic_id');
 
         foreach ($legacySessions as $session) {
-            if ($states->has($session->topic_id)) {
-                continue;
+            /*
+             * A completed Tutor session is authoritative evidence that the
+             * topic has been resolved. Older flows could leave an existing
+             * StudentTopicLearningState row at `in_progress`, so do not skip
+             * reconciliation merely because a state row already exists.
+             */
+            $hasReview = $session->objectives->contains(
+                fn ($objective) => $objective->status === 'needs_review'
+            );
+
+            $state = $states->get($session->topic_id)
+                ?? $this->stateFor(
+                    $student,
+                    (int) $period->id,
+                    (int) $session->topic_id
+                );
+
+            $expectedMastery = $hasReview ? 'needs_review' : 'mastered';
+
+            if (
+                $state->progression_status !== 'covered'
+                || $state->mastery_status !== $expectedMastery
+            ) {
+                $state->progression_status = 'covered';
+                $state->mastery_status = $expectedMastery;
+                $state->move_on_chosen = $hasReview;
+                $state->mastered_at = $hasReview
+                    ? null
+                    : ($session->ended_at ?? $session->updated_at ?? now());
+                $state->save();
             }
 
-            $hasReview = $session->objectives->contains(fn ($objective) => $objective->status === 'needs_review');
-            $state = $this->stateFor($student, (int) $period->id, (int) $session->topic_id);
-            $state->progression_status = 'covered';
-            $state->mastery_status = $hasReview ? 'needs_review' : 'mastered';
-            $state->mastered_at = $hasReview ? null : ($session->ended_at ?? $session->updated_at);
-            $state->save();
             $states->put($session->topic_id, $state);
         }
 

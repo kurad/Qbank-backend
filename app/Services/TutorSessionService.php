@@ -384,8 +384,43 @@ class TutorSessionService
             'last_activity_at' => now(),
         ]);
 
-        if ($status === 'completed' && $session->learning_period_id && $session->topic_id) {
-            $hasReview = $session->objectives()->where('status', 'needs_review')->exists();
+        if ($status === 'completed') {
+            return $this->synchronizeCompletedTopicState($student, $session);
+        }
+
+        return $this->freshSession($session);
+    }
+
+    /**
+     * Keep Tutor-session completion and the learner's topic-learning state in
+     * sync. This is safe to call for an already-completed session and therefore
+     * also repairs sessions completed by older checkpoint flows.
+     */
+    public function synchronizeCompletedTopicState(
+        User $student,
+        TutorSession $session
+    ): TutorSession {
+        abort_unless((int) $session->student_id === (int) $student->id, 403);
+
+        if ($session->status !== 'completed') {
+            return $this->freshSession($session);
+        }
+
+        $wasCovered = false;
+
+        if ($session->learning_period_id && $session->topic_id) {
+            $existingState = \App\Models\StudentTopicLearningState::query()
+                ->where('student_id', $student->id)
+                ->where('learning_period_id', $session->learning_period_id)
+                ->where('topic_id', $session->topic_id)
+                ->first();
+
+            $wasCovered = $existingState?->progression_status === 'covered';
+
+            $hasReview = $session->objectives()
+                ->where('status', 'needs_review')
+                ->exists();
+
             if ($hasReview) {
                 $this->topicLearning->markNeedsReview($student, $session);
             } else {
@@ -394,12 +429,12 @@ class TutorSessionService
         }
 
         /*
-         * As soon as the learner completes the final assigned topic in a
-         * learning period, queue preparation of the shared mandatory
-         * formative assessment. The request does not wait for AI.
+         * Queue the period formative only when this call newly covers the
+         * topic. This prevents repeated Finish-topic clicks from dispatching
+         * duplicate preparation jobs.
          */
         if (
-            $status === 'completed'
+            !$wasCovered
             && $session->learning_period_id
             && $this->studentCoveredLearningPeriod(
                 $student,
@@ -561,15 +596,44 @@ class TutorSessionService
             'topics:id,learning_period_id,topic_id',
         ])->find($learningPeriodId);
 
-        if (!$period) {
+        if (!$period || $period->topics->isEmpty()) {
             return false;
         }
 
-        return (bool) (
-            $this->topicLearning
-                ->periodSummary($student, $period)['coverage_complete']
-            ?? false
-        );
+        $assignedTopicIds = $period
+            ->topics
+            ->pluck('topic_id')
+            ->filter()
+            ->unique()
+            ->values();
+
+        if ($assignedTopicIds->isEmpty()) {
+            return false;
+        }
+
+        $completedTopicIds = TutorSession::query()
+            ->where(
+                'student_id',
+                $student->id
+            )
+            ->where(
+                'learning_period_id',
+                $period->id
+            )
+            ->where(
+                'status',
+                'completed'
+            )
+            ->whereIn(
+                'topic_id',
+                $assignedTopicIds
+            )
+            ->pluck('topic_id')
+            ->unique();
+
+        return $assignedTopicIds
+            ->diff($completedTopicIds)
+            ->isEmpty();
     }
 
     public function freshSession(TutorSession $session): TutorSession

@@ -411,6 +411,23 @@ class TutorCheckpointService
         });
 
         /*
+         * The final checkpoint can complete the TutorSession inside the
+         * transaction above. Synchronize the learner's topic-learning state
+         * immediately so student and teacher progress views agree without
+         * waiting for another navigation or repair pass.
+         */
+        if (!empty($stored['progress']['session_completed'])) {
+            $student = $session->student()->first();
+
+            if ($student) {
+                $this->sessions->synchronizeCompletedTopicState(
+                    $student,
+                    $session->fresh()
+                );
+            }
+        }
+
+        /*
          * Correct answers and the first lightweight correction can use local
          * feedback. Repeated difficulty invokes the teaching model so the
          * response changes strategy instead of merely restating the answer.
