@@ -20,17 +20,23 @@ class StudentResultsController extends Controller
 
         $query = StudentAssessment::query()
             ->with([
-                'assessment:id,title,type,purpose,learning_period_id,grade_subject_id',
-                'assessment.gradeSubject:id,subject_id,grade_level_id',
-                'assessment.gradeSubject.subject:id,name',
+                // assessments does NOT have grade_subject_id in this schema.
+                'assessment:id,title,type,purpose,learning_period_id',
+
+                // Strongest source for personalized formative assessments.
+                'assessment.learningPeriod:id,title,group_id,grade_subject_id',
+                'assessment.learningPeriod.gradeSubject:id,subject_id,grade_level_id',
+                'assessment.learningPeriod.gradeSubject.subject:id,name',
+                'assessment.learningPeriod.group:id,group_name',
+
+                // Fallback curriculum sources for ordinary assessments.
                 'assessment.units:id,name,grade_subject_id',
                 'assessment.units.gradeSubject:id,subject_id,grade_level_id',
                 'assessment.units.gradeSubject.subject:id,name',
                 'assessment.topics:id,topic_name,grade_subject_id,unit_id',
                 'assessment.topics.gradeSubject:id,subject_id,grade_level_id',
                 'assessment.topics.gradeSubject.subject:id,name',
-                'assessment.learningPeriod:id,title,group_id,grade_subject_id',
-                'assessment.learningPeriod.group:id,group_name',
+
                 'assessment.groups:id,group_name',
             ])
             ->where('student_id', Auth::id())
@@ -45,17 +51,28 @@ class StudentResultsController extends Controller
 
         if ($request->filled('subject')) {
             $subject = trim((string) $request->subject);
+
             $query->whereHas('assessment', function ($assessmentQuery) use ($subject) {
                 $assessmentQuery->where(function ($q) use ($subject) {
-                    $q->whereHas('gradeSubject.subject', fn ($sq) => $sq->where('name', $subject))
-                        ->orWhereHas('units.gradeSubject.subject', fn ($sq) => $sq->where('name', $subject))
-                        ->orWhereHas('topics.gradeSubject.subject', fn ($sq) => $sq->where('name', $subject));
+                    $q->whereHas(
+                        'learningPeriod.gradeSubject.subject',
+                        fn ($sq) => $sq->where('name', $subject)
+                    )
+                    ->orWhereHas(
+                        'units.gradeSubject.subject',
+                        fn ($sq) => $sq->where('name', $subject)
+                    )
+                    ->orWhereHas(
+                        'topics.gradeSubject.subject',
+                        fn ($sq) => $sq->where('name', $subject)
+                    );
                 });
             });
         }
 
         if ($request->filled('q')) {
             $needle = trim((string) $request->q);
+
             $query->whereHas('assessment', function ($q) use ($needle) {
                 $q->where('title', 'like', "%{$needle}%")
                     ->orWhere('type', 'like', "%{$needle}%");
@@ -67,7 +84,8 @@ class StudentResultsController extends Controller
 
         $page->getCollection()->transform(function (StudentAssessment $item) {
             $assessment = $item->assessment;
-            $subject = $assessment?->gradeSubject?->subject?->name
+
+            $subject = $assessment?->learningPeriod?->gradeSubject?->subject?->name
                 ?: $assessment?->units?->first()?->gradeSubject?->subject?->name
                 ?: $assessment?->topics?->first()?->gradeSubject?->subject?->name;
 
@@ -75,9 +93,17 @@ class StudentResultsController extends Controller
                 ?: $assessment?->groups?->first()?->group_name;
 
             $percentage = null;
+
             if ((float) $item->max_score > 0) {
-                $percentage = round(((float) $item->score / (float) $item->max_score) * 100, 1);
-            } elseif ($item->score !== null && (float) $item->score >= 0 && (float) $item->score <= 100) {
+                $percentage = round(
+                    ((float) $item->score / (float) $item->max_score) * 100,
+                    1
+                );
+            } elseif (
+                $item->score !== null &&
+                (float) $item->score >= 0 &&
+                (float) $item->score <= 100
+            ) {
                 $percentage = round((float) $item->score, 1);
             }
 
@@ -100,8 +126,15 @@ class StudentResultsController extends Controller
 
         $filterSource = StudentAssessment::query()
             ->with([
-                'assessment.gradeSubject.subject:id,name',
+                'assessment:id,title,type,purpose,learning_period_id',
+                'assessment.learningPeriod:id,grade_subject_id',
+                'assessment.learningPeriod.gradeSubject:id,subject_id,grade_level_id',
+                'assessment.learningPeriod.gradeSubject.subject:id,name',
+                'assessment.units:id,name,grade_subject_id',
+                'assessment.units.gradeSubject:id,subject_id,grade_level_id',
                 'assessment.units.gradeSubject.subject:id,name',
+                'assessment.topics:id,topic_name,grade_subject_id,unit_id',
+                'assessment.topics.gradeSubject:id,subject_id,grade_level_id',
                 'assessment.topics.gradeSubject.subject:id,name',
             ])
             ->where('student_id', Auth::id())
@@ -111,7 +144,8 @@ class StudentResultsController extends Controller
         $availableSubjects = $filterSource
             ->map(function (StudentAssessment $item) {
                 $assessment = $item->assessment;
-                return $assessment?->gradeSubject?->subject?->name
+
+                return $assessment?->learningPeriod?->gradeSubject?->subject?->name
                     ?: $assessment?->units?->first()?->gradeSubject?->subject?->name
                     ?: $assessment?->topics?->first()?->gradeSubject?->subject?->name;
             })
@@ -123,7 +157,12 @@ class StudentResultsController extends Controller
         $payload = $page->toArray();
         $payload['filters'] = [
             'subjects' => $availableSubjects,
-            'types' => $filterSource->pluck('assessment.type')->filter()->unique()->sort()->values(),
+            'types' => $filterSource
+                ->pluck('assessment.type')
+                ->filter()
+                ->unique()
+                ->sort()
+                ->values(),
         ];
 
         return response()->json($payload);
