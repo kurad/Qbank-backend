@@ -31,7 +31,7 @@ class TutorDifficultyService
             ]);
 
         if ($evaluations->isEmpty()) {
-            return $this->emptyProfile();
+            return $this->firstCheckProfile($session, $objective);
         }
 
         $latest = $evaluations->last();
@@ -87,6 +87,13 @@ class TutorDifficultyService
             'support_turns_since_check' => $supportTurns,
             'required_support_turns' => $requiredSupportTurns,
             'checkpoint_ready' => $supportTurns >= $requiredSupportTurns,
+            'remaining_learning_turns' => max($requiredSupportTurns - $supportTurns, 0),
+            'readiness_percent' => $requiredSupportTurns > 0
+                ? min(100, (int) round(($supportTurns / $requiredSupportTurns) * 100))
+                : 100,
+            'readiness_message' => $supportTurns >= $requiredSupportTurns
+                ? 'You are ready to check your understanding.'
+                : 'Work through the Tutor feedback and guided support before trying another understanding check.',
             'learning_state' => $moveOnAvailable && !$latestQualifyingCorrect
                 ? 'choice_available'
                 : ($latestQualifyingCorrect
@@ -97,8 +104,36 @@ class TutorDifficultyService
         ];
     }
 
-    public function emptyProfile(): array
-    {
+    /**
+     * Readiness for the FIRST formal understanding check.
+     *
+     * A new objective is deliberately not checkpoint-ready immediately. The
+     * learner must first take part in the live teaching conversation. We use
+     * existing Tutor messages as durable evidence, so readiness survives a
+     * page refresh and updates immediately after every learner turn.
+     */
+    protected function firstCheckProfile(
+        TutorSession $session,
+        TutorSessionObjective $objective
+    ): array {
+        $evidence = $this->learningEvidence($session, $objective);
+
+        // Two learner teaching turns is a small but meaningful minimum before
+        // the first formal check. It prevents jumping straight to assessment
+        // while keeping the Tutor responsive rather than time-gated.
+        $requiredLearningTurns = 2;
+        $learningTurns = (int) ($evidence['learner_turns'] ?? 0);
+        $teachingTurns = (int) ($evidence['tutor_turns'] ?? 0);
+
+        $checkpointReady =
+            $learningTurns >= $requiredLearningTurns
+            && $teachingTurns >= $requiredLearningTurns;
+
+        $remaining = max($requiredLearningTurns - min($learningTurns, $teachingTurns), 0);
+        $progress = min(100, (int) round(
+            (min($learningTurns, $teachingTurns) / $requiredLearningTurns) * 100
+        ));
+
         return [
             'struggle_level' => 0,
             'consecutive_unsuccessful' => 0,
@@ -108,11 +143,88 @@ class TutorDifficultyService
             'teacher_attention_reason' => null,
             'max_persistence_reached' => false,
             'move_on_available' => false,
-            'support_turns_since_check' => 0,
-            'required_support_turns' => 0,
-            'checkpoint_ready' => true,
-            'learning_state' => 'ready_for_checkpoint',
+            'support_turns_since_check' => $learningTurns,
+            'required_support_turns' => $requiredLearningTurns,
+            'learning_turns' => $learningTurns,
+            'tutor_teaching_turns' => $teachingTurns,
+            'required_learning_turns' => $requiredLearningTurns,
+            'remaining_learning_turns' => $remaining,
+            'readiness_percent' => $progress,
+            'checkpoint_ready' => $checkpointReady,
+            'readiness_message' => $checkpointReady
+                ? 'You are ready to check your understanding.'
+                : $this->firstCheckReadinessMessage($remaining),
+            'learning_state' => $checkpointReady
+                ? 'ready_for_checkpoint'
+                : 'support_learning',
         ];
+    }
+
+    /**
+     * Count learner/tutor teaching turns for the CURRENT objective only.
+     * Checkpoints and their answers are intentionally excluded.
+     */
+    protected function learningEvidence(
+        TutorSession $session,
+        TutorSessionObjective $objective
+    ): array {
+        $startedAt = $objective->started_at;
+
+        // Prefer the persisted introduction for this specific session
+        // objective. It is the clearest boundary between objectives.
+        $intro = $session->messages()
+            ->where('role', 'assistant')
+            ->where('message_type', 'objective_intro')
+            ->where('created_at', '>=', $startedAt ?: $session->created_at)
+            ->latest('id')
+            ->get()
+            ->first(function ($message) use ($objective) {
+                return (int) ($message->metadata['objective_id'] ?? 0)
+                    === (int) $objective->id;
+            });
+
+        $boundary = $intro?->created_at ?: $startedAt ?: $session->created_at;
+
+        $learnerTurns = $session->messages()
+            ->where('role', 'user')
+            ->where('message_type', 'text')
+            ->where('created_at', '>', $boundary)
+            ->get()
+            ->filter(function ($message) {
+                $text = trim((string) $message->content);
+
+                if ($text === '') {
+                    return false;
+                }
+
+                // Asking to start the assessment is not itself learning
+                // evidence. Ordinary questions, explanations and attempts are.
+                return !preg_match(
+                    '/^(check( my)? understanding|test me|give me (a )?(test|quiz)|start (the )?(check|quiz|test))\b/i',
+                    $text
+                );
+            })
+            ->count();
+
+        $tutorTurns = $session->messages()
+            ->where('role', 'assistant')
+            ->where('message_type', 'text')
+            ->where('created_at', '>', $boundary)
+            ->count();
+
+        return [
+            'learner_turns' => $learnerTurns,
+            'tutor_turns' => $tutorTurns,
+        ];
+    }
+
+    protected function firstCheckReadinessMessage(int $remaining): string
+    {
+        if ($remaining <= 1) {
+            return 'Keep learning with your Tutor a little longer. Work through one more guided interaction before checking your understanding.';
+        }
+
+        return 'Go through the concept with your Tutor first. Ask questions, explain your thinking, and work through the guided examples before checking your understanding.';
     }
 
     protected function consecutiveUnsuccessful(Collection $evaluations): int
