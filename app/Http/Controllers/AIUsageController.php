@@ -31,7 +31,7 @@ class AIUsageController extends Controller
         $to = now()->endOfDay();
 
         $base = AIUsageLog::query()
-            ->whereBetween('created_at', [$from, $to]);
+            ->whereBetween('ai_usage_logs.created_at', [$from, $to]);
 
         foreach (['provider', 'model', 'status', 'school_id'] as $filter) {
             if (isset($validated[$filter]) && $validated[$filter] !== '') {
@@ -57,21 +57,21 @@ class AIUsageController extends Controller
         $failed = (int) ($summaryRow->failed_requests ?? 0);
 
         $daily = (clone $base)
-            ->selectRaw('DATE(created_at) as usage_date')
+            ->selectRaw('DATE(ai_usage_logs.created_at) as usage_date')
             ->selectRaw('COUNT(*) as requests')
             ->selectRaw('COALESCE(SUM(total_tokens), 0) as total_tokens')
             ->selectRaw("SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failures")
-            ->groupBy(DB::raw('DATE(created_at)'))
+            ->groupBy(DB::raw('DATE(ai_usage_logs.created_at)'))
             ->orderBy('usage_date')
             ->get();
 
         $providers = (clone $base)
-            ->select('provider')
+            ->select('ai_usage_logs.provider')
             ->selectRaw('COUNT(*) as requests')
-            ->selectRaw('COALESCE(SUM(total_tokens), 0) as total_tokens')
-            ->selectRaw("SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failures")
-            ->selectRaw('ROUND(AVG(latency_ms)) as avg_latency_ms')
-            ->groupBy('provider')
+            ->selectRaw('COALESCE(SUM(ai_usage_logs.total_tokens), 0) as total_tokens')
+            ->selectRaw("SUM(CASE WHEN ai_usage_logs.status = 'failed' THEN 1 ELSE 0 END) as failures")
+            ->selectRaw('ROUND(AVG(ai_usage_logs.latency_ms)) as avg_latency_ms')
+            ->groupBy('ai_usage_logs.provider')
             ->orderByDesc('total_tokens')
             ->get();
 
