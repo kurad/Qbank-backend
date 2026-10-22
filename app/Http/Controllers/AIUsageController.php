@@ -24,6 +24,7 @@ class AIUsageController extends Controller
             'model' => ['nullable', 'string', 'max:150'],
             'status' => ['nullable', 'in:success,failed'],
             'school_id' => ['nullable', 'integer'],
+            'user_id' => ['nullable', 'integer'],
         ]);
 
         $days = (int) ($validated['days'] ?? 30);
@@ -33,24 +34,24 @@ class AIUsageController extends Controller
         $base = AIUsageLog::query()
             ->whereBetween('ai_usage_logs.created_at', [$from, $to]);
 
-        foreach (['provider', 'model', 'status', 'school_id'] as $filter) {
+        foreach (['provider', 'model', 'status', 'school_id', 'user_id'] as $filter) {
             if (isset($validated[$filter]) && $validated[$filter] !== '') {
-                $base->where($filter, $validated[$filter]);
+                $base->where("ai_usage_logs.{$filter}", $validated[$filter]);
             }
         }
 
         $summaryRow = (clone $base)
             ->selectRaw('COUNT(*) as requests')
-            ->selectRaw("SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as successful_requests")
-            ->selectRaw("SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed_requests")
-            ->selectRaw('SUM(CASE WHEN is_fallback = 1 THEN 1 ELSE 0 END) as fallback_requests')
-            ->selectRaw('COALESCE(SUM(prompt_tokens), 0) as prompt_tokens')
-            ->selectRaw('COALESCE(SUM(output_tokens), 0) as output_tokens')
-            ->selectRaw('COALESCE(SUM(thinking_tokens), 0) as thinking_tokens')
-            ->selectRaw('COALESCE(SUM(cached_tokens), 0) as cached_tokens')
-            ->selectRaw('COALESCE(SUM(total_tokens), 0) as total_tokens')
-            ->selectRaw('ROUND(AVG(latency_ms)) as avg_latency_ms')
-            ->selectRaw('COUNT(DISTINCT user_id) as active_users')
+            ->selectRaw("SUM(CASE WHEN ai_usage_logs.status = 'success' THEN 1 ELSE 0 END) as successful_requests")
+            ->selectRaw("SUM(CASE WHEN ai_usage_logs.status = 'failed' THEN 1 ELSE 0 END) as failed_requests")
+            ->selectRaw('SUM(CASE WHEN ai_usage_logs.is_fallback = 1 THEN 1 ELSE 0 END) as fallback_requests')
+            ->selectRaw('COALESCE(SUM(ai_usage_logs.prompt_tokens), 0) as prompt_tokens')
+            ->selectRaw('COALESCE(SUM(ai_usage_logs.output_tokens), 0) as output_tokens')
+            ->selectRaw('COALESCE(SUM(ai_usage_logs.thinking_tokens), 0) as thinking_tokens')
+            ->selectRaw('COALESCE(SUM(ai_usage_logs.cached_tokens), 0) as cached_tokens')
+            ->selectRaw('COALESCE(SUM(ai_usage_logs.total_tokens), 0) as total_tokens')
+            ->selectRaw('ROUND(AVG(ai_usage_logs.latency_ms)) as avg_latency_ms')
+            ->selectRaw('COUNT(DISTINCT ai_usage_logs.user_id) as active_users')
             ->first();
 
         $requests = (int) ($summaryRow->requests ?? 0);
@@ -59,8 +60,8 @@ class AIUsageController extends Controller
         $daily = (clone $base)
             ->selectRaw('DATE(ai_usage_logs.created_at) as usage_date')
             ->selectRaw('COUNT(*) as requests')
-            ->selectRaw('COALESCE(SUM(total_tokens), 0) as total_tokens')
-            ->selectRaw("SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failures")
+            ->selectRaw('COALESCE(SUM(ai_usage_logs.total_tokens), 0) as total_tokens')
+            ->selectRaw("SUM(CASE WHEN ai_usage_logs.status = 'failed' THEN 1 ELSE 0 END) as failures")
             ->groupBy(DB::raw('DATE(ai_usage_logs.created_at)'))
             ->orderBy('usage_date')
             ->get();
@@ -76,24 +77,54 @@ class AIUsageController extends Controller
             ->get();
 
         $models = (clone $base)
-            ->whereNotNull('model')
-            ->select('provider', 'model')
+            ->whereNotNull('ai_usage_logs.model')
+            ->select('ai_usage_logs.provider', 'ai_usage_logs.model')
             ->selectRaw('COUNT(*) as requests')
-            ->selectRaw('COALESCE(SUM(total_tokens), 0) as total_tokens')
-            ->selectRaw("SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failures")
-            ->selectRaw('ROUND(AVG(latency_ms)) as avg_latency_ms')
-            ->groupBy('provider', 'model')
+            ->selectRaw('COALESCE(SUM(ai_usage_logs.total_tokens), 0) as total_tokens')
+            ->selectRaw("SUM(CASE WHEN ai_usage_logs.status = 'failed' THEN 1 ELSE 0 END) as failures")
+            ->selectRaw('ROUND(AVG(ai_usage_logs.latency_ms)) as avg_latency_ms')
+            ->groupBy('ai_usage_logs.provider', 'ai_usage_logs.model')
             ->orderByDesc('total_tokens')
             ->get();
 
         $features = (clone $base)
-            ->selectRaw("COALESCE(feature, 'Unclassified') as feature")
+            ->selectRaw("COALESCE(ai_usage_logs.feature, 'Unclassified') as feature")
             ->selectRaw('COUNT(*) as requests')
-            ->selectRaw('COALESCE(SUM(total_tokens), 0) as total_tokens')
-            ->selectRaw("SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failures")
-            ->groupBy(DB::raw("COALESCE(feature, 'Unclassified')"))
+            ->selectRaw('COALESCE(SUM(ai_usage_logs.total_tokens), 0) as total_tokens')
+            ->selectRaw("SUM(CASE WHEN ai_usage_logs.status = 'failed' THEN 1 ELSE 0 END) as failures")
+            ->groupBy(DB::raw("COALESCE(ai_usage_logs.feature, 'Unclassified')"))
             ->orderByDesc('total_tokens')
             ->limit(12)
+            ->get();
+
+        $users = (clone $base)
+            ->leftJoin('users', 'users.id', '=', 'ai_usage_logs.user_id')
+            ->leftJoin('schools', 'schools.id', '=', 'ai_usage_logs.school_id')
+            ->select(
+                'ai_usage_logs.user_id',
+                'users.name',
+                'users.email',
+                'ai_usage_logs.school_id',
+                'schools.school_name'
+            )
+            ->selectRaw('COUNT(*) as requests')
+            ->selectRaw("SUM(CASE WHEN ai_usage_logs.status = 'success' THEN 1 ELSE 0 END) as successful_requests")
+            ->selectRaw("SUM(CASE WHEN ai_usage_logs.status = 'failed' THEN 1 ELSE 0 END) as failed_requests")
+            ->selectRaw('SUM(CASE WHEN ai_usage_logs.is_fallback = 1 THEN 1 ELSE 0 END) as fallback_requests')
+            ->selectRaw('COALESCE(SUM(ai_usage_logs.total_tokens), 0) as total_tokens')
+            ->selectRaw('COALESCE(SUM(ai_usage_logs.prompt_tokens), 0) as prompt_tokens')
+            ->selectRaw('COALESCE(SUM(ai_usage_logs.output_tokens), 0) as output_tokens')
+            ->selectRaw('ROUND(AVG(ai_usage_logs.latency_ms)) as avg_latency_ms')
+            ->selectRaw('MAX(ai_usage_logs.created_at) as last_used_at')
+            ->groupBy(
+                'ai_usage_logs.user_id',
+                'users.name',
+                'users.email',
+                'ai_usage_logs.school_id',
+                'schools.school_name'
+            )
+            ->orderByDesc('total_tokens')
+            ->limit(100)
             ->get();
 
         $schools = (clone $base)
@@ -113,7 +144,7 @@ class AIUsageController extends Controller
                 'user:id,name,email',
                 'school:id,school_name',
             ])
-            ->latest()
+            ->orderByDesc('ai_usage_logs.created_at')
             ->limit(50)
             ->get([
                 'id', 'user_id', 'school_id', 'provider', 'model', 'operation',
@@ -146,6 +177,7 @@ class AIUsageController extends Controller
             'providers' => $providers,
             'models' => $models,
             'features' => $features,
+            'users' => $users,
             'schools' => $schools,
             'recent' => $recent,
         ]);
