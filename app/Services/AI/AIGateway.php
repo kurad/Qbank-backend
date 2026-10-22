@@ -165,7 +165,7 @@ class AIGateway
 
                 return $this->groq->json(
                     $messages,
-                    $options
+                    $this->fallbackUsageOptions($options, 'gemini')
                 );
 
             } catch (Throwable $fallbackException) {
@@ -293,7 +293,7 @@ class AIGateway
 
                 return $this->groq->json(
                     $messages,
-                    $options
+                    $this->fallbackUsageOptions($options, 'gemini')
                 );
 
             } catch (Throwable $e) {
@@ -312,7 +312,7 @@ class AIGateway
                 return $this->gemini->json(
                     $messages,
                     $schema,
-                    $options
+                    $this->fallbackUsageOptions($options, 'groq')
                 );
 
             } catch (Throwable $e) {
@@ -361,7 +361,7 @@ class AIGateway
 
                 return $fallbackProvider->{$method}(
                     $messages,
-                    $options
+                    $this->fallbackUsageOptions($options, $failedProvider)
                 );
 
             } catch (Throwable $e) {
@@ -377,4 +377,17 @@ class AIGateway
             'All configured AI providers and fallbacks failed.'
         );
     }
+
+    /**
+     * Mark calls made after a primary provider failure so monitoring can
+     * distinguish fallback traffic from ordinary requests.
+     */
+    protected function fallbackUsageOptions(array $options, string $primaryProvider): array
+    {
+        $options['_usage_is_fallback'] = true;
+        $options['_usage_primary_provider'] = $primaryProvider;
+
+        return $options;
+    }
+
 }
