@@ -116,10 +116,20 @@ class AIUsageRecorder
             ];
         }
 
-        $prompt = (int) ($usage['prompt_tokens'] ?? 0);
-        $output = (int) ($usage['completion_tokens'] ?? 0);
-        $thinking = (int) ($usage['completion_tokens_details']['reasoning_tokens'] ?? 0);
-        $cached = (int) ($usage['prompt_tokens_details']['cached_tokens'] ?? 0);
+        // OpenAI Responses API uses input_tokens/output_tokens while Groq
+        // (OpenAI-compatible Chat Completions) uses prompt/completion tokens.
+        $prompt = (int) ($usage['input_tokens'] ?? $usage['prompt_tokens'] ?? 0);
+        $output = (int) ($usage['output_tokens'] ?? $usage['completion_tokens'] ?? 0);
+        $thinking = (int) (
+            $usage['output_tokens_details']['reasoning_tokens']
+            ?? $usage['completion_tokens_details']['reasoning_tokens']
+            ?? 0
+        );
+        $cached = (int) (
+            $usage['input_tokens_details']['cached_tokens']
+            ?? $usage['prompt_tokens_details']['cached_tokens']
+            ?? 0
+        );
         $total = (int) ($usage['total_tokens'] ?? ($prompt + $output));
 
         return [

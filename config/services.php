@@ -37,6 +37,20 @@ return [
     |--------------------------------------------------------------------------
     */
 
+    'ai' => [
+        'provider' => env('AI_PROVIDER', 'openai'),
+        'fallback_providers' => array_values(array_filter(array_map(
+            'trim',
+            explode(',', env('AI_FALLBACK_PROVIDERS', 'gemini,groq'))
+        ))),
+    ],
+
+    'openai' => [
+        'key' => env('OPENAI_API_KEY'),
+        'model' => env('OPENAI_MODEL', 'gpt-6-luna'),
+        'url' => env('OPENAI_BASE_URL', 'https://api.openai.com/v1'),
+    ],
+
     'gemini' => [
         'key' => env('GEMINI_API_KEY'),
         'url' => env('GEMINI_URL', 'https://generativelanguage.googleapis.com/v1beta'),

@@ -4,6 +4,7 @@ namespace App\Services\AI;
 
 use App\Services\AI\Providers\GeminiProvider;
 use App\Services\AI\Providers\GroqProvider;
+use App\Services\AI\Providers\OpenAIProvider;
 use Illuminate\Support\Facades\Log;
 use RuntimeException;
 use Throwable;
@@ -11,48 +12,31 @@ use Throwable;
 class AIGateway
 {
     public function __construct(
+        protected OpenAIProvider $openai,
         protected GeminiProvider $gemini,
         protected GroqProvider $groq
     ) {
     }
 
-    /**
-     * General chat request.
-     *
-     * Uses the configured default provider with fallback support.
-     */
-    public function chat(
-        array $messages,
-        array $options = []
-    ): array {
-        return $this->execute(
-            'chat',
-            $messages,
-            $options
-        );
+    public function chat(array $messages, array $options = []): array
+    {
+        return $this->execute('chat', $messages, $options);
+    }
+
+    public function text(array $messages, array $options = []): string
+    {
+        return $this->execute('text', $messages, $options);
     }
 
     /**
-     * General text request.
+     * Capability-aware multimodal request.
      *
-     * Uses the configured default provider with fallback support.
-     */
-    public function text(
-        array $messages,
-        array $options = []
-    ): string {
-        return $this->execute(
-            'text',
-            $messages,
-            $options
-        );
-    }
-
-    /**
-     * Multimodal text request for Tutor attachments.
-     *
-     * Attachments are sent to Gemini as inline data so the model can inspect
-     * learner images, PDFs, or plain-text notes in the current turn.
+     * Current behavior:
+     * - OpenAI is tried first when all attachments are supported image types.
+     * - Gemini is automatically used when OpenAI cannot handle the attachment
+     *   type (for example PDF/plain-text files), or when the OpenAI image call fails.
+     * - Groq is intentionally skipped for multimodal unless a future configured
+     *   provider implementation explicitly supports it.
      */
     public function multimodalText(
         array $messages,
@@ -63,325 +47,189 @@ class AIGateway
             return $this->text($messages, $options);
         }
 
-        try {
-            return $this->gemini->multimodalText(
-                $messages,
-                $attachments,
-                $options
-            );
-        } catch (Throwable $e) {
-            Log::error('Gemini multimodal request failed.', [
-                'message' => $e->getMessage(),
-            ]);
+        $configured = $this->providerOrder();
+        $candidates = array_values(array_filter(
+            $configured,
+            fn (string $provider) => in_array($provider, ['openai', 'gemini'], true)
+        ));
 
-            throw new RuntimeException(
-                'The Tutor could not read the attached file or image. Please try again or send the question without the attachment.'
-            );
+        // Ensure Gemini is available as a capability fallback even when it was
+        // accidentally omitted from AI_FALLBACK_PROVIDERS.
+        if (!in_array('gemini', $candidates, true)) {
+            $candidates[] = 'gemini';
         }
-    }
 
-    /**
-     * General JSON request.
-     *
-     * Uses the configured default provider with fallback support.
-     *
-     * The schema is optional because Groq currently uses
-     * JSON object mode rather than the Gemini response schema.
-     */
-    public function json(
-        array $messages,
-        array $schema = [],
-        array $options = []
-    ): array {
-        $providerKey = config(
-            'services.ai.provider',
-            'gemini'
-        );
+        $errors = [];
+        $attemptedProvider = null;
 
-        $provider = $this->resolveProvider(
-            $providerKey
-        );
-
-        try {
-            return $this->callJsonProvider(
-                $provider,
-                $messages,
-                $schema,
-                $options
-            );
-        } catch (Throwable $e) {
-
-            Log::warning(
-                "AI JSON provider [{$providerKey}] failed: " .
-                $e->getMessage() .
-                '. Attempting fallback.'
-            );
-
-            return $this->executeJsonFallback(
-                $messages,
-                $schema,
-                $options,
-                $providerKey
-            );
-        }
-    }
-
-    /**
-     * Curriculum-specific structured JSON request.
-     *
-     * Curriculum organization uses Gemini as the primary provider
-     * and Groq as the fallback provider.
-     */
-    public function curriculumJson(
-        array $messages,
-        array $schema,
-        array $options = []
-    ): array {
-        try {
-
-            Log::info(
-                'AI curriculum analysis: using Gemini provider.'
-            );
-
-            return $this->gemini->json(
-                $messages,
-                $schema,
-                $options
-            );
-
-        } catch (Throwable $e) {
-
-            Log::warning(
-                'Gemini curriculum analysis failed: ' .
-                $e->getMessage() .
-                '. Attempting Groq fallback.'
-            );
-
+        foreach ($candidates as $providerKey) {
             try {
+                if ($providerKey === 'openai') {
+                    if (!$this->openai->supportsAttachments($attachments)) {
+                        Log::info('OpenAI multimodal skipped: attachment type is not supported by the configured OpenAI vision path.', [
+                            'mime_types' => array_values(array_unique(array_filter(array_map(
+                                fn ($attachment) => $attachment['mime_type'] ?? null,
+                                $attachments
+                            )))),
+                        ]);
+                        continue;
+                    }
 
-                Log::info(
-                    'AI curriculum analysis: using Groq fallback.'
-                );
+                    $callOptions = $attemptedProvider === null
+                        ? $options
+                        : $this->fallbackUsageOptions($options, $attemptedProvider);
 
-                return $this->groq->json(
-                    $messages,
-                    $this->fallbackUsageOptions($options, 'gemini')
-                );
+                    $attemptedProvider ??= 'openai';
 
-            } catch (Throwable $fallbackException) {
+                    return $this->openai->multimodalText(
+                        $messages,
+                        $attachments,
+                        $callOptions
+                    );
+                }
 
-                Log::error(
-                    'Both Gemini and Groq curriculum analysis failed.',
-                    [
-                        'gemini_error' =>
-                            $e->getMessage(),
+                if ($providerKey === 'gemini') {
+                    $callOptions = $attemptedProvider === null
+                        ? $options
+                        : $this->fallbackUsageOptions($options, $attemptedProvider);
 
-                        'groq_error' =>
-                            $fallbackException->getMessage(),
-                    ]
-                );
+                    return $this->gemini->multimodalText(
+                        $messages,
+                        $attachments,
+                        $callOptions
+                    );
+                }
+            } catch (Throwable $e) {
+                $errors[$providerKey] = $e->getMessage();
+                $attemptedProvider ??= $providerKey;
 
-                throw new RuntimeException(
-                    'All AI providers failed during curriculum analysis.'
-                );
+                Log::warning("AI multimodal provider [{$providerKey}] failed.", [
+                    'message' => $e->getMessage(),
+                ]);
             }
         }
+
+        Log::error('All multimodal-capable AI providers failed.', [
+            'errors' => $errors,
+        ]);
+
+        throw new RuntimeException(
+            'The Tutor could not read the attached file or image. Please try again or send the question without the attachment.'
+        );
     }
 
-    /**
-     * Execute a normal text/chat operation.
-     */
-    protected function execute(
-        string $method,
-        array $messages,
-        array $options = []
-    ): mixed {
-        $providerKey = config(
-            'services.ai.provider',
-            'gemini'
-        );
+    public function json(array $messages, array $schema = [], array $options = []): array
+    {
+        $providers = $this->providerOrder();
+        $primary = $providers[0] ?? null;
+        $errors = [];
 
-        $provider = $this->resolveProvider(
-            $providerKey
-        );
+        foreach ($providers as $index => $providerKey) {
+            try {
+                $provider = $this->resolveProvider($providerKey);
+                $callOptions = $index === 0
+                    ? $options
+                    : $this->fallbackUsageOptions($options, (string) $primary);
 
-        try {
-
-            return $provider->{$method}(
-                $messages,
-                $options
-            );
-
-        } catch (Throwable $e) {
-
-            Log::warning(
-                "AI Provider [{$providerKey}] failed: " .
-                $e->getMessage() .
-                '. Attempting fallback.'
-            );
-
-            return $this->executeFallback(
-                $method,
-                $messages,
-                $options,
-                $providerKey
-            );
+                return $this->callJsonProvider($provider, $messages, $schema, $callOptions);
+            } catch (Throwable $e) {
+                $errors[$providerKey] = $e->getMessage();
+                Log::warning("AI JSON provider [{$providerKey}] failed.", [
+                    'message' => $e->getMessage(),
+                    'attempt' => $index + 1,
+                ]);
+            }
         }
+
+        Log::error('All configured AI JSON providers failed.', ['errors' => $errors]);
+        throw new RuntimeException('All configured AI providers and fallbacks failed.');
     }
 
-    /**
-     * Resolve a provider by configuration key.
-     */
-    protected function resolveProvider(
-        string $providerKey
-    ): object {
+    public function curriculumJson(array $messages, array $schema, array $options = []): array
+    {
+        $options['_usage_feature'] = $options['_usage_feature'] ?? 'Curriculum Analysis';
+        return $this->json($messages, $schema, $options);
+    }
+
+    protected function execute(string $method, array $messages, array $options = []): mixed
+    {
+        $providers = $this->providerOrder();
+        $primary = $providers[0] ?? null;
+        $errors = [];
+
+        foreach ($providers as $index => $providerKey) {
+            try {
+                $provider = $this->resolveProvider($providerKey);
+                $callOptions = $index === 0
+                    ? $options
+                    : $this->fallbackUsageOptions($options, (string) $primary);
+
+                if ($index > 0) {
+                    Log::info("AI fallback: using {$providerKey} provider.");
+                }
+
+                return $provider->{$method}($messages, $callOptions);
+            } catch (Throwable $e) {
+                $errors[$providerKey] = $e->getMessage();
+                Log::warning("AI provider [{$providerKey}] failed.", [
+                    'message' => $e->getMessage(),
+                    'attempt' => $index + 1,
+                ]);
+            }
+        }
+
+        Log::error('All configured AI providers failed.', ['errors' => $errors]);
+        throw new RuntimeException('All configured AI providers and fallbacks failed.');
+    }
+
+    protected function providerOrder(): array
+    {
+        $primary = strtolower(trim((string) config('services.ai.provider', 'openai')));
+        $fallbacks = config('services.ai.fallback_providers', ['gemini', 'groq']);
+
+        if (is_string($fallbacks)) {
+            $fallbacks = explode(',', $fallbacks);
+        }
+
+        $providers = array_merge([$primary], is_array($fallbacks) ? $fallbacks : []);
+
+        return array_values(array_unique(array_filter(array_map(
+            fn ($provider) => strtolower(trim((string) $provider)),
+            $providers
+        ), fn ($provider) => in_array($provider, ['openai', 'gemini', 'groq'], true))));
+    }
+
+    protected function resolveProvider(string $providerKey): object
+    {
         return match ($providerKey) {
-
+            'openai' => $this->openai,
             'gemini' => $this->gemini,
-
             'groq' => $this->groq,
-
-            default => throw new RuntimeException(
-                "Unsupported AI provider: {$providerKey}"
-            ),
+            default => throw new RuntimeException("Unsupported AI provider: {$providerKey}"),
         };
     }
 
-    /**
-     * Execute JSON request against a provider.
-     */
     protected function callJsonProvider(
         object $provider,
         array $messages,
         array $schema,
         array $options
     ): array {
-        if ($provider instanceof GeminiProvider) {
+        if ($provider instanceof OpenAIProvider) {
+            return $provider->json($messages, $schema, $options);
+        }
 
-            return $provider->json(
-                $messages,
-                $schema,
-                $options
-            );
+        if ($provider instanceof GeminiProvider) {
+            return $provider->json($messages, $schema, $options);
         }
 
         if ($provider instanceof GroqProvider) {
-
-            return $provider->json(
-                $messages,
-                $options
-            );
+            return $provider->json($messages, $options);
         }
 
-        throw new RuntimeException(
-            'Unsupported AI provider for JSON request.'
-        );
+        throw new RuntimeException('Unsupported AI provider for JSON request.');
     }
 
-    /**
-     * Execute JSON fallback.
-     */
-    protected function executeJsonFallback(
-        array $messages,
-        array $schema,
-        array $options,
-        string $failedProvider
-    ): array {
-        if ($failedProvider === 'gemini') {
-
-            try {
-
-                return $this->groq->json(
-                    $messages,
-                    $this->fallbackUsageOptions($options, 'gemini')
-                );
-
-            } catch (Throwable $e) {
-
-                Log::warning(
-                    'Groq JSON fallback also failed: ' .
-                    $e->getMessage()
-                );
-            }
-        }
-
-        if ($failedProvider === 'groq') {
-
-            try {
-
-                return $this->gemini->json(
-                    $messages,
-                    $schema,
-                    $this->fallbackUsageOptions($options, 'groq')
-                );
-
-            } catch (Throwable $e) {
-
-                Log::warning(
-                    'Gemini JSON fallback also failed: ' .
-                    $e->getMessage()
-                );
-            }
-        }
-
-        throw new RuntimeException(
-            'All configured AI providers and fallbacks failed.'
-        );
-    }
-
-    /**
-     * Handles sequential fallback for normal chat/text requests.
-     */
-    protected function executeFallback(
-        string $method,
-        array $messages,
-        array $options,
-        string $failedProvider
-    ): mixed {
-        $fallbacks = match ($failedProvider) {
-
-            'gemini' => [
-                'groq' => $this->groq,
-            ],
-
-            'groq' => [
-                'gemini' => $this->gemini,
-            ],
-
-            default => [],
-        };
-
-        foreach ($fallbacks as $providerName => $fallbackProvider) {
-
-            try {
-
-                Log::info(
-                    "AI fallback: using {$providerName} provider."
-                );
-
-                return $fallbackProvider->{$method}(
-                    $messages,
-                    $this->fallbackUsageOptions($options, $failedProvider)
-                );
-
-            } catch (Throwable $e) {
-
-                Log::warning(
-                    "Fallback provider [{$providerName}] also failed: " .
-                    $e->getMessage()
-                );
-            }
-        }
-
-        throw new RuntimeException(
-            'All configured AI providers and fallbacks failed.'
-        );
-    }
-
-    /**
-     * Mark calls made after a primary provider failure so monitoring can
-     * distinguish fallback traffic from ordinary requests.
-     */
     protected function fallbackUsageOptions(array $options, string $primaryProvider): array
     {
         $options['_usage_is_fallback'] = true;
@@ -389,5 +237,4 @@ class AIGateway
 
         return $options;
     }
-
 }
