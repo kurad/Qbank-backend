@@ -193,6 +193,9 @@ class HomeController extends Controller
                 'objectives.learningObjective:id,objective,code',
             ])
             ->where('student_id', $user->id)
+            ->where(function ($query) {
+                $query->whereNull('session_mode')->orWhere('session_mode', 'learning');
+            })
             ->when(
                 $currentPeriodIds->isNotEmpty(),
                 fn ($query) =>
@@ -216,6 +219,10 @@ class HomeController extends Controller
                                 'student_id',
                                 $user->id
                             )
+                            ->where(function ($sessionQuery) {
+                                $sessionQuery->whereNull('session_mode')
+                                    ->orWhere('session_mode', 'learning');
+                            })
                             ->when(
                                 $currentPeriodIds->isNotEmpty(),
                                 fn ($sessionQuery) =>
@@ -675,6 +682,9 @@ class HomeController extends Controller
 
         $tutorSessions = TutorSession::query()
             ->where('student_id', $user->id)
+            ->where(function ($query) {
+                $query->whereNull('session_mode')->orWhere('session_mode', 'learning');
+            })
             ->get(['id', 'status', 'started_at', 'last_activity_at', 'ended_at']);
 
         $lastSixWeeks = collect(range(5, 1))->map(function ($weeksAgo) use ($user) {
@@ -688,7 +698,11 @@ class HomeController extends Controller
                 ->count();
 
             $objectives = TutorSessionObjective::query()
-                ->whereHas('session', fn ($query) => $query->where('student_id', $user->id))
+                ->whereHas('session', fn ($query) => $query
+                    ->where('student_id', $user->id)
+                    ->where(function ($sessionQuery) {
+                        $sessionQuery->whereNull('session_mode')->orWhere('session_mode', 'learning');
+                    }))
                 ->where('status', 'completed')
                 ->whereBetween('completed_at', [$start, $end])
                 ->count();
@@ -710,7 +724,11 @@ class HomeController extends Controller
                     ->whereBetween('completed_at', [$start, $end])
                     ->count(),
                 'objectives' => TutorSessionObjective::query()
-                    ->whereHas('session', fn ($query) => $query->where('student_id', $user->id))
+                    ->whereHas('session', fn ($query) => $query
+                    ->where('student_id', $user->id)
+                    ->where(function ($sessionQuery) {
+                        $sessionQuery->whereNull('session_mode')->orWhere('session_mode', 'learning');
+                    }))
                     ->where('status', 'completed')
                     ->whereBetween('completed_at', [$start, $end])
                     ->count(),

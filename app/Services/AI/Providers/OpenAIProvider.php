@@ -142,7 +142,22 @@ class OpenAIProvider
                 $payload['max_output_tokens'] = (int) $options['max_tokens'];
             }
 
-            if (isset($options['temperature'])) {
+            // GPT-6 reasoning models reject sampling parameters such as
+            // temperature/top_p whenever reasoning effort is not `none`.
+            // RevisionHub callers historically send Gemini-style `thinking_level`,
+            // so translate it to the Responses API reasoning.effort field.
+            $reasoningEffort = $this->normalizeReasoningEffort(
+                $options['reasoning_effort'] ?? $options['thinking_level'] ?? null
+            );
+
+            if ($reasoningEffort !== null) {
+                $payload['reasoning'] = ['effort' => $reasoningEffort];
+            }
+
+            // GPT-6 Luna defaults to reasoning when no effort is supplied, so
+            // temperature is safe only when the request explicitly disables
+            // reasoning with effort=none.
+            if ($reasoningEffort === 'none' && isset($options['temperature'])) {
                 $payload['temperature'] = (float) $options['temperature'];
             }
 
@@ -243,6 +258,29 @@ class OpenAIProvider
 
             throw $e;
         }
+    }
+
+
+    protected function normalizeReasoningEffort(mixed $value): ?string
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        $value = strtolower(trim((string) $value));
+
+        // Accept both RevisionHub/Gemini vocabulary and OpenAI vocabulary.
+        $aliases = [
+            'minimal' => 'low',
+            'extra_high' => 'xhigh',
+            'extra-high' => 'xhigh',
+        ];
+
+        $value = $aliases[$value] ?? $value;
+
+        return in_array($value, ['none', 'low', 'medium', 'high', 'xhigh', 'max'], true)
+            ? $value
+            : null;
     }
 
     protected function normalizeMessages(array $messages): array

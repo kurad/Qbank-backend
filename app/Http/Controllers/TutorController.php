@@ -296,6 +296,14 @@ class TutorController extends Controller
 
             ],
 
+            'session_mode' => [
+
+                'nullable',
+
+                'in:learning,review',
+
+            ],
+
             'topic_id' => [
 
                 'required',

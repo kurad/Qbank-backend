@@ -28,6 +28,10 @@ class StudentTopicLearningService
 
     public function markStarted(User $student, TutorSession $session): StudentTopicLearningState
     {
+        if (($session->session_mode ?? 'learning') === 'review') {
+            return $this->stateFor($student, (int) $session->learning_period_id, (int) $session->topic_id);
+        }
+
         if (!$session->learning_period_id || !$session->topic_id) {
             throw new \InvalidArgumentException('Tutor session is missing learning-period/topic context.');
         }
@@ -46,6 +50,10 @@ class StudentTopicLearningService
 
     public function recordEvaluation(User $student, TutorSession $session, int $score): StudentTopicLearningState
     {
+        if (($session->session_mode ?? 'learning') === 'review') {
+            return $this->stateFor($student, (int) $session->learning_period_id, (int) $session->topic_id);
+        }
+
         $state = $this->stateFor($student, (int) $session->learning_period_id, (int) $session->topic_id);
         $state->progression_status = $state->progression_status === 'covered' ? 'covered' : 'in_progress';
         if ($state->mastery_status === 'unknown') {
@@ -62,6 +70,10 @@ class StudentTopicLearningService
 
     public function markMastered(User $student, TutorSession $session): StudentTopicLearningState
     {
+        if (($session->session_mode ?? 'learning') === 'review') {
+            return $this->stateFor($student, (int) $session->learning_period_id, (int) $session->topic_id);
+        }
+
         $state = $this->stateFor($student, (int) $session->learning_period_id, (int) $session->topic_id);
         $state->progression_status = 'covered';
         $state->mastery_status = 'mastered';
@@ -79,6 +91,10 @@ class StudentTopicLearningService
         TutorSession $session,
         ?string $reason = null
     ): StudentTopicLearningState {
+        if (($session->session_mode ?? 'learning') === 'review') {
+            return $this->stateFor($student, (int) $session->learning_period_id, (int) $session->topic_id);
+        }
+
         $state = $this->stateFor($student, (int) $session->learning_period_id, (int) $session->topic_id);
         $state->progression_status = 'covered';
         $state->mastery_status = 'needs_review';

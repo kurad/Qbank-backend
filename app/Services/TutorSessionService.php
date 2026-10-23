@@ -43,13 +43,15 @@ class TutorSessionService
          * objective 1. Review sessions for `needs_review` topics remain
          * allowed until we introduce a dedicated review-session type.
          */
+        $sessionMode = ($data['session_mode'] ?? 'learning') === 'review' ? 'review' : 'learning';
+
         $topicState = StudentTopicLearningState::query()
             ->where('student_id', $student->id)
             ->where('learning_period_id', $resolved['learningPeriod']->id)
             ->where('topic_id', $resolved['topic']->id)
             ->first();
 
-        if ($topicState?->mastery_status === 'mastered') {
+        if ($topicState?->mastery_status === 'mastered' && $sessionMode !== 'review') {
             throw ValidationException::withMessages([
                 'topic_id' => 'This topic is already mastered for the current learning period.',
             ]);
@@ -62,6 +64,7 @@ class TutorSessionService
             ->where('learning_period_id', $resolved['learningPeriod']->id)
             ->where('topic_id', $resolved['topic']->id)
             ->where('status', 'active')
+            ->where('session_mode', $sessionMode)
             ->latest('last_activity_at')
             ->first();
 
@@ -69,7 +72,7 @@ class TutorSessionService
             return $this->freshSession($existing);
         }
 
-        $session = DB::transaction(function () use ($student, $resolved, $objectives) {
+        $session = DB::transaction(function () use ($student, $resolved, $objectives, $sessionMode) {
             $now = now();
 
             $session = TutorSession::create([
@@ -83,6 +86,7 @@ class TutorSessionService
                 'learning_objective_id' => null,
                 'title' => $resolved['topic']->topic_name,
                 'status' => 'active',
+                'session_mode' => $sessionMode,
                 'started_at' => $now,
                 'last_activity_at' => $now,
             ]);
@@ -105,7 +109,9 @@ class TutorSessionService
             return $session;
         });
 
-        $this->topicLearning->markStarted($student, $session);
+        if ($sessionMode !== 'review') {
+            $this->topicLearning->markStarted($student, $session);
+        }
 
         $opening = $this->ai->opening($session);
 
@@ -492,6 +498,10 @@ class TutorSessionService
                 ->where('learning_period_id', $state->learning_period_id)
                 ->where('topic_id', $state->topic_id)
                 ->where('status', 'active')
+                ->where(function ($query) {
+                    $query->whereNull('session_mode')
+                        ->orWhere('session_mode', 'learning');
+                })
                 ->update([
                     'status' => 'abandoned',
                     'ended_at' => now(),

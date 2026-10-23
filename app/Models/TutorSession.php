@@ -24,6 +24,7 @@ class TutorSession extends Model
         'course_material_id',
         'title',
         'status',
+        'session_mode',
         'started_at',
         'last_activity_at',
         'ended_at',
