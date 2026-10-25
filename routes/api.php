@@ -30,6 +30,7 @@ use App\Http\Controllers\StudentResultsController;
 use App\Http\Controllers\SubjectController;
 use App\Http\Controllers\TeacherGradebookController;
 use App\Http\Controllers\TeacherProgressController;
+use App\Http\Controllers\TeacherTutorHistoryController;
 use App\Http\Controllers\TopicController;
 use App\Http\Controllers\TutorController;
 use App\Http\Controllers\UnitController;
@@ -534,6 +535,9 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
 
     Route::get('/student/support/threads', [LearningSupportController::class, 'studentThreads']);
     Route::post('/student/support/threads/{thread}/messages', [LearningSupportController::class, 'addMessage']);
+
+    Route::get('/teacher/tutor-history', [TeacherTutorHistoryController::class, 'index']);
+    Route::get('/teacher/tutor-history/{tutorSession}', [TeacherTutorHistoryController::class, 'show']);
 
     Route::get('/teacher/support/needs-review', [LearningSupportController::class, 'teacherNeedsReview']);
     Route::get('/teacher/support/threads', [LearningSupportController::class, 'teacherThreads']);
