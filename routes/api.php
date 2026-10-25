@@ -538,6 +538,7 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
 
     Route::get('/teacher/tutor-history', [TeacherTutorHistoryController::class, 'index']);
     Route::get('/teacher/tutor-history/{tutorSession}', [TeacherTutorHistoryController::class, 'show']);
+    Route::post('/teacher/tutor-history/{tutorSession}/analyze', [TeacherTutorHistoryController::class, 'analyze'])->middleware('throttle:6,1');
 
     Route::get('/teacher/support/needs-review', [LearningSupportController::class, 'teacherNeedsReview']);
     Route::get('/teacher/support/threads', [LearningSupportController::class, 'teacherThreads']);

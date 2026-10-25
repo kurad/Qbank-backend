@@ -109,4 +109,9 @@ class TutorSession extends Model
         'tutor_session_id'
     );
 }
+    public function latestReview()
+    {
+        return $this->hasOne(TutorConversationReview::class, 'tutor_session_id')->latestOfMany();
+    }
+
 }
