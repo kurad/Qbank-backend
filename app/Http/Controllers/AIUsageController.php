@@ -25,9 +25,13 @@ class AIUsageController extends Controller
             'status' => ['nullable', 'in:success,failed'],
             'school_id' => ['nullable', 'integer'],
             'user_id' => ['nullable', 'integer'],
+            'recent_page' => ['nullable', 'integer', 'min:1'],
+            'per_page' => ['nullable', 'integer', 'in:10,25,50'],
         ]);
 
         $days = (int) ($validated['days'] ?? 30);
+        $recentPage = (int) ($validated['recent_page'] ?? 1);
+        $perPage = (int) ($validated['per_page'] ?? 25);
         $from = now()->subDays($days - 1)->startOfDay();
         $to = now()->endOfDay();
 
@@ -145,13 +149,17 @@ class AIUsageController extends Controller
                 'school:id,school_name',
             ])
             ->orderByDesc('ai_usage_logs.created_at')
-            ->limit(50)
-            ->get([
-                'id', 'user_id', 'school_id', 'provider', 'model', 'operation',
-                'feature', 'route', 'status', 'is_fallback', 'http_status',
-                'finish_reason', 'prompt_tokens', 'output_tokens', 'thinking_tokens',
-                'cached_tokens', 'total_tokens', 'latency_ms', 'error_message', 'created_at',
-            ]);
+            ->paginate(
+                $perPage,
+                [
+                    'id', 'user_id', 'school_id', 'provider', 'model', 'operation',
+                    'feature', 'route', 'status', 'is_fallback', 'http_status',
+                    'finish_reason', 'prompt_tokens', 'output_tokens', 'thinking_tokens',
+                    'cached_tokens', 'total_tokens', 'latency_ms', 'error_message', 'created_at',
+                ],
+                'recent_page',
+                $recentPage
+            );
 
         return response()->json([
             'range' => [
@@ -179,7 +187,16 @@ class AIUsageController extends Controller
             'features' => $features,
             'users' => $users,
             'schools' => $schools,
-            'recent' => $recent,
+            'recent' => $recent->items(),
+            'recent_pagination' => [
+                'current_page' => $recent->currentPage(),
+                'last_page' => $recent->lastPage(),
+                'per_page' => $recent->perPage(),
+                'total' => $recent->total(),
+                'from' => $recent->firstItem(),
+                'to' => $recent->lastItem(),
+                'has_more_pages' => $recent->hasMorePages(),
+            ],
         ]);
     }
 }
