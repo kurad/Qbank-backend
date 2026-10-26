@@ -12,6 +12,7 @@ use Illuminate\Validation\ValidationException;
 
 class TutorCheckpointService
 {
+    protected const MAX_CHECKPOINT_ATTEMPTS = 3;
     protected const TYPES = [
         'mcq',
         'true_false',
@@ -136,7 +137,11 @@ class TutorCheckpointService
                 return
                     (int) ($checkpoint['objective_id'] ?? 0)
                         === (int) $objective->learning_objective_id
-                    && ($checkpoint['status'] ?? 'pending') === 'pending';
+                    && in_array(
+                        ($checkpoint['status'] ?? 'pending'),
+                        ['pending', 'retry_ready'],
+                        true
+                    );
             });
     }
 
@@ -285,7 +290,7 @@ class TutorCheckpointService
             ]);
         }
 
-        if (($checkpoint['status'] ?? 'pending') !== 'pending') {
+        if (!in_array(($checkpoint['status'] ?? 'pending'), ['pending', 'retry_ready'], true)) {
             throw ValidationException::withMessages([
                 'checkpoint' => 'This checkpoint has already been answered.',
             ]);
@@ -346,11 +351,16 @@ class TutorCheckpointService
                 ]);
             }
 
-            if (($lockedCheckpoint['status'] ?? 'pending') !== 'pending') {
+            if (!in_array(($lockedCheckpoint['status'] ?? 'pending'), ['pending', 'retry_ready'], true)) {
                 throw ValidationException::withMessages([
                     'checkpoint' => 'This checkpoint has already been answered.',
                 ]);
             }
+
+            $previousAttempts = is_array($lockedCheckpoint['attempts'] ?? null)
+                ? $lockedCheckpoint['attempts']
+                : [];
+            $checkpointAttemptNumber = count($previousAttempts) + 1;
 
             $studentMessage = $session->messages()->create([
                 'role' => 'user',
@@ -361,6 +371,7 @@ class TutorCheckpointService
                         'checkpoint_message_id' => $lockedCheckpointMessage->id,
                         'type' => $checkpoint['type'],
                         'answer' => $studentAnswer,
+                        'attempt_number' => $checkpointAttemptNumber,
                     ],
                 ],
             ]);
@@ -383,14 +394,53 @@ class TutorCheckpointService
                 $evaluation
             );
 
-            $lockedMetadata['checkpoint']['status'] = 'answered';
-            $lockedMetadata['checkpoint']['answered_at'] = now()->toISOString();
-            $lockedMetadata['checkpoint']['student_answer'] = $studentAnswer;
+            $objectiveResolved = (bool) (
+                $progress['objective_resolved']
+                ?? $progress['objective_completed']
+                ?? false
+            );
+            $sessionCompleted = (bool) ($progress['session_completed'] ?? false);
+            $qualifyingCorrect = (bool) ($evaluation['correct'] ?? false);
+            $retryAllowed = !$qualifyingCorrect
+                && !$objectiveResolved
+                && !$sessionCompleted
+                && $checkpointAttemptNumber < self::MAX_CHECKPOINT_ATTEMPTS;
+
+            $attemptRecord = [
+                'attempt_number' => $checkpointAttemptNumber,
+                'answer' => $studentAnswer,
+                'classification' => $evaluation['classification'] ?? 'unclear',
+                'correct' => $qualifyingCorrect,
+                'understanding_score' => (int) ($evaluation['understanding_score'] ?? 0),
+                'feedback' => $evaluation['feedback'] ?? null,
+                'misconception' => $evaluation['misconception'] ?? null,
+                'submitted_at' => now()->toISOString(),
+            ];
+
+            $lockedMetadata['checkpoint']['attempts'] = [
+                ...$previousAttempts,
+                $attemptRecord,
+            ];
+            $lockedMetadata['checkpoint']['attempt_count'] = $checkpointAttemptNumber;
+            $lockedMetadata['checkpoint']['max_attempts'] = self::MAX_CHECKPOINT_ATTEMPTS;
+            $lockedMetadata['checkpoint']['retry_allowed'] = $retryAllowed;
+            $lockedMetadata['checkpoint']['last_student_answer'] = $studentAnswer;
             $lockedMetadata['checkpoint']['result'] = [
                 'classification' => $evaluation['classification'],
-                'correct' => $evaluation['correct'],
+                'correct' => $qualifyingCorrect,
                 'understanding_score' => $evaluation['understanding_score'],
             ];
+
+            if ($retryAllowed) {
+                $lockedMetadata['checkpoint']['status'] = 'retry_ready';
+                $lockedMetadata['checkpoint']['retry_ready_at'] = now()->toISOString();
+                unset($lockedMetadata['checkpoint']['answered_at']);
+                unset($lockedMetadata['checkpoint']['student_answer']);
+            } else {
+                $lockedMetadata['checkpoint']['status'] = 'answered';
+                $lockedMetadata['checkpoint']['answered_at'] = now()->toISOString();
+                $lockedMetadata['checkpoint']['student_answer'] = $studentAnswer;
+            }
 
             $lockedCheckpointMessage->update(['metadata' => $lockedMetadata]);
 
@@ -407,6 +457,9 @@ class TutorCheckpointService
                 'checkpoint_message' => $lockedCheckpointMessage->fresh(),
                 'student_message' => $studentMessage,
                 'progress' => $progress,
+                'checkpoint_attempt_number' => $checkpointAttemptNumber,
+                'retry_allowed' => $retryAllowed,
+                'max_checkpoint_attempts' => self::MAX_CHECKPOINT_ATTEMPTS,
             ];
         });
 
@@ -435,18 +488,34 @@ class TutorCheckpointService
          */
         $struggleLevel = (int) ($stored['progress']['struggle_level'] ?? 0);
         $classification = strtolower((string) ($evaluation['classification'] ?? 'unclear'));
+        $retryAllowed = (bool) ($stored['retry_allowed'] ?? false);
         $needsAdaptiveTeaching = !($stored['progress']['objective_resolved'] ?? false)
             && in_array($classification, ['incorrect', 'partially_correct', 'unclear'], true)
-            && $struggleLevel >= 2;
+            && ($retryAllowed || $struggleLevel >= 2);
 
         $feedback = $needsAdaptiveTeaching
             ? $this->ai->respondToEvaluation(
                 $session->fresh(),
                 $stored['student_message']->content,
                 $evaluation,
-                $stored['progress']
+                [
+                    ...$stored['progress'],
+                    'checkpoint_retry_allowed' => $retryAllowed,
+                    'checkpoint_attempt_number' => $stored['checkpoint_attempt_number'] ?? null,
+                    'max_checkpoint_attempts' => $stored['max_checkpoint_attempts'] ?? self::MAX_CHECKPOINT_ATTEMPTS,
+                ]
             )
             : $this->buildFeedback($checkpoint, $evaluation, $stored['progress']);
+
+        if ($retryAllowed) {
+            $attempt = (int) ($stored['checkpoint_attempt_number'] ?? 1);
+            $remaining = max(0, self::MAX_CHECKPOINT_ATTEMPTS - $attempt);
+            $feedback = trim($feedback)
+                . "\n\n"
+                . ($remaining === 1
+                    ? 'You have one more attempt on this same question. Ask me about anything that is still unclear, then revise your answer when you are ready.'
+                    : 'Ask me about anything that is still unclear, then try this same question again in your own words when you are ready.');
+        }
 
         $messageType = !empty($stored['progress']['objective_resolved'])
             ? 'objective_transition'
@@ -467,10 +536,22 @@ class TutorCheckpointService
 
         $session->update(['last_activity_at' => now()]);
 
+        if ($retryAllowed) {
+            $latestCheckpoint = $stored['checkpoint_message']->fresh();
+            $metadata = $latestCheckpoint->metadata ?? [];
+            if (is_array($metadata['checkpoint'] ?? null)) {
+                $metadata['checkpoint']['retry_feedback'] = $feedback;
+                $metadata['checkpoint']['retry_feedback_message_id'] = $feedbackMessage->id;
+                $latestCheckpoint->update(['metadata' => $metadata]);
+                $stored['checkpoint_message'] = $latestCheckpoint->fresh();
+            }
+        }
+
         return [
             ...$stored,
             'feedback_message' => $feedbackMessage,
             'evaluation' => $evaluation,
+            'retry_allowed' => $retryAllowed,
         ];
     }
 
@@ -732,9 +813,10 @@ class TutorCheckpointService
          * Keep compatibility with the TutorAIService currently used by
          * the project. This is one AI evaluation call.
          */
-        return $this->ai->evaluateResponse(
+        return $this->ai->evaluateCheckpointAnswer(
             $session,
-            $evaluationInput,
+            $checkpoint,
+            $answer,
             $knowledge
         );
     }
@@ -872,6 +954,11 @@ class TutorCheckpointService
                 $checkpoint['status'] ?? 'pending',
             'created_at' => $message->created_at,
             'skipped_at' => $checkpoint['skipped_at'] ?? null,
+            'attempt_count' => (int) ($checkpoint['attempt_count'] ?? 0),
+            'max_attempts' => (int) ($checkpoint['max_attempts'] ?? self::MAX_CHECKPOINT_ATTEMPTS),
+            'retry_allowed' => (bool) ($checkpoint['retry_allowed'] ?? false),
+            'retry_feedback' => $checkpoint['retry_feedback'] ?? null,
+            'previous_answer' => $checkpoint['last_student_answer'] ?? null,
         ];
 
         switch ($checkpoint['type'] ?? null) {

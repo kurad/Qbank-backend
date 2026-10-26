@@ -804,44 +804,12 @@ class TutorController extends Controller
             );
 
         /*
-         * Keep a knowledge check flowing without another learner click.
-         *
-         * When the current objective is still unresolved, the feedback has
-         * already been created by TutorCheckpointService::answer(). We now
-         * prepare the next checkpoint immediately and return it with the same
-         * response. This applies after correct, partially-correct, unclear,
-         * and incorrect answers.
-         *
-         * If the objective has just been resolved, we do not create another
-         * checkpoint here; the existing objective-transition flow takes over.
+         * Keep an unsuccessful check on the SAME question so the learner can
+         * receive feedback, ask questions, and retry in their own words. New
+         * formal checks remain learner-triggered instead of being generated
+         * automatically after every answer.
          */
         $nextCheckpoint = null;
-
-        if (
-            empty($progress['session_completed'])
-            && empty($progress['objective_resolved'])
-        ) {
-            try {
-                $nextCheckpointMessage =
-                    $this->checkpoints->generate(
-                        $tutorSession->fresh(),
-                        true
-                    );
-
-                $nextCheckpoint =
-                    $this->checkpoints->publicCheckpoint(
-                        $nextCheckpointMessage
-                    );
-            } catch (\Throwable $e) {
-                /*
-                 * The submitted answer and feedback are already safely saved.
-                 * Do not fail the whole response if follow-up generation has
-                 * a temporary AI/provider problem. The learner can still use
-                 * the normal continue/check action as a fallback.
-                 */
-                report($e);
-            }
-        }
 
         return response()->json([
 
@@ -883,13 +851,41 @@ class TutorController extends Controller
 
                     'correct' =>
 
-                    (bool) (
+                        (bool) (
 
-                        $result['evaluation']['correct']
+                            $result['evaluation']['correct']
 
-                        ?? false
+                            ?? false
 
-                    ),
+                        ),
+
+                    'classification' =>
+
+                        $result['evaluation']['classification']
+
+                            ?? null,
+
+                    'understanding_score' =>
+
+                        $result['evaluation']['understanding_score']
+
+                            ?? null,
+
+                    'retry_allowed' =>
+
+                        (bool) ($result['retry_allowed'] ?? false),
+
+                    'checkpoint_attempt_number' =>
+
+                        $result['checkpoint_attempt_number']
+
+                            ?? null,
+
+                    'max_checkpoint_attempts' =>
+
+                        $result['max_checkpoint_attempts']
+
+                            ?? null,
 
                 ],
 
