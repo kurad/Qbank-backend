@@ -97,18 +97,33 @@ class TeacherTutorHistoryController extends Controller
         }
         $includedIds = array_column($transcript, 'message_id');
         $schema = [
-            'type' => 'OBJECT',
+            'type' => 'object',
+            'additionalProperties' => false,
             'properties' => [
-                'summary' => ['type' => 'STRING'],
-                'findings' => ['type' => 'ARRAY', 'items' => ['type' => 'OBJECT', 'properties' => [
-                    'concept' => ['type' => 'STRING'],
-                    'misconception' => ['type' => 'STRING'],
-                    'status' => ['type' => 'STRING'],
-                    'evidence_message_id' => ['type' => 'INTEGER'],
-                    'suggested_intervention' => ['type' => 'STRING'],
-                ], 'required' => ['concept','misconception','status','evidence_message_id','suggested_intervention']]],
+                'summary' => ['type' => 'string'],
+                'findings' => [
+                    'type' => 'array',
+                    'items' => [
+                        'type' => 'object',
+                        'additionalProperties' => false,
+                        'properties' => [
+                            'concept' => ['type' => 'string'],
+                            'misconception' => ['type' => 'string'],
+                            'status' => ['type' => 'string'],
+                            'evidence_message_id' => ['type' => 'integer'],
+                            'suggested_intervention' => ['type' => 'string'],
+                        ],
+                        'required' => [
+                            'concept',
+                            'misconception',
+                            'status',
+                            'evidence_message_id',
+                            'suggested_intervention',
+                        ],
+                    ],
+                ],
             ],
-            'required' => ['summary','findings'],
+            'required' => ['summary', 'findings'],
         ];
         try {
             $output = $ai->json([

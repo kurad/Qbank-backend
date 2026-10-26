@@ -166,7 +166,7 @@ class OpenAIProvider
                     'format' => [
                         'type' => 'json_schema',
                         'name' => 'revisionhub_response',
-                        'schema' => $options['_response_schema'],
+                        'schema' => $this->normalizeJsonSchema($options['_response_schema']),
                         'strict' => false,
                     ],
                 ];
@@ -359,6 +359,57 @@ class OpenAIProvider
             })
             ->values()
             ->all();
+    }
+
+    /**
+     * Convert provider-specific / legacy schema type names to standard JSON Schema
+     * before sending them to OpenAI Structured Outputs.
+     *
+     * Gemini accepts uppercase type names such as OBJECT/STRING/ARRAY, while
+     * OpenAI expects standard lowercase JSON Schema names.
+     */
+    protected function normalizeJsonSchema(array $schema): array
+    {
+        $typeMap = [
+            'OBJECT' => 'object',
+            'STRING' => 'string',
+            'ARRAY' => 'array',
+            'INTEGER' => 'integer',
+            'NUMBER' => 'number',
+            'BOOLEAN' => 'boolean',
+            'NULL' => 'null',
+        ];
+
+        $walk = function (mixed $value) use (&$walk, $typeMap): mixed {
+            if (!is_array($value)) {
+                return $value;
+            }
+
+            $normalized = [];
+
+            foreach ($value as $key => $item) {
+                if ($key === 'type' && is_string($item)) {
+                    $normalized[$key] = $typeMap[strtoupper($item)] ?? strtolower($item);
+                    continue;
+                }
+
+                if ($key === 'type' && is_array($item)) {
+                    $normalized[$key] = array_map(
+                        fn ($type) => is_string($type)
+                            ? ($typeMap[strtoupper($type)] ?? strtolower($type))
+                            : $type,
+                        $item
+                    );
+                    continue;
+                }
+
+                $normalized[$key] = $walk($item);
+            }
+
+            return $normalized;
+        };
+
+        return $walk($schema);
     }
 
     protected function extractText(array $response): string
