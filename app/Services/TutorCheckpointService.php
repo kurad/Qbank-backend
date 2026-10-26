@@ -772,6 +772,36 @@ class TutorCheckpointService
             ]);
         }
 
+        /*
+         * Do not let punctuation or conjunctions turn an otherwise identical
+         * short answer into a wrong answer. This is especially important for
+         * list/name questions such as:
+         *
+         *   expected: "set operations and operations developed for relational databases"
+         *   learner:  "set operations, operations developed for relational databases"
+         *
+         * Both responses demonstrate exactly the same knowledge. When the
+         * normalized learner response and expected response differ only by
+         * separators/conjunctions, accept the answer deterministically before
+         * invoking the semantic AI evaluator.
+         */
+        $expectedAnswer = trim((string) ($checkpoint['expected_answer'] ?? ''));
+
+        if (
+            $expectedAnswer !== ''
+            && $this->equivalentShortAnswerFormatting($answer, $expectedAnswer)
+        ) {
+            return [
+                'classification' => 'correct',
+                'correct' => true,
+                'understanding_score' => 100,
+                'feedback' => 'Correct. Your answer identifies the required idea(s), even though you expressed them using different punctuation or linking words.',
+                'evidence' => 'The learner response contains the same required content as the expected understanding.',
+                'misconception' => null,
+                'checkpoint_explanation' => $checkpoint['explanation'] ?? null,
+            ];
+        }
+
         $criteria = collect($checkpoint['evaluation_criteria'] ?? [])
             ->filter()
             ->map(fn($item, $index) => ($index + 1) . '. ' . $item)
@@ -819,6 +849,38 @@ class TutorCheckpointService
             $answer,
             $knowledge
         );
+    }
+
+    /**
+     * Compare short answers while ignoring formatting-only differences.
+     *
+     * We intentionally keep this conservative: it removes punctuation and
+     * standalone joining words (and/&), but does not remove subject-specific
+     * content words. The semantic AI evaluator still handles true paraphrases.
+     */
+    protected function equivalentShortAnswerFormatting(
+        string $learnerAnswer,
+        string $expectedAnswer
+    ): bool {
+        $normalize = static function (string $value): string {
+            $value = mb_strtolower(trim($value));
+            $value = str_replace('&', ' and ', $value);
+
+            // Treat common list separators as whitespace.
+            $value = preg_replace('/[\p{P}\p{S}]+/u', ' ', $value) ?? $value;
+
+            // A conjunction must never be a correctness requirement for a
+            // list of concepts. Remove only standalone joining words.
+            $value = preg_replace('/\b(?:and)\b/u', ' ', $value) ?? $value;
+            $value = preg_replace('/\s+/u', ' ', $value) ?? $value;
+
+            return trim($value);
+        };
+
+        $learner = $normalize($learnerAnswer);
+        $expected = $normalize($expectedAnswer);
+
+        return $learner !== '' && hash_equals($expected, $learner);
     }
 
     protected function binaryEvaluation(

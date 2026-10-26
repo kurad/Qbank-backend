@@ -22,7 +22,9 @@ class LearnerFormativeService
         protected StudentTopicLearningService $topicLearning
     ) {}
 
-    private const QUESTIONS_PER_TOPIC = 3;
+    private const QUESTIONS_PER_OBJECTIVE = 3;
+
+    private const MAX_QUESTIONS = 20;
 
     private const AUTO_GRADABLE_TYPES = [
         'mcq',
@@ -167,14 +169,24 @@ class LearnerFormativeService
         $selected = collect();
         $shortages = [];
 
-        foreach ($period->topics as $assignment) {
-            $topic = $assignment->topic;
-            if (!$topic) {
+        $objectivePlan = $this->objectiveQuestionPlan($period);
+
+        if ($objectivePlan->isEmpty()) {
+            throw new RuntimeException('No active learning objectives are available for this learning period.');
+        }
+
+        foreach ($objectivePlan as $plan) {
+            $objective = $plan['objective'];
+            $topic = $plan['topic'];
+            $required = (int) $plan['question_count'];
+
+            if ($required <= 0) {
                 continue;
             }
 
             $pool = Question::query()
                 ->where('topic_id', $topic->id)
+                ->where('learning_objective_id', $objective->id)
                 ->whereNull('parent_question_id')
                 ->where('status', 'approved')
                 ->where('is_assessment_eligible', true)
@@ -182,33 +194,31 @@ class LearnerFormativeService
                 ->with('learningObjective:id,topic_id,code,objective,status')
                 ->get();
 
-            // If the old shared formative exists, its questions are already in the
-            // same Question table and are included above only when approved/eligible.
-            // The personalized layer itself does not depend on the old implementation.
-            $topicSelected = $this->selectEquivalentQuestions(
+            $objectiveSelected = $this->selectObjectiveQuestions(
                 $pool,
-                self::QUESTIONS_PER_TOPIC,
-                $attempt->seed . ':topic:' . $topic->id
+                $required,
+                $attempt->seed . ':objective:' . $objective->id
             );
 
-            if ($topicSelected->count() < self::QUESTIONS_PER_TOPIC) {
+            if ($objectiveSelected->count() < $required) {
                 $shortages[] = [
+                    'objective' => $objective->code ?: ('Objective ' . $objective->id),
                     'topic' => $topic->topic_name ?? ('Topic ' . $topic->id),
-                    'available' => $topicSelected->count(),
-                    'required' => self::QUESTIONS_PER_TOPIC,
+                    'available' => $objectiveSelected->count(),
+                    'required' => $required,
                 ];
             }
 
-            $selected = $selected->concat($topicSelected);
+            $selected = $selected->concat($objectiveSelected);
         }
 
         if (!empty($shortages)) {
             $details = collect($shortages)
-                ->map(fn ($item) => $item['topic'] . ' (' . $item['available'] . '/' . $item['required'] . ')')
+                ->map(fn ($item) => $item['topic'] . ' / ' . $item['objective'] . ' (' . $item['available'] . '/' . $item['required'] . ')')
                 ->implode(', ');
 
             throw new RuntimeException(
-                'There are not enough approved assessment questions for: ' . $details . '. Add more approved questions to the question bank and try again.'
+                'There are not enough approved assessment questions for: ' . $details . '. Add more approved questions mapped to those learning objectives and try again.'
             );
         }
 
@@ -364,7 +374,8 @@ class LearnerFormativeService
                 'instructions' => 'This is your personalized formative assessment for the learning period.',
                 'question_blueprint' => [
                     'source' => 'learner_personalized_formative',
-                    'questions_per_topic' => self::QUESTIONS_PER_TOPIC,
+                    'questions_per_objective' => self::QUESTIONS_PER_OBJECTIVE,
+                    'max_questions' => self::MAX_QUESTIONS,
                     'learning_period_id' => $period->id,
                     'personalized_question_order' => true,
                     'personalized_option_order' => true,
@@ -388,32 +399,68 @@ class LearnerFormativeService
         return $assessment;
     }
 
-    protected function selectEquivalentQuestions(Collection $pool, int $limit, string $seed): Collection
+    protected function objectiveQuestionPlan(LearningPeriod $period): Collection
     {
-        if ($pool->isEmpty()) {
+        $items = $period->topics
+            ->flatMap(function ($assignment) {
+                $topic = $assignment->topic;
+                if (!$topic) {
+                    return collect();
+                }
+
+                return ($topic->learningObjectives ?? collect())
+                    ->where('status', 'active')
+                    ->sortBy('order')
+                    ->map(fn ($objective) => [
+                        'objective' => $objective,
+                        'topic' => $topic,
+                        'question_count' => 0,
+                    ]);
+            })
+            ->unique(fn ($item) => $item['objective']->id)
+            ->values();
+
+        if ($items->isEmpty()) {
+            return collect();
+        }
+
+        $remaining = min(
+            self::MAX_QUESTIONS,
+            $items->count() * self::QUESTIONS_PER_OBJECTIVE
+        );
+
+        // Fair round-robin allocation: every objective gets one before any
+        // objective gets a second, and so on, until the 20-question cap.
+        for ($round = 0; $round < self::QUESTIONS_PER_OBJECTIVE && $remaining > 0; $round++) {
+            foreach ($items as $index => $item) {
+                if ($remaining <= 0) {
+                    break;
+                }
+
+                $items[$index]['question_count']++;
+                $remaining--;
+            }
+        }
+
+        return $items;
+    }
+
+    protected function selectObjectiveQuestions(Collection $pool, int $limit, string $seed): Collection
+    {
+        if ($pool->isEmpty() || $limit <= 0) {
             return collect();
         }
 
         $ordered = $this->deterministicOrder($pool, $seed);
         $selected = collect();
 
-        // First pass: maximize learning-objective coverage.
-        foreach ($ordered->groupBy(fn ($q) => $q->learning_objective_id ?: 'unmapped') as $group) {
+        // Existing questions do not currently persist an explicit Bloom level.
+        // Maximize difficulty-level variation as the closest available signal.
+        foreach ($ordered->groupBy(fn ($q) => strtolower(trim((string) ($q->difficulty_level ?: 'unspecified')))) as $group) {
             if ($selected->count() >= $limit) {
                 break;
             }
             $selected->push($group->first());
-        }
-
-        // Second pass: maximize cognitive-level coverage using difficulty_level.
-        if ($selected->count() < $limit) {
-            $remaining = $ordered->whereNotIn('id', $selected->pluck('id'));
-            foreach ($remaining->groupBy(fn ($q) => $q->difficulty_level ?: 'unspecified') as $group) {
-                if ($selected->count() >= $limit) {
-                    break;
-                }
-                $selected->push($group->first());
-            }
         }
 
         if ($selected->count() < $limit) {

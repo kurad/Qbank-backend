@@ -18,7 +18,9 @@ use Throwable;
 
 class LearningPeriodFormativeService
 {
-    private const QUESTIONS_PER_TOPIC = 3;
+    private const QUESTIONS_PER_OBJECTIVE = 3;
+
+    private const MAX_QUESTIONS = 20;
 
     private const AUTO_GRADABLE_TYPES = [
         'mcq',
@@ -167,16 +169,27 @@ class LearningPeriodFormativeService
 
         $questionSet = collect();
         $generatedQuestionIds = [];
+        $objectivePlan = $this->objectiveQuestionPlan($period);
 
-        foreach ($period->topics as $assignment) {
-            $topic = $assignment->topic;
+        if ($objectivePlan->isEmpty()) {
+            throw new RuntimeException(
+                'No active learning objectives are available for this learning period.'
+            );
+        }
 
-            if (!$topic) {
+        foreach ($objectivePlan as $plan) {
+            $assignment = $plan['assignment'];
+            $topic = $plan['topic'];
+            $objective = $plan['objective'];
+            $required = (int) $plan['question_count'];
+
+            if ($required <= 0) {
                 continue;
             }
 
-            $topicQuestions = Question::query()
+            $objectiveQuestions = Question::query()
                 ->where('topic_id', $topic->id)
+                ->where('learning_objective_id', $objective->id)
                 ->whereNull('parent_question_id')
                 ->where('status', 'approved')
                 ->where('is_assessment_eligible', true)
@@ -184,23 +197,20 @@ class LearningPeriodFormativeService
                 ->with('learningObjective:id,topic_id,code,objective,status')
                 ->get();
 
-            // Prefer coverage across learning objectives before adding
-            // more questions from the same objective.
-            $selected = $this->balancedQuestionSelection(
-                $topicQuestions,
-                self::QUESTIONS_PER_TOPIC
+            $selected = $this->selectObjectiveQuestions(
+                $objectiveQuestions,
+                $required
             );
 
-            $missing = max(
-                0,
-                self::QUESTIONS_PER_TOPIC - $selected->count()
-            );
+            $missing = max(0, $required - $selected->count());
 
             if ($missing > 0) {
-                $generated = $this->generateGroundedQuestions(
+                $generated = $this->generateGroundedQuestionsForObjective(
                     $period,
                     $assignment,
-                    $missing
+                    $objective,
+                    $missing,
+                    $selected->count()
                 );
 
                 foreach ($generated as $question) {
@@ -209,14 +219,15 @@ class LearningPeriodFormativeService
                 }
             }
 
-            if ($selected->isEmpty()) {
+            if ($selected->count() < $required) {
                 throw new RuntimeException(
-                    'No grounded auto-gradable questions are available for topic: ' .
-                    ($topic->topic_name ?? $topic->id)
+                    'Not enough grounded auto-gradable questions could be prepared for learning objective: ' .
+                    ($objective->code ?: $objective->id) . ' - ' .
+                    ($objective->objective ?? $objective->description ?? '')
                 );
             }
 
-            $questionSet = $questionSet->concat($selected);
+            $questionSet = $questionSet->concat($selected->take($required));
         }
 
         if ($questionSet->isEmpty()) {
@@ -264,7 +275,8 @@ class LearningPeriodFormativeService
                         'This required formative assessment checks your understanding across all topics covered in this learning period. Answer every question.',
                     'question_blueprint' => [
                         'source' => 'automatic_period_formative',
-                        'questions_per_topic' => self::QUESTIONS_PER_TOPIC,
+                        'questions_per_objective' => self::QUESTIONS_PER_OBJECTIVE,
+                        'max_questions' => self::MAX_QUESTIONS,
                         'learning_period_id' => $period->id,
                         'subject' => $subject,
                     ],
@@ -379,56 +391,97 @@ class LearningPeriodFormativeService
         }
     }
 
-    protected function balancedQuestionSelection(
+    protected function objectiveQuestionPlan(LearningPeriod $period): Collection
+    {
+        $items = $period->topics
+            ->flatMap(function ($assignment) {
+                $topic = $assignment->topic;
+                if (!$topic) {
+                    return collect();
+                }
+
+                return ($topic->learningObjectives ?? collect())
+                    ->where('status', 'active')
+                    ->sortBy('order')
+                    ->map(fn ($objective) => [
+                        'assignment' => $assignment,
+                        'topic' => $topic,
+                        'objective' => $objective,
+                        'question_count' => 0,
+                    ]);
+            })
+            ->unique(fn ($item) => $item['objective']->id)
+            ->values();
+
+        if ($items->isEmpty()) {
+            return collect();
+        }
+
+        $remaining = min(
+            self::MAX_QUESTIONS,
+            $items->count() * self::QUESTIONS_PER_OBJECTIVE
+        );
+
+        for ($round = 0; $round < self::QUESTIONS_PER_OBJECTIVE && $remaining > 0; $round++) {
+            foreach ($items as $index => $item) {
+                if ($remaining <= 0) {
+                    break;
+                }
+
+                $items[$index]['question_count']++;
+                $remaining--;
+            }
+        }
+
+        return $items;
+    }
+
+    protected function selectObjectiveQuestions(
         Collection $questions,
         int $limit
     ): Collection {
-        if ($questions->isEmpty()) {
+        if ($questions->isEmpty() || $limit <= 0) {
             return collect();
         }
 
         $selected = collect();
 
-        $byObjective = $questions
-            ->groupBy(
-                fn ($question) =>
-                    $question->learning_objective_id
-                    ?: 'unmapped'
-            );
-
-        foreach ($byObjective as $group) {
+        // Existing question-bank records do not persist an explicit Bloom
+        // level yet, so maximize difficulty-level variation as the closest
+        // available signal of cognitive variety.
+        foreach (
+            $questions
+                ->shuffle()
+                ->groupBy(fn ($question) => strtolower(trim((string) ($question->difficulty_level ?: 'unspecified'))))
+            as $group
+        ) {
             if ($selected->count() >= $limit) {
                 break;
             }
 
-            $selected->push(
-                $group->shuffle()->first()
-            );
+            $selected->push($group->first());
         }
 
         if ($selected->count() < $limit) {
-            $more = $questions
-                ->whereNotIn('id', $selected->pluck('id'))
-                ->shuffle()
-                ->take($limit - $selected->count());
-
-            $selected = $selected->concat($more);
+            $selected = $selected->concat(
+                $questions
+                    ->whereNotIn('id', $selected->pluck('id'))
+                    ->shuffle()
+                    ->take($limit - $selected->count())
+            );
         }
 
         return $selected->take($limit)->values();
     }
 
-    protected function generateGroundedQuestions(
+    protected function generateGroundedQuestionsForObjective(
         LearningPeriod $period,
         $assignment,
-        int $count
+        $objective,
+        int $count,
+        int $existingCount = 0
     ): Collection {
         $topic = $assignment->topic;
-        $objectives = $topic?->learningObjectives
-            ?->where('status', 'active')
-            ?->values()
-            ?? collect();
-
         $materialText = KnowledgeChunk::query()
             ->where('topic_id', $topic->id)
             ->whereNotNull('content')
@@ -437,15 +490,10 @@ class LearningPeriodFormativeService
             ->pluck('content')
             ->implode("\n\n");
 
-        $objectiveText = $objectives
-            ->map(
-                fn ($objective) => trim(
-                    ($objective->code ? $objective->code . ': ' : '') .
-                    ($objective->objective ?? $objective->description ?? '')
-                )
-            )
-            ->filter()
-            ->implode("\n");
+        $objectiveText = trim(
+            ($objective->code ? $objective->code . ': ' : '') .
+            ($objective->objective ?? $objective->description ?? '')
+        );
 
         if (
             trim($materialText) === ''
@@ -462,13 +510,13 @@ class LearningPeriodFormativeService
         $topicName = $topic->topic_name ?? 'Topic';
 
         $prompt = <<<PROMPT
-Create exactly {$count} formative assessment questions for this learner.
+Create exactly {$count} additional formative assessment questions for this learner, all targeting the SINGLE learning objective below.
 
 SUBJECT: {$subject}
 UNIT: {$unit}
 TOPIC: {$topicName}
 
-ACTIVE LEARNING OBJECTIVES:
+TARGET LEARNING OBJECTIVE:
 {$objectiveText}
 
 TEACHER/CURRICULUM MATERIAL:
@@ -480,7 +528,9 @@ STRICT RULES:
 - These questions are for an automatically generated mandatory formative check.
 - Questions must be objectively auto-gradable.
 - Allowed types: mcq, true_false, fill_blank, short_answer.
-- Prefer understanding and application over trivial recall when the source supports it.
+- Vary cognitive demand across the objective. Across the complete set for this objective, aim for this progression where appropriate: Remember/Understand -> Apply -> Analyze/Evaluate.
+- {$existingCount} question(s) for this objective have already been selected from the question bank; make these additional questions complement them rather than repeat them.
+- Do not force a high Bloom level when the objective itself does not support it; remain faithful to the objective and supplied material.
 - For MCQ provide exactly four plausible options and one unambiguous correct answer.
 - correct_answer must always be an array of accepted answer strings.
 - Use 1 mark per question.
@@ -549,9 +599,9 @@ PROMPT;
             );
         }
 
-        return $items->map(function ($item, $index) use (
+        return $items->map(function ($item) use (
             $topic,
-            $objectives,
+            $objective,
             $period
         ) {
             $type = strtolower(
@@ -581,10 +631,6 @@ PROMPT;
             if ($type !== 'mcq' && $type !== 'true_false') {
                 $options = [];
             }
-
-            $objective = $objectives->isNotEmpty()
-                ? $objectives[$index % $objectives->count()]
-                : null;
 
             return Question::create([
                 'topic_id' => $topic->id,
