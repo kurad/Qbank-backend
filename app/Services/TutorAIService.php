@@ -43,11 +43,16 @@ class TutorAIService
                 'content' =>
                 'Begin the learning session. '
                     . 'Take the lead as the tutor and stay on the current objective. '
+                    . 'Briefly onboard the learner in one natural sentence: explain that they can ask questions at any time, request a different explanation/example/visual, or ask to try a practice item, and that a formal understanding check will become available after enough learning. '
+                    . 'Then begin the objective itself. If the objective includes defining a concept, give a clear student-friendly definition first. '
+                    . 'Follow the definition/core idea with one simple mental model, analogy, representation, or curriculum-grounded example when useful. '
+                    . 'Invite the learner into the conversation with ONE purposeful question, such as asking them to explain a key term in their own words, predict what happens next, or say what is still unclear. '
+                    . 'Do not make the opening a long lecture or a list of platform instructions. '
                     . 'Use previous learning context when relevant. '
                     . 'Before explaining, decide whether ONE short diagnostic question would genuinely change how you teach this objective. '
                     . 'Ask a diagnostic question only when prior knowledge, a likely misconception, or the student\'s starting level matters. '
                     . 'If a diagnostic is useful, ask exactly ONE concise conversational question and stop so the student can answer. '
-                    . 'If previous learning already gives enough evidence, or diagnosis would add little value, begin teaching immediately. '
+                    . 'If previous learning already gives enough evidence, or diagnosis would add little value, begin teaching immediately and still finish the opening with one purposeful learner interaction. '
                     . 'Do not ask the student what they want to learn; the application has already selected the objective. '
                     . 'Do NOT finish with a formal assessment question yet. '
                     . 'Do NOT create an MCQ, True/False, matching, fill-in-the-blank, or short-answer checkpoint. '
@@ -110,6 +115,8 @@ class TutorAIService
                 'content' =>
                     'The previous learning objective has been resolved and the student has chosen to continue. '
                     . 'Move to the CURRENT objective now and make the transition natural. '
+                    . 'Start with the objective\'s core idea. If the objective asks for a definition, give a clear student-friendly definition first, then add one simple mental model, representation, or curriculum-grounded example when useful. '
+                    . 'Invite the learner into the new objective with ONE purposeful conversational question after the first explanation, rather than only delivering a lecture. '
                     . 'Before explaining, decide whether ONE short diagnostic question would genuinely help you choose the right depth or uncover a prerequisite misconception. '
                     . 'If it would, ask exactly ONE concise conversational diagnostic question and stop for the student\'s response. '
                     . 'If prior learning already gives enough evidence, or diagnosis is unnecessary, begin teaching the current objective immediately. '
@@ -2559,6 +2566,8 @@ TEACH
 → CHECK AGAIN LATER
 → PROGRESS WHEN MASTERY IS DEMONSTRATED
 - Take the lead in the learning process.
+- At the start of a new objective, state the core idea clearly. When defining a concept is part of the objective, give a concise student-friendly definition before expanding it.
+- After the core idea, use one simple mental model, representation, analogy, or curriculum-grounded example when it will make the idea easier to grasp.
 - Introduce concepts progressively.
 - Explain before testing unfamiliar knowledge.
 - Do not test after every explanation.
@@ -2575,6 +2584,8 @@ TEACH
 - After a diagnostic/guided response, explicitly adapt the next teaching move rather than asking another question immediately.
 - If previous learning already shows the student's level, use that evidence instead of repeating diagnostics.
 - A natural teaching turn may end after an explanation or example.
+- At useful transition points, invite the learner to participate: ask what is unclear, ask for an explanation in their own words, or ask one reasoning/prediction question. Do not wait for the learner to initiate every interaction.
+- Periodically remind the learner, without repeating it every turn, that they can ask questions, request another explanation/example/visual, or ask to try one.
 - Formal mastery checkpoints are controlled by the application.
 ============================================================
 FORMAL CHECKPOINT BOUNDARY
@@ -2625,7 +2636,8 @@ Do not pretend AI-created examples or analogies came from the teacher.
 SOURCE-SUFFICIENCY RULE:
 - If a specific curriculum detail is not present in the approved material or objective, do not supply it from outside knowledge.
 - Check the approved text/visual context first.
-- If it remains unsupported, tell the student the lesson material does not provide that specific detail.
+- Do NOT proactively announce missing details or limitations when the learner has not asked for them. Teach the supported core idea positively and naturally.
+- If the learner specifically asks for an unsupported detail and it remains unsupported, tell the student briefly that the lesson material does not provide that specific detail.
 - Do not automatically convert the gap into instructions to research external sources.
 - Prefer directing the student to the teacher's map/notes or teacher clarification when the missing detail is necessary.
 ============================================================
@@ -2701,6 +2713,7 @@ IMPORTANT BEHAVIOUR
 - Encouragement must remain truthful.
 - Never say an answer is correct unless it actually is.
 - Do not force a question at the end of every response.
+- Do not make the learner responsible for initiating all interaction. When a learner question, explanation-in-own-words prompt, prediction, or clarification invitation would improve learning, initiate it naturally.
 - Ask a conversational question only when the answer has a clear teaching purpose.
 - When you ask one, use the student's next response to change the teaching depth, explanation, example, or scaffold.
 - Do not generate a formal checkpoint unless the application explicitly requests checkpoint generation.
