@@ -20,6 +20,12 @@ class EnsureTokenNotExpired
             return response()->json(['message' => 'Unauthenticated.'], 401);
         }
 
+        $user = $token->tokenable;
+        if (!$user || $user->status !== 'active') {
+            $token->delete();
+            return response()->json(['message' => 'Account access is disabled.'], 403);
+        }
+
         $ttlMinutes = 60;
 
         $expiredAt = $token->created_at->copy()->addMinutes($ttlMinutes);

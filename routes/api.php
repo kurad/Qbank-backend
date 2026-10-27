@@ -24,6 +24,7 @@ use App\Http\Controllers\QuestionController;
 use App\Http\Controllers\QuestionnaireImportController;
 use App\Http\Controllers\SchoolController;
 use App\Http\Controllers\SchoolStudentController;
+use App\Http\Controllers\SystemSchoolUserController;
 use App\Http\Controllers\StudentAnswerController;
 use App\Http\Controllers\StudentAssessmentController;
 use App\Http\Controllers\StudentResultsController;
@@ -145,6 +146,11 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
 
 
     // School-level student management. System Admins do not manage student accounts.
+    // System Admin: school-scoped teacher/student access management.
+    Route::get('/system/schools/user-options', [SystemSchoolUserController::class, 'schools']);
+    Route::get('/system/schools/{school}/users', [SystemSchoolUserController::class, 'index']);
+    Route::patch('/system/schools/{school}/users/{user}/status', [SystemSchoolUserController::class, 'updateStatus'])->middleware('throttle:20,1');
+
     Route::get('/school-management/students', [SchoolStudentController::class, 'index']);
     Route::patch('/school-management/students/{student}/status', [SchoolStudentController::class, 'updateStatus']);
 

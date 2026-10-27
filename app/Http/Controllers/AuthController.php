@@ -245,6 +245,10 @@ class AuthController extends Controller
         }
 
         $user = $token->tokenable;
+        if (!$user instanceof User || $user->status !== 'active') {
+            $token->delete();
+            return response()->json(['message' => 'Account access is disabled.'], 403);
+        }
 
         $ttlMinutes = 60;
         $gracePeriodMinutes = 30;
