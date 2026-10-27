@@ -33,6 +33,7 @@ use App\Http\Controllers\TeacherProgressController;
 use App\Http\Controllers\TeacherTutorHistoryController;
 use App\Http\Controllers\TopicController;
 use App\Http\Controllers\TutorController;
+use App\Http\Controllers\EnglishWritingController;
 use App\Http\Controllers\UnitController;
 use App\Models\User;
 use Illuminate\Auth\Events\Verified;
@@ -298,6 +299,9 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     Route::get('/tutor/sessions', [TutorController::class, 'sessions']);
     Route::get('/tutor/sessions/{tutorSession}', [TutorController::class, 'showSession']);
     Route::post('/tutor/sessions/{tutorSession}/messages', [TutorController::class, 'message']);
+    // English-only writing workspace: additive; does not alter tutor progress or messages.
+    Route::get('/tutor/sessions/{tutorSession}/english-writing', [EnglishWritingController::class, 'index']);
+    Route::post('/tutor/sessions/{tutorSession}/english-writing', [EnglishWritingController::class, 'store'])->middleware('throttle:8,1');
     Route::get('/tutor/messages/{tutorMessage}/attachments/{index}', [TutorController::class, 'messageAttachment'])->whereNumber('index');
     Route::post('/tutor/sessions/{tutorSession}/end', [TutorController::class, 'endSession']);
     Route::post('/tutor/sessions/{tutorSession}/continue', [TutorController::class, 'continueLearning']);
@@ -540,6 +544,9 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     Route::get('/teacher/tutor-history', [TeacherTutorHistoryController::class, 'index']);
     Route::get('/teacher/tutor-history/{tutorSession}', [TeacherTutorHistoryController::class, 'show']);
     Route::post('/teacher/tutor-history/{tutorSession}/analyze', [TeacherTutorHistoryController::class, 'analyze'])->middleware('throttle:6,1');
+    // Phase 1C: English writing draft history and teacher reviews (existing teacher authorization applies).
+    Route::get('/teacher/tutor-history/{tutorSession}/writing', [TeacherTutorHistoryController::class, 'writing']);
+    Route::put('/teacher/tutor-history/{tutorSession}/writing/{draft}/review', [TeacherTutorHistoryController::class, 'reviewWriting'])->middleware('throttle:12,1');
 
     Route::get('/teacher/support/needs-review', [LearningSupportController::class, 'teacherNeedsReview']);
     Route::get('/teacher/support/threads', [LearningSupportController::class, 'teacherThreads']);

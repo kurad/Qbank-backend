@@ -390,6 +390,7 @@ PROMPT;
             $type
         );
         $notationPolicy = $this->subjectNotationPolicy($session);
+        $notationPolicy .= "\n" . $this->englishLearningPolicy($session);
 
         $systemPrompt = <<<PROMPT
 You are the checkpoint-generation component of an adaptive school AI Tutor.
@@ -610,6 +611,7 @@ PROMPT;
                 $currentObjective
             );
         $notationPolicy = $this->subjectNotationPolicy($session);
+        $notationPolicy .= "\n" . $this->englishLearningPolicy($session);
         $teachingMediaPolicy = $this->teachingMediaPolicy($session);
         $materialLearningMap = $this->materialLearningMap($session);
         $checkpointRetryAllowed = (bool) ($progress['checkpoint_retry_allowed'] ?? false);
@@ -1106,6 +1108,7 @@ PROMPT;
         }
 
         $notationPolicy = $this->subjectNotationPolicy($session);
+        $notationPolicy .= "\n" . $this->englishLearningPolicy($session);
         $teachingMediaPolicy = $this->teachingMediaPolicy($session);
         $materialLearningMap = $this->materialLearningMap($session);
 
@@ -1429,6 +1432,7 @@ PROMPT;
             6
         );
         $notationInterpretation = $this->notationInterpretationPolicy($session);
+        $notationInterpretation .= "\n" . $this->englishEvaluationPolicy($session);
 
         $systemPrompt = <<<PROMPT
 You are the learning-evaluation component of a guided AI tutor.
@@ -1656,6 +1660,7 @@ PROMPT;
         $teacherContext =
             $this->formatChunks($chunks);
         $notationInterpretation = $this->notationInterpretationPolicy($session);
+        $notationInterpretation .= "\n" . $this->englishEvaluationPolicy($session);
 
         $systemPrompt = <<<PROMPT
 You are the formal short-answer evaluation component of an adaptive
@@ -1821,6 +1826,54 @@ PROMPT;
      * This controls HOW approved curriculum content is formatted.
      * It must never be used to expand WHAT belongs to the lesson.
      */
+    /**
+     * English-language pedagogy only; other subjects retain their existing prompts.
+     * Never grants permission to introduce curriculum content outside teacher materials.
+     */
+    protected function englishLearningPolicy(TutorSession $session): string
+    {
+        $subject = strtolower(trim((string) ($session->gradeSubject?->subject?->name ?? '')));
+        if (!preg_match('/\benglish\b/u', $subject)) {
+            return '';
+        }
+
+        return <<<'POLICY'
+============================================================
+ENGLISH-LANGUAGE LEARNING SUPPORT (ONLY FOR ENGLISH)
+============================================================
+- Teach the CURRENT approved learning objective, using teacher material for the knowledge and target language skills. Do not invent new syllabus requirements.
+- For grammar and sentence-construction practice, invite the learner to notice the error and attempt a correction before giving the complete corrected sentence. Provide one specific clue or a short contrasting example where helpful.
+- When a learner asks for a correction explicitly, provide it, explain the relevant rule in plain language, and invite one short independent application. Never withhold essential explanation.
+- Distinguish genuine grammar/spelling errors from acceptable dialect, register, stylistic choice, or harmless punctuation variation. Do not insist on a single exact phrase when alternatives are valid.
+- In comprehension activities, anchor claims and evidence in the provided passage; distinguish literal meaning from inference, and ask for textual support when appropriate.
+- In writing activities, focus feedback on the objective and the learner's own draft: clarity, sentence structure, organization, coherence, appropriate vocabulary, and conventions only where relevant. Prioritize up to two actionable improvements at a time.
+- Preserve the student's meaning and voice. Never silently rewrite their whole composition; support planning, drafting and revision as separate learning steps.
+- Be encouraging but precise: quote a short excerpt of the student's work, identify what to improve and why, and offer an opportunity to revise.
+- A guided conversational correction is NOT evidence of formal mastery; leave checkpoint creation, grading and progression to the existing application flow.
+POLICY;
+    }
+
+    /** English-specific grading interpretation, without changing scoring or schemas. */
+    protected function englishEvaluationPolicy(TutorSession $session): string
+    {
+        $subject = strtolower(trim((string) ($session->gradeSubject?->subject?->name ?? '')));
+        if (!preg_match('/\benglish\b/u', $subject)) {
+            return '';
+        }
+
+        return <<<'POLICY'
+============================================================
+ENGLISH EVALUATION FAIRNESS
+============================================================
+- Evaluate ONLY the target skill in the approved objective and the specific question, not overall English fluency unless the objective requires it.
+- Accept grammatically and semantically equivalent answers, reasonable spelling or punctuation variants, and appropriate alternative phrasing where the target skill is demonstrated.
+- Do not accept a response that changes the required meaning or fails the target grammatical distinction merely because it shares keywords with the expected answer.
+- For writing tasks, evaluate the specified criteria against the student's actual draft; avoid inventing a rubric, genre convention, word count, or mandatory vocabulary absent from the task or teacher material.
+- Treat errors unrelated to the measured objective as optional formative feedback, not automatic grounds to mark the answer incorrect.
+- Give concise, evidence-based diagnostic feedback and name one concrete misconception when supported; preserve the application's required JSON output, classification and scoring conventions.
+POLICY;
+    }
+
     protected function subjectNotationPolicy(
         TutorSession $session
     ): string {
@@ -2542,6 +2595,7 @@ TEXT;
                 $currentObjective
             );
         $notationPolicy = $this->subjectNotationPolicy($session);
+        $notationPolicy .= "\n" . $this->englishLearningPolicy($session);
         $teachingMediaPolicy = $this->teachingMediaPolicy($session);
         $materialLearningMap = $this->materialLearningMap($session);
 

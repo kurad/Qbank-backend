@@ -151,6 +151,41 @@ class TeacherTutorHistoryController extends Controller
         return response()->json(['data' => $review, 'cached' => false], 201);
     }
 
+    // Phase 1C: Teacher review uses the existing enrolled-student + teaching-area policy.
+    public function writing(Request $request, TutorSession $tutorSession)
+    {
+        abort_unless($this->baseQuery($request->user())->whereKey($tutorSession->id)->exists(), 403);
+        $tutorSession->loadMissing('gradeSubject.subject');
+        abort_unless(preg_match('/\benglish\b/i', (string) ($tutorSession->gradeSubject?->subject?->name ?? '')) === 1, 404);
+        $drafts = \App\Models\EnglishWritingDraft::query()
+            ->where('tutor_session_id', $tutorSession->id)
+            ->where('student_id', $tutorSession->student_id)
+            ->with(['teacherReviews.teacher:id,name'])
+            ->orderBy('revision_number')->get();
+        $drafts->each(function ($draft) use ($request) {
+            $draft->teacherReviews->each(fn ($review) => $review->setAttribute('is_mine', (int) $review->teacher_id === (int) $request->user()->id));
+        });
+        return response()->json(['data' => $drafts]);
+    }
+
+    public function reviewWriting(Request $request, TutorSession $tutorSession, \App\Models\EnglishWritingDraft $draft)
+    {
+        abort_unless($this->baseQuery($request->user())->whereKey($tutorSession->id)->exists(), 403);
+        $tutorSession->loadMissing('gradeSubject.subject');
+        abort_unless(preg_match('/\benglish\b/i', (string) ($tutorSession->gradeSubject?->subject?->name ?? '')) === 1, 404);
+        abort_unless((int) $draft->tutor_session_id === (int) $tutorSession->id
+            && (int) $draft->student_id === (int) $tutorSession->student_id, 404);
+        $data = $request->validate([
+            'comment' => ['required', 'string', 'min:3', 'max:6000'],
+            'status' => ['required', 'in:needs_revision,progressing,achieved'],
+        ]);
+        $review = \App\Models\EnglishWritingReview::updateOrCreate(
+            ['english_writing_draft_id' => $draft->id, 'teacher_id' => $request->user()->id],
+            ['comment' => $data['comment'], 'status' => $data['status']]
+        );
+        return response()->json(['data' => $review->load('teacher:id,name')]);
+    }
+
     public function show(Request $request, TutorSession $tutorSession)
     {
         abort_unless($this->baseQuery($request->user())->whereKey($tutorSession->id)->exists(), 403);
