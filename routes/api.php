@@ -191,6 +191,7 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
 
     Route::get('/grade-levels/{gradeId}/subjects', [SubjectController::class, 'subjectsByGrade']);
     Route::get('/schools', [SchoolController::class, 'index']);
+    Route::get('/schools/{school}', [SchoolController::class, 'show']);
     Route::post('/schools', [SchoolController::class, 'store']);
     Route::match(['put', 'patch'], '/schools/{id}', [SchoolController::class, 'update']);
     Route::get('/students', [AuthController::class, 'getStudents']);
