@@ -532,6 +532,7 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     Route::post('/curriculum-analyses/{curriculumAnalysis}/approve', [CurriculumAnalysisController::class, 'approve']);
     Route::post('/course-materials/{courseMaterial}/extract', [CourseMaterialController::class, 'extract']);
     Route::post('/course-materials/{courseMaterial}/analyze-content', [CourseMaterialController::class, 'analyzeContent']);
+    Route::post('/course-materials/{courseMaterial}/reanalyze',[CourseMaterialController::class, 'reanalyze']);
     Route::get('/course-materials/{courseMaterial}/processing-status', [CourseMaterialController::class, 'processingStatus']);
 
 
