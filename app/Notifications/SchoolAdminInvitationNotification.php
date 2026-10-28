@@ -32,7 +32,7 @@ class SchoolAdminInvitationNotification extends Notification
 
     return (new MailMessage)
         ->subject('School Admin invitation - ' . $schoolName)
-        ->greeting('You have been invited to RevisionHub')
+        ->greeting('You have been invited to join RevisionHub')
         ->line('You have been invited to become the School Administrator for ' . $schoolName . '.')
         ->line('As School Admin, you will be able to onboard teachers and manage your school\'s students, subjects and topics.')
         ->action('Accept School Admin invitation', $url)
