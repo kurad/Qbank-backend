@@ -34,11 +34,11 @@ class TutorCheckpointService
     {
         $this->ensureActive($session);
 
-        $objective = $this->sessions->currentObjective($session);
+        $objective = $this->sessions->prepareCurrentObjectiveForLearning($session);
 
         if (!$objective) {
             throw ValidationException::withMessages([
-                'session' => 'There is no active learning objective.',
+                'session' => 'There is no supported learning goal available for a learning check.',
             ]);
         }
 

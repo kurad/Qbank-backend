@@ -21,6 +21,8 @@ class TutorSessionObjective extends Model
         'attempts',
         'correct_attempts',
         'notes',
+        'support_status',
+        'support_reason',
     ];
 
     protected $casts = [

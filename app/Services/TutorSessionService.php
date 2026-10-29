@@ -103,6 +103,8 @@ class TutorSessionService
                     'attempts' => 0,
                     'correct_attempts' => 0,
                     'notes' => null,
+                    'support_status' => 'unknown',
+                    'support_reason' => null,
                 ]);
             }
 
@@ -113,13 +115,35 @@ class TutorSessionService
             $this->topicLearning->markStarted($student, $session);
         }
 
-        $opening = $this->ai->opening($session);
+        $preparedObjective = $this->prepareCurrentObjectiveForLearning($session);
 
-        $session->messages()->create([
-            'role' => 'assistant',
-            'message_type' => 'opening',
-            'content' => $opening,
-        ]);
+        if ($preparedObjective) {
+            $opening = $this->ai->opening($session->fresh());
+
+            $session->messages()->create([
+                'role' => 'assistant',
+                'message_type' => 'opening',
+                'content' => $opening,
+            ]);
+        } else {
+            /*
+             * Every remaining goal was a material gap. Finish the Tutor
+             * session without marking the topic mastered.
+             */
+            $session->update([
+                'status' => 'completed',
+                'ended_at' => now(),
+                'last_activity_at' => now(),
+            ]);
+
+            if ($sessionMode !== 'review') {
+                $this->topicLearning->markNeedsReview(
+                    $student,
+                    $session,
+                    'The approved material does not yet provide enough information to teach one or more learning goals.'
+                );
+            }
+        }
 
         $session->update(['last_activity_at' => now()]);
 
@@ -134,7 +158,7 @@ class TutorSessionService
             ->sortBy('objective_order')
             ->first(fn ($objective) => !in_array(
                 strtolower((string) $objective->status),
-                ['completed', 'mastered', 'needs_review'],
+                ['completed', 'mastered', 'needs_review', 'material_gap'],
                 true
             ));
     }
@@ -149,8 +173,94 @@ class TutorSessionService
             ->sortBy('objective_order')
             ->first(fn ($objective) =>
                 (int) $objective->objective_order > (int) $current->objective_order
-                && !in_array(strtolower((string) $objective->status), ['completed', 'mastered', 'needs_review'], true)
+                && !in_array(strtolower((string) $objective->status), ['completed', 'mastered', 'needs_review', 'material_gap'], true)
             );
+    }
+
+    /**
+     * Ensure the active learning goal is supported by approved teacher
+     * material before teaching or assessment begins.
+     *
+     * Unsupported goals are recorded as `material_gap` and skipped. This is
+     * deliberately separate from `needs_review`: a material gap is a content
+     * coverage issue, not evidence that the learner struggled.
+     */
+    public function prepareCurrentObjectiveForLearning(
+        TutorSession $session
+    ): ?TutorSessionObjective {
+        $session = $session->fresh()->load('objectives.learningObjective');
+
+        $maxPasses = max(1, $session->objectives->count() + 1);
+
+        for ($pass = 0; $pass < $maxPasses; $pass++) {
+            $current = $this->currentObjective($session);
+
+            if (!$current) {
+                return null;
+            }
+
+            $supportStatus = strtolower((string) ($current->support_status ?? 'unknown'));
+
+            if ($supportStatus === 'unknown') {
+                $support = $this->ai->assessObjectiveMaterialSupport(
+                    $session,
+                    $current
+                );
+
+                $current->support_status = $support['status'] ?? 'supported';
+                $current->support_reason = $support['reason'] ?? null;
+                $current->save();
+
+                $supportStatus = strtolower((string) $current->support_status);
+            }
+
+            if ($supportStatus !== 'unsupported') {
+                if ($current->status === 'not_started') {
+                    $current->status = 'in_progress';
+                    $current->started_at = $current->started_at ?? now();
+                    $current->save();
+                }
+
+                return $current->fresh()->load('learningObjective');
+            }
+
+            $current->status = 'material_gap';
+            $current->completed_at = now();
+            $current->save();
+
+            $goalText = $current->learningObjective?->objective
+                ?: 'this learning goal';
+
+            $session->messages()->create([
+                'role' => 'assistant',
+                'message_type' => 'material_gap',
+                'content' =>
+                    'This learning goal is part of the topic, but the approved learning material does not currently provide enough information for me to teach and check it fairly. '
+                    . 'I will leave it for your teacher to update rather than fill the gap with outside information.',
+                'metadata' => [
+                    'learning_objective_id' => $current->learning_objective_id,
+                    'learning_goal' => $goalText,
+                    'support_status' => 'unsupported',
+                    'support_reason' => $current->support_reason,
+                ],
+            ]);
+
+            $session = $session->fresh()->load('objectives.learningObjective');
+            $next = $this->nextObjective($session, $current);
+
+            if ($next) {
+                $next->status = 'in_progress';
+                $next->started_at = $next->started_at ?? now();
+                $next->save();
+
+                $session = $session->fresh()->load('objectives.learningObjective');
+                continue;
+            }
+
+            return null;
+        }
+
+        return $this->currentObjective($session);
     }
 
     public function processResponseEvaluation(
@@ -393,7 +503,7 @@ class TutorSessionService
 
         if ($status === 'completed') {
             $hasUnfinished = $session->objectives()
-                ->whereNotIn('status', ['completed', 'mastered', 'needs_review'])
+                ->whereNotIn('status', ['completed', 'mastered', 'needs_review', 'material_gap'])
                 ->exists();
 
             abort_if(
@@ -443,11 +553,21 @@ class TutorSessionService
             $wasCovered = $existingState?->progression_status === 'covered';
 
             $hasReview = $session->objectives()
-                ->where('status', 'needs_review')
+                ->whereIn('status', ['needs_review', 'material_gap'])
+                ->exists();
+
+            $hasMaterialGap = $session->objectives()
+                ->where('status', 'material_gap')
                 ->exists();
 
             if ($hasReview) {
-                $this->topicLearning->markNeedsReview($student, $session);
+                $this->topicLearning->markNeedsReview(
+                    $student,
+                    $session,
+                    $hasMaterialGap
+                        ? 'One or more learning goals could not be taught because the approved material did not provide enough information.'
+                        : null
+                );
             } else {
                 $this->topicLearning->markMastered($student, $session);
             }
@@ -623,7 +743,7 @@ class TutorSessionService
 
         DB::transaction(function () use ($student, $session, $reason) {
             $session->objectives()
-                ->whereNotIn('status', ['completed', 'mastered', 'needs_review'])
+                ->whereNotIn('status', ['completed', 'mastered', 'needs_review', 'material_gap'])
                 ->update([
                     'status' => 'needs_review',
                     'completed_at' => now(),

@@ -388,7 +388,7 @@ class TutorController extends Controller
                 $tutorSession
             );
 
-        abort_unless($currentObjective, 422, 'There is no active learning objective in this session.');
+        abort_unless($currentObjective, 422, 'There is no supported learning goal available in this session.');
 
         $knowledge =
             $this->ai->teachingContext(
@@ -573,7 +573,7 @@ class TutorController extends Controller
 
         $currentObjective =
 
-            $this->sessionsService->currentObjective(
+            $this->sessionsService->prepareCurrentObjectiveForLearning(
 
                 $tutorSession
 
@@ -1094,14 +1094,14 @@ class TutorController extends Controller
         );
 
         $currentObjective =
-            $this->sessionsService->currentObjective(
+            $this->sessionsService->prepareCurrentObjectiveForLearning(
                 $tutorSession
             );
 
         abort_unless(
             $currentObjective,
             422,
-            'There is no active learning objective to introduce.'
+            'There is no supported learning goal available to introduce.'
         );
 
         /*
@@ -2046,6 +2046,10 @@ class TutorController extends Controller
             'objective_order' => $sessionObjective->objective_order,
 
             'status' => $sessionObjective->status,
+
+            'support_status' => $sessionObjective->support_status ?? 'unknown',
+
+            'support_reason' => $sessionObjective->support_reason,
 
             'objective' => $objective ? [
 

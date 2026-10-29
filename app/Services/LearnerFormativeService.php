@@ -10,6 +10,7 @@ use App\Models\LearningPeriod;
 use App\Models\Question;
 use App\Models\StudentAssessment;
 use App\Models\TutorSession;
+use App\Models\TutorSessionObjective;
 use App\Models\User;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -169,10 +170,10 @@ class LearnerFormativeService
         $selected = collect();
         $shortages = [];
 
-        $objectivePlan = $this->objectiveQuestionPlan($period);
+        $objectivePlan = $this->objectiveQuestionPlan($period, $student);
 
         if ($objectivePlan->isEmpty()) {
-            throw new RuntimeException('No active learning objectives are available for this learning period.');
+            throw new RuntimeException('No supported learning goals are available for this learning period.');
         }
 
         foreach ($objectivePlan as $plan) {
@@ -218,7 +219,7 @@ class LearnerFormativeService
                 ->implode(', ');
 
             throw new RuntimeException(
-                'There are not enough approved assessment questions for: ' . $details . '. Add more approved questions mapped to those learning objectives and try again.'
+                'There are not enough approved assessment questions for: ' . $details . '. Add more approved questions mapped to those learning goals and try again.'
             );
         }
 
@@ -399,8 +400,20 @@ class LearnerFormativeService
         return $assessment;
     }
 
-    protected function objectiveQuestionPlan(LearningPeriod $period): Collection
+    protected function objectiveQuestionPlan(LearningPeriod $period, User $student): Collection
     {
+        $materialGapObjectiveIds = TutorSessionObjective::query()
+            ->where('status', 'material_gap')
+            ->whereHas('session', function ($query) use ($student, $period) {
+                $query
+                    ->where('student_id', $student->id)
+                    ->where('learning_period_id', $period->id)
+                    ->where('session_mode', 'learning');
+            })
+            ->pluck('learning_objective_id')
+            ->unique()
+            ->values();
+
         $items = $period->topics
             ->flatMap(function ($assignment) {
                 $topic = $assignment->topic;
@@ -417,6 +430,9 @@ class LearnerFormativeService
                         'question_count' => 0,
                     ]);
             })
+            ->reject(fn ($item) =>
+                $materialGapObjectiveIds->contains((int) $item['objective']->id)
+            )
             ->unique(fn ($item) => $item['objective']->id)
             ->values();
 

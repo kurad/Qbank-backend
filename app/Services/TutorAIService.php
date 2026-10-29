@@ -1,6 +1,7 @@
 <?php
 namespace App\Services;
 use App\Models\TutorSession;
+use App\Models\TutorSessionObjective;
 use App\Services\AI\AIGateway;
 use Illuminate\Support\Collection;
 class TutorAIService
@@ -9,6 +10,187 @@ class TutorAIService
         protected AIGateway $ai,
         protected TutorKnowledgeService $knowledge
     ) {}
+
+    /**
+     * Determine whether the APPROVED teacher material contains enough
+     * information to teach and fairly assess the supplied learning goal.
+     *
+     * This check is deliberately curriculum-boundary only. The AI may compare
+     * the goal against the supplied approved material, but it must not use its
+     * own subject knowledge to fill gaps.
+     */
+    public function assessObjectiveMaterialSupport(
+        TutorSession $session,
+        ?TutorSessionObjective $sessionObjective = null
+    ): array {
+        $this->loadTutorContext($session);
+
+        $sessionObjective ??= $this->currentObjective($session);
+        $objective = $sessionObjective?->learningObjective;
+
+        if (!$sessionObjective || !$objective) {
+            return [
+                'status' => 'unsupported',
+                'reason' => 'No active learning goal is available.',
+                'supported_focus' => [],
+                'missing_focus' => [],
+            ];
+        }
+
+        $query = trim(implode(' ', array_filter([
+            $objective->code,
+            $objective->objective,
+            $objective->description,
+        ])));
+
+        $chunks = $this->knowledge->retrieve(
+            $session,
+            $query,
+            8
+        );
+
+        if ($chunks->isEmpty()) {
+            return [
+                'status' => 'unsupported',
+                'reason' => 'No approved material was found for this learning goal.',
+                'supported_focus' => [],
+                'missing_focus' => array_values(array_filter([
+                    $objective->objective,
+                    $objective->description,
+                ])),
+            ];
+        }
+
+        $context = $this->formatChunks($chunks);
+
+        $prompt = <<<PROMPT
+You are checking curriculum coverage for a school AI Tutor.
+
+Your ONLY task is to compare ONE learning goal with APPROVED TEACHER MATERIAL.
+Do not teach the subject.
+Do not add facts from your own knowledge.
+Do not assume that standard textbook knowledge is present unless it appears in
+the supplied material.
+
+Classify the material coverage as exactly one of:
+
+supported
+- The approved material contains enough information to teach the essential
+  knowledge/skill required by the learning goal and to assess it fairly.
+
+partial
+- The approved material supports a meaningful part of the learning goal, but
+  one or more requested components are missing. The Tutor may teach and assess
+  only the supported part; missing components must not be required.
+
+unsupported
+- The approved material lacks the essential information needed to teach the
+  learning goal fairly. The learner should not be assessed on this goal until
+  the material is updated.
+
+IMPORTANT:
+- The wording of the learning goal is NOT evidence that the missing subject
+  knowledge exists in the material.
+- Do not use outside knowledge to infer, reconstruct, or supply missing facts.
+- Prefer "partial" over "unsupported" when the core idea can genuinely be
+  taught from the material.
+- Use "unsupported" only when a fair lesson/check cannot be built from the
+  approved material.
+
+LEARNING GOAL
+Code: {$objective->code}
+Goal: {$objective->objective}
+Description: {$objective->description}
+
+APPROVED TEACHER MATERIAL
+{$context}
+
+Return only JSON.
+PROMPT;
+
+        try {
+            $result = $this->ai->json([
+                [
+                    'role' => 'system',
+                    'content' => $prompt,
+                ],
+                [
+                    'role' => 'user',
+                    'content' => 'Evaluate only whether the approved material sufficiently supports this learning goal.',
+                ],
+            ], [
+                'type' => 'object',
+                'additionalProperties' => false,
+                'properties' => [
+                    'status' => [
+                        'type' => 'string',
+                        'enum' => ['supported', 'partial', 'unsupported'],
+                    ],
+                    'reason' => [
+                        'type' => 'string',
+                    ],
+                    'supported_focus' => [
+                        'type' => 'array',
+                        'items' => ['type' => 'string'],
+                    ],
+                    'missing_focus' => [
+                        'type' => 'array',
+                        'items' => ['type' => 'string'],
+                    ],
+                ],
+                'required' => [
+                    'status',
+                    'reason',
+                    'supported_focus',
+                    'missing_focus',
+                ],
+            ], [
+                'temperature' => 0,
+                'max_tokens' => 700,
+                '_usage_feature' => 'Tutor Material Support Check',
+            ]);
+
+            $status = strtolower(trim((string) ($result['status'] ?? 'supported')));
+            if (!in_array($status, ['supported', 'partial', 'unsupported'], true)) {
+                $status = 'supported';
+            }
+
+            return [
+                'status' => $status,
+                'reason' => trim((string) ($result['reason'] ?? '')),
+                'supported_focus' => array_values(array_filter(
+                    is_array($result['supported_focus'] ?? null)
+                        ? $result['supported_focus']
+                        : []
+                )),
+                'missing_focus' => array_values(array_filter(
+                    is_array($result['missing_focus'] ?? null)
+                        ? $result['missing_focus']
+                        : []
+                )),
+            ];
+        } catch (\Throwable $e) {
+            /*
+             * Fail open when the support-classification AI call itself is
+             * unavailable. Existing Tutor curriculum-boundary prompts still
+             * prevent unsupported enrichment, while a temporary provider
+             * outage does not block the learner's session.
+             */
+            \Log::warning('Tutor material support check failed; continuing with existing curriculum guardrails.', [
+                'session_id' => $session->id,
+                'learning_objective_id' => $objective->id,
+                'message' => $e->getMessage(),
+            ]);
+
+            return [
+                'status' => 'supported',
+                'reason' => 'Material support check was temporarily unavailable.',
+                'supported_focus' => [],
+                'missing_focus' => [],
+            ];
+        }
+    }
+
     public function opening(TutorSession $session): string
     {
         $this->loadTutorContext($session);
@@ -440,8 +622,9 @@ Generate exactly ONE checkpoint.
 The checkpoint must directly assess the current learning objective.
 
 CURRICULUM BOUNDARY — NON-NEGOTIABLE:
-- The current objective and APPROVED TEACHER-PROVIDED KNOWLEDGE define WHAT may be assessed.
-- Do NOT introduce or assess a technical term, concept, rule, formula, algorithm, property, theory, method, or subject fact that is not supported by the approved material or explicitly stated in the objective.
+- The current learning goal defines the target, but APPROVED TEACHER-PROVIDED KNOWLEDGE defines what content may actually be assessed.
+- Do NOT introduce or assess a technical term, concept, rule, formula, algorithm, property, theory, method, or subject fact unless it is supported by the approved material.
+- Wording in the learning goal alone is not enough evidence that missing subject content was taught.
 - A concept being closely related to the topic does NOT make it part of the approved curriculum.
 - You MAY use general knowledge only to improve HOW the checkpoint is presented: wording, familiar context, realistic scenario, analogy, or neutral example.
 - Any scenario or example must require only curriculum knowledge already supported by the approved material.
@@ -2605,6 +2788,7 @@ Your job is to GUIDE the student through the selected TOPIC and its
 active learning objectives.
 The student selected the topic.
 The student does NOT select individual learning objectives.
+STUDENT-FACING LANGUAGE: Never call them "learning objectives" when speaking to the student. Use the friendlier term "learning goals" instead.
 {$mode}
 ============================================================
 TEACHING APPROACH
@@ -2688,7 +2872,8 @@ Do not contradict approved teacher material.
 Do not pretend AI-created examples or analogies came from the teacher.
 
 SOURCE-SUFFICIENCY RULE:
-- If a specific curriculum detail is not present in the approved material or objective, do not supply it from outside knowledge.
+- The learning goal states what the learner is expected to achieve, but it is NOT permission to invent missing subject content.
+- If a specific curriculum detail is not present in the approved material, do not supply it from outside knowledge merely because the learning goal mentions or implies it.
 - Check the approved text/visual context first.
 - Do NOT proactively announce missing details or limitations when the learner has not asked for them. Teach the supported core idea positively and naturally.
 - If the learner specifically asks for an unsupported detail and it remains unsupported, tell the student briefly that the lesson material does not provide that specific detail.
