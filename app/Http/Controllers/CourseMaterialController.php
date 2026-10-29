@@ -436,7 +436,67 @@ class CourseMaterialController extends Controller
     }
 
     /**
-     * Return background processing status for a course material.
+     * Return background processing status for multiple course materials in one request.
+     * This keeps the workspace polling lightweight when several PDFs are processing.
+     */
+    public function processingStatuses(Request $request)
+    {
+        $user = Auth::user();
+
+        $ids = collect(explode(',', (string) $request->query('ids', '')))
+            ->map(fn ($id) => (int) trim($id))
+            ->filter(fn ($id) => $id > 0)
+            ->unique()
+            ->take(50)
+            ->values();
+
+        if ($ids->isEmpty()) {
+            return response()->json(['data' => []]);
+        }
+
+        $query = CourseMaterial::query()
+            ->whereIn('id', $ids)
+            ->with(['curriculumAnalyses' => function ($query) {
+                $query->latest('id');
+            }]);
+
+        if ($user->role === 'teacher') {
+            $query->whereHas('unit.gradeSubject', function ($q) use ($user) {
+                $q->where('school_id', $user->school_id)
+                    ->where('teacher_id', $user->id);
+            });
+        } elseif ($user->role === 'admin') {
+            $query->whereHas('unit.gradeSubject', function ($q) use ($user) {
+                $q->where('school_id', $user->school_id);
+            });
+        } else {
+            return response()->json(['message' => 'Unauthorized.'], 403);
+        }
+
+        $materials = $query->get()->map(function (CourseMaterial $courseMaterial) {
+            $latestAnalysis = $courseMaterial->curriculumAnalyses->first();
+
+            return [
+                'id' => $courseMaterial->id,
+                'processing_status' => $courseMaterial->processing_status,
+                'processing_stage' => $courseMaterial->processing_stage,
+                'processing_progress' => (int) $courseMaterial->processing_progress,
+                'processing_error' => $courseMaterial->processing_error,
+                'extraction_status' => $courseMaterial->extraction_status,
+                'visual_extraction_status' => $courseMaterial->visual_extraction_status,
+                'curriculum_analysis_id' => $latestAnalysis?->id,
+                'curriculum_analysis_status' => $latestAnalysis?->status,
+                'processing_started_at' => $courseMaterial->processing_started_at,
+                'processing_completed_at' => $courseMaterial->processing_completed_at,
+            ];
+        })->values();
+
+        return response()->json(['data' => $materials]);
+    }
+
+    /**
+     * Return background processing status for a single course material.
+     * Kept for compatibility with any older clients.
      */
     public function processingStatus(
         CourseMaterial $courseMaterial
