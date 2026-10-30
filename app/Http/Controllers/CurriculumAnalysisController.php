@@ -7,6 +7,7 @@ use App\Models\CurriculumAnalysis;
 use App\Models\LearningObjective;
 use App\Models\Topic;
 use App\Services\CurriculumAnalyzerService;
+use App\Services\KnowledgeChunkingService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -341,7 +342,8 @@ class CurriculumAnalysisController extends Controller
      * Only two versions are allowed.
      */
     public function approve(
-        CurriculumAnalysis $curriculumAnalysis
+        CurriculumAnalysis $curriculumAnalysis,
+        KnowledgeChunkingService $chunkingService
     ): JsonResponse {
         $user = Auth::user();
 
@@ -349,19 +351,41 @@ class CurriculumAnalysisController extends Controller
 
         /*
          * Already approved.
+         *
+         * Older approval flows could publish the curriculum analysis without
+         * finalizing the linked course material or creating Tutor knowledge
+         * chunks. Repair that state here instead of returning early.
          */
         if ($curriculumAnalysis->status === 'approved') {
-            return response()->json([
-                'message' =>
-                    'This curriculum organization has already been approved.',
+            try {
+                $chunkCount = $this->ensureTutorMaterialReady(
+                    $curriculumAnalysis,
+                    $user,
+                    $chunkingService
+                );
 
-                'data' =>
-                    $curriculumAnalysis->load([
-                        'courseMaterial:id,title,unit_id,subject_id',
-                        'unit:id,name',
-                        'topics.objectives',
-                    ]),
-            ]);
+                return response()->json([
+                    'message' =>
+                        'This curriculum organization is already approved. The linked learning material is ready for Tutor use.',
+
+                    'knowledge_chunks' => $chunkCount,
+
+                    'data' =>
+                        $curriculumAnalysis->fresh()->load([
+                            'courseMaterial:id,title,unit_id,subject_id,status,approved_by,approved_at',
+                            'unit:id,name',
+                            'topics.objectives',
+                        ]),
+                ]);
+            } catch (Throwable $e) {
+                report($e);
+
+                return response()->json([
+                    'message' =>
+                        'The curriculum organization is approved, but the linked learning material could not be prepared for Tutor use.',
+                    'error' => $e->getMessage(),
+                ], 422);
+            }
         }
 
         /*
@@ -656,15 +680,32 @@ class CurriculumAnalysisController extends Controller
                     'reviewed_by' => $user->id,
                     'reviewed_at' => now(),
                 ]);
+
+                /*
+                 * Finalize the linked course material in the same approval
+                 * workflow so Tutor can immediately retrieve grounded content.
+                 */
+                $this->ensureTutorMaterialReady(
+                    $curriculumAnalysis,
+                    $user,
+                    $chunkingService
+                );
             });
+
+            $material = $curriculumAnalysis->courseMaterial()->first();
+            $chunkCount = $material
+                ? $material->knowledgeChunks()->where('status', 'ready')->count()
+                : 0;
 
             return response()->json([
                 'message' =>
-                    'Curriculum organization approved successfully.',
+                    'Curriculum organization approved successfully and the linked learning material is ready for Tutor use.',
+
+                'knowledge_chunks' => $chunkCount,
 
                 'data' =>
                     $curriculumAnalysis->fresh([
-                        'courseMaterial:id,title,unit_id,subject_id',
+                        'courseMaterial:id,title,unit_id,subject_id,status,approved_by,approved_at',
                         'unit:id,name',
                         'topics.objectives',
                     ]),
@@ -679,6 +720,70 @@ class CurriculumAnalysisController extends Controller
                 'error' => $e->getMessage(),
             ], 422);
         }
+    }
+
+    /**
+     * Ensure the material linked to an approved curriculum analysis is fully
+     * usable by Tutor. This also repairs older records where curriculum
+     * approval succeeded but knowledge chunks were never created.
+     */
+    private function ensureTutorMaterialReady(
+        CurriculumAnalysis $curriculumAnalysis,
+        $user,
+        KnowledgeChunkingService $chunkingService
+    ): int {
+        $material = $curriculumAnalysis->courseMaterial()->first();
+
+        if (!$material) {
+            throw new RuntimeException(
+                'The curriculum analysis is not linked to a valid course material.'
+            );
+        }
+
+        if (
+            $material->extraction_status !== 'ready' ||
+            $material->visual_extraction_status !== 'ready'
+        ) {
+            throw new RuntimeException(
+                'The linked course material has not completed text and visual extraction.'
+            );
+        }
+
+        if (
+            !$material->extracted_text ||
+            trim((string) $material->extracted_text) === ''
+        ) {
+            throw new RuntimeException(
+                'The linked course material does not contain extracted text.'
+            );
+        }
+
+        $readyChunkCount = $material
+            ->knowledgeChunks()
+            ->where('status', 'ready')
+            ->count();
+
+        if ($readyChunkCount === 0) {
+            $readyChunkCount = $chunkingService->process(
+                $material->fresh()
+            );
+        }
+
+        if ($readyChunkCount <= 0) {
+            throw new RuntimeException(
+                'No usable Tutor knowledge chunks could be created from the linked material.'
+            );
+        }
+
+        $material->update([
+            'status' => 'approved',
+            'approved_by' => $user?->id,
+            'approved_at' => $material->approved_at ?: now(),
+            'extraction_error' => null,
+            'visual_extraction_error' => null,
+        ]);
+
+        return $readyChunkCount;
     }
 
     /**
