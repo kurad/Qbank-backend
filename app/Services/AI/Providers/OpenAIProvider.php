@@ -438,10 +438,21 @@ class OpenAIProvider
     {
         return array_filter([
             'feature' => $this->sanitizeUsageContextValue($options['_usage_feature'] ?? null),
+            'user_id' => $this->sanitizeUsageContextValue($options['_usage_user_id'] ?? null),
+            'school_id' => $this->sanitizeUsageContextValue($options['_usage_school_id'] ?? null),
+            'role' => $this->sanitizeUsageContextValue($options['_usage_role'] ?? null),
+            'tutor_session_id' => $this->sanitizeUsageContextValue($options['_usage_tutor_session_id'] ?? null),
+            'group_id' => $this->sanitizeUsageContextValue($options['_usage_group_id'] ?? null),
+            'learning_period_id' => $this->sanitizeUsageContextValue($options['_usage_learning_period_id'] ?? null),
+            'subject_id' => $this->sanitizeUsageContextValue($options['_usage_subject_id'] ?? null),
+            'unit_id' => $this->sanitizeUsageContextValue($options['_usage_unit_id'] ?? null),
+            'topic_id' => $this->sanitizeUsageContextValue($options['_usage_topic_id'] ?? null),
+            'learning_objective_id' => $this->sanitizeUsageContextValue($options['_usage_learning_objective_id'] ?? null),
             'is_fallback' => (bool) ($options['_usage_is_fallback'] ?? false),
             'primary_provider' => $this->sanitizeUsageContextValue($options['_usage_primary_provider'] ?? null),
         ], fn ($value) => $value !== null);
     }
+
 
     protected function latencyMs(float $startedAt): int
     {

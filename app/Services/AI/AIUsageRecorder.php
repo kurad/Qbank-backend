@@ -64,9 +64,17 @@ class AIUsageRecorder
             );
             $context = (array) ($payload['context'] ?? []);
 
+            $userId = isset($context['user_id'])
+                ? (int) $context['user_id']
+                : $user?->id;
+
+            $schoolId = isset($context['school_id'])
+                ? (int) $context['school_id']
+                : $user?->school_id;
+
             AIUsageLog::create([
-                'user_id' => $user?->id,
-                'school_id' => $user?->school_id,
+                'user_id' => $userId ?: null,
+                'school_id' => $schoolId ?: null,
                 'provider' => $payload['provider'],
                 'model' => $payload['model'],
                 'operation' => $payload['operation'] ?: 'chat',
@@ -87,6 +95,14 @@ class AIUsageRecorder
                     : null,
                 'metadata' => array_filter([
                     'primary_provider' => $context['primary_provider'] ?? null,
+                    'role' => $context['role'] ?? null,
+                    'tutor_session_id' => $context['tutor_session_id'] ?? null,
+                    'group_id' => $context['group_id'] ?? null,
+                    'learning_period_id' => $context['learning_period_id'] ?? null,
+                    'subject_id' => $context['subject_id'] ?? null,
+                    'unit_id' => $context['unit_id'] ?? null,
+                    'topic_id' => $context['topic_id'] ?? null,
+                    'learning_objective_id' => $context['learning_objective_id'] ?? null,
                     'provider_usage' => !empty($payload['usage']) ? $payload['usage'] : null,
                 ], fn ($value) => $value !== null),
             ]);

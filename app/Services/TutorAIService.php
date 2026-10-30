@@ -144,11 +144,14 @@ PROMPT;
                     'supported_focus',
                     'missing_focus',
                 ],
-            ], [
-                'temperature' => 0,
-                'max_tokens' => 700,
-                '_usage_feature' => 'Tutor Material Support Check',
-            ]);
+            ], $this->tutorUsageOptions(
+                $session,
+                'Tutor Material Support Check',
+                [
+                    'temperature' => 0,
+                    'max_tokens' => 700,
+                ]
+            ));
 
             $status = strtolower(trim((string) ($result['status'] ?? 'supported')));
             if (!in_array($status, ['supported', 'partial', 'unsupported'], true)) {
@@ -240,10 +243,14 @@ PROMPT;
                     . 'Do NOT create an MCQ, True/False, matching, fill-in-the-blank, or short-answer checkpoint. '
                     . 'The application will decide when a formal checkpoint should be introduced.',
             ],
-        ], [
-            'temperature' => 0.3,
-            'max_tokens' => 1500,
-        ]);
+        ], $this->tutorUsageOptions(
+            $session,
+            'AI Tutor Opening',
+            [
+                'temperature' => 0.3,
+                'max_tokens' => 1500,
+            ]
+        ));
     }
     /**
      * Introduce the objective that has just become active after the previous
@@ -306,10 +313,14 @@ PROMPT;
                     . 'Do not ask the student to choose what to learn next; the application has already selected the objective. '
                     . 'Stay strictly within the approved curriculum material and current learning objective.',
             ],
-        ], [
-            'temperature' => 0.3,
-            'max_tokens' => 1500,
-        ]);
+        ], $this->tutorUsageOptions(
+            $session,
+            'AI Tutor Objective Introduction',
+            [
+                'temperature' => 0.3,
+                'max_tokens' => 1500,
+            ]
+        ));
     }
 
     /**
@@ -524,10 +535,14 @@ PROMPT;
                 'role' => 'user',
                 'content' => 'Select the best assessment plan for this learning objective. Return only valid JSON.',
             ],
-        ], $this->checkpointPlanSchema(), [
-            'temperature' => 0.1,
-            'max_tokens' => 500,
-        ]);
+        ], $this->checkpointPlanSchema(), $this->tutorUsageOptions(
+            $session,
+            'Check Understanding Planning',
+            [
+                'temperature' => 0.1,
+                'max_tokens' => 500,
+            ]
+        ));
 
         return $this->normalizeCheckpointPlan($plan);
     }
@@ -737,10 +752,14 @@ PROMPT;
                     "Generate one {$type} checkpoint using the supplied "
                     . 'assessment plan. Return only the structured response.',
             ],
-        ], $this->checkpointResponseSchema($type), [
-            'temperature' => 0.2,
-            'max_tokens' => $responseDepth === 'extended' ? 2200 : 1600,
-        ]);
+        ], $this->checkpointResponseSchema($type), $this->tutorUsageOptions(
+            $session,
+            'Check Understanding Generation',
+            [
+                'temperature' => 0.2,
+                'max_tokens' => $responseDepth === 'extended' ? 2200 : 1600,
+            ]
+        ));
 
         $checkpoint = $this->parseCheckpoint(
             json_encode($decoded, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
@@ -1057,10 +1076,14 @@ PROMPT;
         ];
         return $this->ai->text(
             $messages,
-            [
-                'temperature' => 0.25,
-                'max_tokens' => 1200,
-            ]
+            $this->tutorUsageOptions(
+                $session,
+                'AI Tutor Feedback',
+                [
+                    'temperature' => 0.25,
+                    'max_tokens' => 1200,
+                ]
+            )
         );
     }
     /**
@@ -1188,10 +1211,14 @@ PROMPT;
                         ? $message
                         : 'The learner sent an attachment without explanatory text.',
                 ],
-            ], $schema, [
-                'temperature' => 0.0,
-                'max_tokens' => 180,
-            ]);
+            ], $schema, $this->tutorUsageOptions(
+                $session,
+                'Tutor Turn Classification',
+                [
+                    'temperature' => 0.0,
+                    'max_tokens' => 180,
+                ]
+            ));
 
             $focus = (string) ($result['focus'] ?? 'on_track');
             $valid = [
@@ -1568,10 +1595,14 @@ PROMPT;
                 $studentMessage,
             ],
         ];
-        $options = [
-            'temperature' => 0.3,
-            'max_tokens' => 1200,
-        ];
+        $options = $this->tutorUsageOptions(
+            $session,
+            'AI Tutor',
+            [
+                'temperature' => 0.3,
+                'max_tokens' => 1200,
+            ]
+        );
 
         if (!empty($attachments)) {
             return $this->ai->multimodalText(
@@ -1774,10 +1805,14 @@ PROMPT;
                 'role' => 'user',
                 'content' => $userPrompt,
             ],
-        ], [
-            'temperature' => 0.1,
-            'max_tokens' => 650,
-        ]);
+        ], $this->tutorUsageOptions(
+            $session,
+            'Tutor Response Evaluation',
+            [
+                'temperature' => 0.1,
+                'max_tokens' => 650,
+            ]
+        ));
         return $this->parseEvaluation($raw);
     }
     public function evaluateCheckpointAnswer(
@@ -1994,10 +2029,14 @@ PROMPT;
                 'role' => 'user',
                 'content' => $userPrompt,
             ],
-        ], [
-            'temperature' => 0.1,
-            'max_tokens' => 650,
-        ]);
+        ], $this->tutorUsageOptions(
+            $session,
+            'Check Understanding Evaluation',
+            [
+                'temperature' => 0.1,
+                'max_tokens' => 650,
+            ]
+        ));
         return $this->parseEvaluation($raw);
     }
 
@@ -2456,10 +2495,53 @@ error. Equivalent formatting is acceptable; different academic meaning is not.
 PROMPT;
     }
 
+
+    /**
+     * Attach explicit learner/school context to every Tutor AI request.
+     *
+     * AI usage monitoring must not depend only on auth()->user(), because
+     * some Tutor work may run deeper in services or later move to queued
+     * execution. The TutorSession is the authoritative source for the learner.
+     */
+    protected function tutorUsageOptions(
+        TutorSession $session,
+        string $feature,
+        array $options = []
+    ): array {
+        $this->loadTutorContext($session);
+
+        $student = $session->student;
+        $currentObjective = $this->currentObjective($session);
+
+        $schoolId = $student?->school_id
+            ?? $session->gradeSubject?->school_id
+            ?? null;
+
+        return array_merge(
+            $options,
+            [
+                '_usage_feature' => $feature,
+                '_usage_user_id' => $session->student_id ?: $student?->id,
+                '_usage_school_id' => $schoolId,
+                '_usage_role' => $student?->role ?? 'student',
+                '_usage_tutor_session_id' => $session->id,
+                '_usage_group_id' => $session->group_id,
+                '_usage_learning_period_id' => $session->learning_period_id,
+                '_usage_subject_id' => $session->subject_id,
+                '_usage_unit_id' => $session->unit_id,
+                '_usage_topic_id' => $session->topic_id,
+                '_usage_learning_objective_id' =>
+                    $currentObjective?->learning_objective_id
+                    ?? $session->learning_objective_id,
+            ]
+        );
+    }
+
     protected function loadTutorContext(
         TutorSession $session
     ): void {
         $session->loadMissing([
+            'student',
             'group',
             'gradeSubject.subject',
             'gradeSubject.gradeLevel',

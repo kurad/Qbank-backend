@@ -158,20 +158,46 @@ class GroqProvider
             $options['response_schema'],
             $options['_usage_operation'],
             $options['_usage_feature'],
+            $options['_usage_user_id'],
+            $options['_usage_school_id'],
+            $options['_usage_role'],
+            $options['_usage_tutor_session_id'],
+            $options['_usage_group_id'],
+            $options['_usage_learning_period_id'],
+            $options['_usage_subject_id'],
+            $options['_usage_unit_id'],
+            $options['_usage_topic_id'],
+            $options['_usage_learning_objective_id'],
             $options['_usage_is_fallback'],
             $options['_usage_primary_provider']
         );
         return $options;
     }
 
+    protected function sanitizeUsageContextValue(mixed $value): mixed
+    {
+        return is_scalar($value) || $value === null ? $value : null;
+    }
+
     protected function usageContext(array $options): array
     {
-        return [
-            'feature' => $options['_usage_feature'] ?? null,
+        return array_filter([
+            'feature' => $this->sanitizeUsageContextValue($options['_usage_feature'] ?? null),
+            'user_id' => $this->sanitizeUsageContextValue($options['_usage_user_id'] ?? null),
+            'school_id' => $this->sanitizeUsageContextValue($options['_usage_school_id'] ?? null),
+            'role' => $this->sanitizeUsageContextValue($options['_usage_role'] ?? null),
+            'tutor_session_id' => $this->sanitizeUsageContextValue($options['_usage_tutor_session_id'] ?? null),
+            'group_id' => $this->sanitizeUsageContextValue($options['_usage_group_id'] ?? null),
+            'learning_period_id' => $this->sanitizeUsageContextValue($options['_usage_learning_period_id'] ?? null),
+            'subject_id' => $this->sanitizeUsageContextValue($options['_usage_subject_id'] ?? null),
+            'unit_id' => $this->sanitizeUsageContextValue($options['_usage_unit_id'] ?? null),
+            'topic_id' => $this->sanitizeUsageContextValue($options['_usage_topic_id'] ?? null),
+            'learning_objective_id' => $this->sanitizeUsageContextValue($options['_usage_learning_objective_id'] ?? null),
             'is_fallback' => (bool) ($options['_usage_is_fallback'] ?? false),
-            'primary_provider' => $options['_usage_primary_provider'] ?? null,
-        ];
+            'primary_provider' => $this->sanitizeUsageContextValue($options['_usage_primary_provider'] ?? null),
+        ], fn ($value) => $value !== null);
     }
+
 
     protected function latencyMs(float $startedAt): int
     {
