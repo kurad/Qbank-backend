@@ -27,7 +27,7 @@ class TutorKnowledgeService
             ->where('subject_id', $session->subject_id)
             ->whereHas('courseMaterial', function ($q) {
                 $q->where('status', 'approved')
-                    ->where('processing_status', 'completed');
+                    ->whereIn('processing_status', ['ready', 'completed']);
             })
             ->with(['courseMaterial:id,title,subject_id,unit_id,topic_id,scope']);
 

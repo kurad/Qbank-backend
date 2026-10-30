@@ -131,7 +131,7 @@ class TutorMediaService
                     return false;
                 }
 
-                if ($visual->courseMaterial->processing_status !== 'completed') {
+                if (!in_array((string) $visual->courseMaterial->processing_status, ['ready', 'completed'], true)) {
                     return false;
                 }
 
