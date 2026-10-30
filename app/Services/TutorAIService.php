@@ -226,18 +226,17 @@ PROMPT;
             [
                 'role' => 'user',
                 'content' =>
-                'Begin the learning session. '
-                    . 'Take the lead as the tutor and stay on the current objective. '
-                    . 'Briefly onboard the learner in one natural sentence: explain that they can ask questions at any time, request a different explanation/example/visual, or ask to try a practice item, and that a formal understanding check will become available after enough learning. '
-                    . 'Then begin the objective itself. If the objective includes defining a concept, give a clear student-friendly definition first. '
-                    . 'Follow the definition/core idea with one simple mental model, analogy, representation, or curriculum-grounded example when useful. '
-                    . 'Invite the learner into the conversation with ONE purposeful question, such as asking them to explain a key term in their own words, predict what happens next, or say what is still unclear. '
-                    . 'Do not make the opening a long lecture or a list of platform instructions. '
+                'Begin the learning session as a warm, human tutor. '
+                    . 'Start with a brief greeting or welcome before any teaching. Make it natural and encouraging, not ceremonial or repetitive. '
+                    . 'After the greeting, orient the learner in one short sentence: they may ask questions at any time, request another explanation/example/visual, or ask to practise; a formal understanding check will appear later when enough learning has happened. '
+                    . 'Then begin the CURRENT objective pedagogically. Do NOT default to a definition-first explanation. '
+                    . 'First choose a suitable opening strategy for the objective: activate prior knowledge, present a familiar scenario, contrast two examples, ask for a prediction, show a tiny problem, or use another simple hook grounded in the approved material. '
+                    . 'Ask exactly ONE accessible opening question when learner thinking would help you teach better, then STOP and wait for the response instead of answering your own question. '
+                    . 'If a question would add little value, give only a very short hook or scenario, then introduce the core idea. '
+                    . 'Introduce formal terminology or definitions AFTER the learner has a concrete idea to attach them to, unless the approved material truly requires the term first. '
+                    . 'Keep the first turn short. Do not dump the whole objective, list many facts, or write textbook-style notes. '
                     . 'Use previous learning context when relevant. '
-                    . 'Before explaining, decide whether ONE short diagnostic question would genuinely change how you teach this objective. '
-                    . 'Ask a diagnostic question only when prior knowledge, a likely misconception, or the student\'s starting level matters. '
-                    . 'If a diagnostic is useful, ask exactly ONE concise conversational question and stop so the student can answer. '
-                    . 'If previous learning already gives enough evidence, or diagnosis would add little value, begin teaching immediately and still finish the opening with one purposeful learner interaction. '
+                    . 'Match the opening strategy to the objective: describe/explain -> familiar scenario or prior-knowledge prompt; identify/classify -> example versus non-example; calculate -> small concrete problem; compare -> two contrasting cases; procedure/programming/database -> realistic task, prediction, or mini-debugging situation; analyse/evaluate -> short case or decision. '
                     . 'Do not ask the student what they want to learn; the application has already selected the objective. '
                     . 'Do NOT finish with a formal assessment question yet. '
                     . 'Do NOT create an MCQ, True/False, matching, fill-in-the-blank, or short-answer checkpoint. '
@@ -303,12 +302,12 @@ PROMPT;
                 'role' => 'user',
                 'content' =>
                     'The previous learning objective has been resolved and the student has chosen to continue. '
-                    . 'Move to the CURRENT objective now and make the transition natural. '
-                    . 'Start with the objective\'s core idea. If the objective asks for a definition, give a clear student-friendly definition first, then add one simple mental model, representation, or curriculum-grounded example when useful. '
-                    . 'Invite the learner into the new objective with ONE purposeful conversational question after the first explanation, rather than only delivering a lecture. '
-                    . 'Before explaining, decide whether ONE short diagnostic question would genuinely help you choose the right depth or uncover a prerequisite misconception. '
-                    . 'If it would, ask exactly ONE concise conversational diagnostic question and stop for the student\'s response. '
-                    . 'If prior learning already gives enough evidence, or diagnosis is unnecessary, begin teaching the current objective immediately. '
+                    . 'Move to the CURRENT objective with a brief bridge from the previous learning; do not greet the learner again. '
+                    . 'Do NOT default to definition-first teaching. Choose a short pedagogical hook suited to the objective: a familiar situation, prior-knowledge connection, example/non-example, prediction, small problem, realistic task, or short case. '
+                    . 'Ask at most ONE purposeful conversational question when the learner\'s response would genuinely shape the explanation, and stop for the response. '
+                    . 'Introduce formal terminology after the learner has a concrete idea to attach it to, unless the term genuinely must come first. '
+                    . 'If prior learning already gives enough evidence, use a concise bridge and begin teaching without unnecessary diagnosis. '
+                    . 'Keep the transition brief and dialogic rather than delivering a mini-lecture. '
                     . 'Do not generate a formal checkpoint. '
                     . 'Do not ask the student to choose what to learn next; the application has already selected the objective. '
                     . 'Stay strictly within the approved curriculum material and current learning objective.',
@@ -925,6 +924,7 @@ educationally useful.
 TEACHING PRINCIPLES
 ============================================================
 Behave like a patient and observant teacher.
+For a new concept, prefer guided discovery over definition dumping: connect to something familiar, let the learner think, then name and formalize the idea. Do not repeatedly use the same opening pattern such as "in your own words".
 Your goal is not to make the student feel correct.
 Your goal is to help the student actually understand.
 Use this learning rhythm:
@@ -2620,7 +2620,7 @@ PROMPT;
             ->where('subject_id', $session->subject_id)
             ->whereHas('courseMaterial', function ($q) {
                 $q->where('status', 'approved')
-                    ->whereIn('processing_status', ['ready', 'completed']);
+                    ->where('processing_status', 'completed');
             })
             ->with([
                 'courseMaterial:id,title,subject_id,unit_id,topic_id,scope',
