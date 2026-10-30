@@ -53,6 +53,27 @@ class LearnerFormativeService
             ];
         }
 
+        // A covered period is not automatically assessable. A learner can
+        // legitimately finish a topic with one or more material gaps. Build
+        // the same objective plan used by preparation before showing the
+        // Begin Assessment action so the UI never advertises an assessment
+        // that has no fair, supported learning goals to assess.
+        $period->loadMissing([
+            'topics.topic.learningObjectives',
+            'topics.unit',
+        ]);
+
+        if ($this->objectiveQuestionPlan($period, $student)->isEmpty()) {
+            return [
+                'required' => true,
+                'eligible' => false,
+                'ready' => false,
+                'status' => 'material_gap',
+                'progress' => 0,
+                'message' => 'Your assessment is not available yet because the approved learning material does not currently support any assessable learning goals. Your teacher needs to review the material first.',
+            ];
+        }
+
         $attempt = LearnerFormativeAttempt::query()
             ->where('student_id', $student->id)
             ->where('learning_period_id', $period->id)
@@ -109,6 +130,15 @@ class LearnerFormativeService
     {
         if (!$this->studentCoveredPeriod($student, $period)) {
             abort(403, 'Complete all topics in this learning period before beginning the assessment.');
+        }
+
+        $period->loadMissing([
+            'topics.topic.learningObjectives',
+            'topics.unit',
+        ]);
+
+        if ($this->objectiveQuestionPlan($period, $student)->isEmpty()) {
+            abort(409, 'The assessment cannot be prepared yet because the approved learning material does not currently support any assessable learning goals.');
         }
 
         $attempt = LearnerFormativeAttempt::firstOrCreate(
@@ -425,14 +455,31 @@ class LearnerFormativeService
 
     protected function objectiveQuestionPlan(LearningPeriod $period, User $student): Collection
     {
+        /*
+         * Only the learner's LATEST Tutor result for each learning objective
+         * may suppress that objective from the formative assessment.
+         *
+         * Previously we selected every historical `material_gap` row. That
+         * meant one interrupted/old Tutor session could poison the objective
+         * forever, even after a later session successfully taught it.
+         */
+        $latestObjectiveRowIds = TutorSessionObjective::query()
+            ->selectRaw('MAX(tutor_session_objectives.id)')
+            ->join(
+                'tutor_sessions',
+                'tutor_sessions.id',
+                '=',
+                'tutor_session_objectives.tutor_session_id'
+            )
+            ->where('tutor_sessions.student_id', $student->id)
+            ->where('tutor_sessions.learning_period_id', $period->id)
+            ->where('tutor_sessions.session_mode', 'learning')
+            ->whereNotNull('tutor_session_objectives.learning_objective_id')
+            ->groupBy('tutor_session_objectives.learning_objective_id');
+
         $materialGapObjectiveIds = TutorSessionObjective::query()
+            ->whereIn('id', $latestObjectiveRowIds)
             ->where('status', 'material_gap')
-            ->whereHas('session', function ($query) use ($student, $period) {
-                $query
-                    ->where('student_id', $student->id)
-                    ->where('learning_period_id', $period->id)
-                    ->where('session_mode', 'learning');
-            })
             ->pluck('learning_objective_id')
             ->unique()
             ->values();
