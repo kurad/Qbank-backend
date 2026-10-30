@@ -521,6 +521,9 @@ class TutorCheckpointService
             ? 'objective_transition'
             : ($needsAdaptiveTeaching ? 'adaptive_support' : 'feedback');
 
+        $answeredObjective = $stored['progress']['objective'] ?? null;
+        $nextObjective = $stored['progress']['next_objective'] ?? null;
+
         $feedbackMessage = $session->messages()->create([
             'role' => 'assistant',
             'message_type' => $messageType,
@@ -531,6 +534,18 @@ class TutorCheckpointService
                     'struggle_level' => $struggleLevel,
                     'teacher_attention' => (bool) ($stored['progress']['teacher_attention'] ?? false),
                 ],
+                'objective_transition' => !empty($stored['progress']['objective_resolved'])
+                    ? [
+                        'completed_objective_id' => $answeredObjective?->id,
+                        'completed_objective_order' => $answeredObjective?->objective_order,
+                        'completed_objective_title' => $answeredObjective?->learningObjective?->objective,
+                        'completed_status' => $stored['progress']['objective_status'] ?? null,
+                        'next_objective_id' => $nextObjective?->id,
+                        'next_objective_order' => $nextObjective?->objective_order,
+                        'next_objective_title' => $nextObjective?->learningObjective?->objective,
+                        'session_completed' => (bool) ($stored['progress']['session_completed'] ?? false),
+                    ]
+                    : null,
             ],
         ]);
 

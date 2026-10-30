@@ -232,9 +232,10 @@ PROMPT;
                     . 'Then begin the CURRENT objective pedagogically. Do NOT default to a definition-first explanation. '
                     . 'First choose a suitable opening strategy for the objective: activate prior knowledge, present a familiar scenario, contrast two examples, ask for a prediction, show a tiny problem, or use another simple hook grounded in the approved material. '
                     . 'Ask exactly ONE accessible opening question when learner thinking would help you teach better, then STOP and wait for the response instead of answering your own question. '
+                    . 'This opening question is diagnostic, not the lesson itself. After the learner replies, the Tutor must use that evidence to provide a substantial teaching phase before any formal understanding check. '
                     . 'If a question would add little value, give only a very short hook or scenario, then introduce the core idea. '
                     . 'Introduce formal terminology or definitions AFTER the learner has a concrete idea to attach them to, unless the approved material truly requires the term first. '
-                    . 'Keep the first turn short. Do not dump the whole objective, list many facts, or write textbook-style notes. '
+                    . 'Keep the first turn short. Do not dump the whole objective, list many facts, or write textbook-style notes. The detailed explanation belongs in the teaching phase after the diagnostic response. '
                     . 'Use previous learning context when relevant. '
                     . 'Match the opening strategy to the objective: describe/explain -> familiar scenario or prior-knowledge prompt; identify/classify -> example versus non-example; calculate -> small concrete problem; compare -> two contrasting cases; procedure/programming/database -> realistic task, prediction, or mini-debugging situation; analyse/evaluate -> short case or decision. '
                     . 'Do not ask the student what they want to learn; the application has already selected the objective. '
@@ -304,10 +305,11 @@ PROMPT;
                     'The previous learning objective has been resolved and the student has chosen to continue. '
                     . 'Move to the CURRENT objective with a brief bridge from the previous learning; do not greet the learner again. '
                     . 'Do NOT default to definition-first teaching. Choose a short pedagogical hook suited to the objective: a familiar situation, prior-knowledge connection, example/non-example, prediction, small problem, realistic task, or short case. '
-                    . 'Ask at most ONE purposeful conversational question when the learner\'s response would genuinely shape the explanation, and stop for the response. '
+                    . 'Ask at most ONE purposeful conversational diagnostic question when the learner\'s response would genuinely shape the explanation, and stop for the response. '
+                    . 'After that diagnostic response, teach the objective in sufficient depth before guided practice and before any formal checkpoint. '
                     . 'Introduce formal terminology after the learner has a concrete idea to attach it to, unless the term genuinely must come first. '
-                    . 'If prior learning already gives enough evidence, use a concise bridge and begin teaching without unnecessary diagnosis. '
-                    . 'Keep the transition brief and dialogic rather than delivering a mini-lecture. '
+                    . 'If prior learning already gives enough evidence, use a concise bridge and begin the detailed teaching phase without unnecessary diagnosis. '
+                    . 'Keep this transition turn brief and dialogic; detailed teaching follows once the learner has been oriented to the new objective. '
                     . 'Do not generate a formal checkpoint. '
                     . 'Do not ask the student to choose what to learn next; the application has already selected the objective. '
                     . 'Stay strictly within the approved curriculum material and current learning objective.',
@@ -1286,6 +1288,62 @@ PROMPT;
             $currentObjective
             ->learningObjective;
 
+        /*
+         * Pedagogical phase for ordinary conversation.
+         *
+         * The opening/objective_intro is intentionally diagnostic and brief.
+         * After the learner responds, the Tutor must teach in depth before
+         * guided practice and before the first formal understanding check.
+         */
+        $objectiveBoundary = $currentObjective->started_at ?: $session->created_at;
+        $learnerTeachingTurns = $session->messages()
+            ->where('role', 'user')
+            ->where('message_type', 'text')
+            ->where('created_at', '>=', $objectiveBoundary)
+            ->count();
+
+        $instructionPhase = match (true) {
+            $learnerTeachingTurns <= 1 => 'CORE_TEACHING',
+            $learnerTeachingTurns === 2 => 'GUIDED_PRACTICE',
+            default => 'CONSOLIDATE_AND_PREPARE_FOR_CHECK',
+        };
+
+        $instructionPhaseGuidance = match ($instructionPhase) {
+            'CORE_TEACHING' => <<<'PHASE'
+The learner has completed the opening/diagnostic interaction.
+Now TEACH the objective properly. Do not stay narrow or merely respond with
+one sentence plus another question.
+
+Give a coherent, age-appropriate explanation grounded in the approved material.
+Where the material supports it, include:
+- the central idea and why it matters;
+- essential terminology, rules, syntax, steps, or relationships;
+- at least one clear worked or concrete example;
+- an important contrast, common error, or misconception;
+- a brief connection back to what the learner said in the diagnostic.
+
+Keep sections digestible rather than writing one huge paragraph. Depth is more
+important than brevity here, but remain focused on this objective. End with ONE
+small guided practice or noticing task that lets the learner use what was just
+taught. Do not start the formal checkpoint yet.
+PHASE,
+            'GUIDED_PRACTICE' => <<<'PHASE'
+The core teaching has already begun. Move into GUIDED PRACTICE.
+Use the learner's response to correct any gap, model another useful example or
+worked step when needed, then let the learner do one meaningful part themselves.
+Do not simply repeat the previous explanation with different wording or numbers.
+Help the learner connect ideas and apply them. Do not generate the formal
+checkpoint inside chat.
+PHASE,
+            default => <<<'PHASE'
+The learner has had the diagnostic, teaching, and guided practice opportunities.
+Consolidate the objective: address any remaining misconception, connect the key
+ideas, and give a concise final practice/summary if useful. Do not invent a
+formal checkpoint. If the learner appears ready, say naturally that they can
+check their understanding using the interface when it becomes available.
+PHASE,
+        };
+
         $recentFormalEvidence = $currentObjective
             ->responseEvaluations()
             ->latest('id')
@@ -1413,6 +1471,16 @@ ANTI-REPETITION RULES
   briefly and let the application control the formal checkpoint or transition.
 
 ============================================================
+CURRENT INSTRUCTIONAL PHASE
+============================================================
+Phase: {$instructionPhase}
+
+{$instructionPhaseGuidance}
+
+This phase is pedagogically important. Do not skip directly from a diagnostic
+question to a formal understanding check. The learner should first receive
+substantive teaching and guided practice appropriate to the objective.
+============================================================
 YOUR ROLE
 ============================================================
 Respond like a patient teacher.
@@ -1449,7 +1517,11 @@ respond naturally as a teacher.
 ============================================================
 LEARNER-TUTOR INTERACTION
 ============================================================
-Keep the lesson conversational rather than delivering long one-way explanations.
+Keep the lesson conversational, but do not confuse "conversational" with
+"minimal". During CORE_TEACHING, a detailed explanation is expected when the
+objective requires it. Break substantial teaching into short sections, examples,
+steps, or comparisons so it remains readable and interactive rather than a wall
+of text.
 After a meaningful explanation, correction, or worked example, when useful, give
 the learner a brief opportunity to interact before moving on. You may ask one
 natural check-in such as:

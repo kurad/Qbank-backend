@@ -118,10 +118,12 @@ class TutorDifficultyService
     ): array {
         $evidence = $this->learningEvidence($session, $objective);
 
-        // Two learner teaching turns is a small but meaningful minimum before
-        // the first formal check. It prevents jumping straight to assessment
-        // while keeping the Tutor responsive rather than time-gated.
-        $requiredLearningTurns = 2;
+        // A first formal check should come only after a real instructional
+        // sequence: opening/diagnostic, substantive teaching, and guided
+        // practice. Three learner/tutor exchanges is the minimum evidence that
+        // those phases had room to occur. This is still evidence-based rather
+        // than time-gated and remains adaptive to the learner's responses.
+        $requiredLearningTurns = 3;
         $learningTurns = (int) ($evidence['learner_turns'] ?? 0);
         $teachingTurns = (int) ($evidence['tutor_turns'] ?? 0);
 
@@ -221,10 +223,14 @@ class TutorDifficultyService
     protected function firstCheckReadinessMessage(int $remaining): string
     {
         if ($remaining <= 1) {
-            return 'Keep learning with your Tutor a little longer. Work through one more guided interaction before checking your understanding.';
+            return 'Complete one more guided practice interaction with your Tutor before checking your understanding.';
         }
 
-        return 'Go through the concept with your Tutor first. Ask questions, explain your thinking, and work through the guided examples before checking your understanding.';
+        if ($remaining === 2) {
+            return 'Your Tutor is teaching the core ideas now. Work through the explanation and guided practice before the formal understanding check.';
+        }
+
+        return 'Begin with the Tutor introduction and diagnostic, then work through the detailed teaching and guided practice before checking your understanding.';
     }
 
     protected function consecutiveUnsuccessful(Collection $evaluations): int
