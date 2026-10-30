@@ -16,7 +16,9 @@ class PrepareLearnerFormativeAttempt implements ShouldQueue, ShouldBeUnique
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    public int $tries = 2;
+    public int $tries = 3;
+
+    public int $timeout = 300;
 
     public function __construct(public int $attemptId)
     {
@@ -25,6 +27,11 @@ class PrepareLearnerFormativeAttempt implements ShouldQueue, ShouldBeUnique
     public function uniqueId(): string
     {
         return 'learner-formative-attempt:' . $this->attemptId;
+    }
+
+    public function backoff(): array
+    {
+        return [15, 60, 180];
     }
 
     public function handle(LearnerFormativeService $service): void

@@ -7,6 +7,7 @@ use App\Models\Assessment;
 use App\Models\LearnerFormativeAttempt;
 use App\Models\LearnerFormativeQuestion;
 use App\Models\LearningPeriod;
+use App\Models\KnowledgeChunk;
 use App\Models\Question;
 use App\Models\StudentAssessment;
 use App\Models\TutorSession;
@@ -15,12 +16,14 @@ use App\Models\User;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use App\Services\AI\AIGateway;
 use RuntimeException;
 
 class LearnerFormativeService
 {
     public function __construct(
-        protected StudentTopicLearningService $topicLearning
+        protected StudentTopicLearningService $topicLearning,
+        protected AIGateway $ai
     ) {}
 
     private const QUESTIONS_PER_OBJECTIVE = 3;
@@ -201,6 +204,26 @@ class LearnerFormativeService
                 $attempt->seed . ':objective:' . $objective->id
             );
 
+            // If the permanent Question Bank does not yet contain enough
+            // approved questions for this learning goal, generate only the
+            // missing questions from the approved curriculum material. These
+            // temporary questions are attached directly to this learner's
+            // formative attempt and stay outside the permanent Question Bank.
+            $missing = max(0, $required - $objectiveSelected->count());
+
+            if ($missing > 0) {
+                $generated = $this->generateGroundedQuestionsForObjective(
+                    $attempt,
+                    $period,
+                    $plan['assignment'] ?? null,
+                    $objective,
+                    $missing,
+                    $objectiveSelected->count()
+                );
+
+                $objectiveSelected = $objectiveSelected->concat($generated)->values();
+            }
+
             if ($objectiveSelected->count() < $required) {
                 $shortages[] = [
                     'objective' => $objective->code ?: ('Objective ' . $objective->id),
@@ -210,7 +233,7 @@ class LearnerFormativeService
                 ];
             }
 
-            $selected = $selected->concat($objectiveSelected);
+            $selected = $selected->concat($objectiveSelected->take($required));
         }
 
         if (!empty($shortages)) {
@@ -425,6 +448,7 @@ class LearnerFormativeService
                     ->where('status', 'active')
                     ->sortBy('order')
                     ->map(fn ($objective) => [
+                        'assignment' => $assignment,
                         'objective' => $objective,
                         'topic' => $topic,
                         'question_count' => 0,
@@ -576,4 +600,179 @@ class LearnerFormativeService
             'message' => $message,
         ]);
     }
+    protected function generateGroundedQuestionsForObjective(
+        LearnerFormativeAttempt $attempt,
+        LearningPeriod $period,
+        $assignment,
+        $objective,
+        int $count,
+        int $existingCount = 0
+    ): Collection {
+        $topic = $assignment?->topic;
+
+        if (!$topic) {
+            throw new RuntimeException('Assessment topic context is missing.');
+        }
+
+        $materialText = KnowledgeChunk::query()
+            ->where('topic_id', $topic->id)
+            ->whereNotNull('content')
+            ->orderBy('chunk_index')
+            ->limit(8)
+            ->pluck('content')
+            ->implode("\n\n");
+
+        $objectiveText = trim(
+            ($objective->code ? $objective->code . ': ' : '') .
+            ($objective->objective ?? $objective->description ?? '')
+        );
+
+        if (trim($materialText) === '' && trim($objectiveText) === '') {
+            throw new RuntimeException(
+                'Insufficient approved curriculum material to prepare assessment questions for topic: ' .
+                ($topic->topic_name ?? $topic->id)
+            );
+        }
+
+        $subject = $period->gradeSubject?->subject?->name ?? 'Subject';
+        $unit = $assignment?->unit?->name ?? '';
+        $topicName = $topic->topic_name ?? 'Topic';
+
+        $prompt = <<<PROMPT
+Create exactly {$count} additional formative assessment questions for one learner, all targeting the SINGLE learning objective below.
+
+SUBJECT: {$subject}
+UNIT: {$unit}
+TOPIC: {$topicName}
+
+TARGET LEARNING OBJECTIVE:
+{$objectiveText}
+
+APPROVED TEACHER/CURRICULUM MATERIAL:
+{$materialText}
+
+STRICT RULES:
+- Use ONLY facts supported by the learning objective and approved curriculum material above.
+- Do not introduce outside facts.
+- Questions must be objectively auto-gradable.
+- Allowed types: mcq, true_false, fill_blank, short_answer.
+- {$existingCount} question(s) for this objective are already available; make the additional questions different but equivalent in scope.
+- For MCQ provide exactly four plausible options and one unambiguous correct answer.
+- correct_answer must always be an array of accepted answer strings.
+- Use 1 mark per question.
+- Give a short explanation grounded in the supplied material.
+PROMPT;
+
+        $schema = [
+            'type' => 'object',
+            'properties' => [
+                'questions' => [
+                    'type' => 'array',
+                    'items' => [
+                        'type' => 'object',
+                        'properties' => [
+                            'question' => ['type' => 'string'],
+                            'question_type' => ['type' => 'string'],
+                            'difficulty_level' => ['type' => 'string'],
+                            'options' => [
+                                'type' => 'array',
+                                'items' => ['type' => 'string'],
+                            ],
+                            'correct_answer' => [
+                                'type' => 'array',
+                                'items' => ['type' => 'string'],
+                            ],
+                            'explanation' => ['type' => 'string'],
+                        ],
+                        'required' => [
+                            'question',
+                            'question_type',
+                            'correct_answer',
+                            'explanation',
+                        ],
+                    ],
+                ],
+            ],
+            'required' => ['questions'],
+        ];
+
+        $response = $this->ai->json(
+            [
+                [
+                    'role' => 'system',
+                    'content' => 'You create grounded formative questions from supplied curriculum evidence only.',
+                ],
+                [
+                    'role' => 'user',
+                    'content' => $prompt,
+                ],
+            ],
+            $schema,
+            [
+                'temperature' => 0.35,
+                'max_tokens' => 5000,
+                '_usage_feature' => 'Learner Formative Assessment Generation',
+                '_usage_user_id' => $attempt->student_id,
+                '_usage_school_id' => $attempt->student?->school_id,
+                '_usage_role' => 'student',
+                '_usage_learning_period_id' => $period->id,
+                '_usage_subject_id' => $period->gradeSubject?->subject_id,
+                '_usage_unit_id' => $assignment?->unit_id,
+                '_usage_topic_id' => $topic->id,
+                '_usage_learning_objective_id' => $objective->id,
+            ]
+        );
+
+        $items = collect($response['questions'] ?? [])->take($count);
+
+        if ($items->count() < $count) {
+            throw new RuntimeException(
+                'AI did not return enough grounded questions for topic: ' . $topicName
+            );
+        }
+
+        return $items->map(function ($item) use ($topic, $objective, $period) {
+            $type = strtolower(trim($item['question_type'] ?? 'mcq'));
+
+            if (!in_array($type, ['mcq', 'true_false', 'fill_blank', 'short_answer'], true)) {
+                $type = 'mcq';
+            }
+
+            $options = $item['options'] ?? [];
+            $correct = $item['correct_answer'] ?? [];
+
+            if (!is_array($correct)) {
+                $correct = [$correct];
+            }
+
+            if ($type === 'true_false') {
+                $options = ['True', 'False'];
+            }
+
+            if ($type !== 'mcq' && $type !== 'true_false') {
+                $options = [];
+            }
+
+            return Question::create([
+                'topic_id' => $topic->id,
+                'learning_objective_id' => $objective?->id,
+                'question_type' => $type,
+                'question' => trim((string) ($item['question'] ?? '')),
+                'options' => array_values($options),
+                'correct_answer' => array_values($correct),
+                'marks' => 1,
+                'difficulty_level' => $item['difficulty_level'] ?? 'medium',
+                'is_math' => false,
+                'is_chemistry' => false,
+                'multiple_answers' => false,
+                'is_required' => true,
+                'explanation' => $item['explanation'] ?? null,
+                'created_by' => $period->created_by,
+                'source' => 'ai_mastery',
+                'status' => 'draft',
+                'is_assessment_eligible' => false,
+            ]);
+        })->values();
+    }
+
 }

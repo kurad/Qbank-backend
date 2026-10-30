@@ -638,6 +638,9 @@ class TutorSessionService
                 'status',
                 'active'
             )
+            // Never reconcile a partially-created/legacy session that has no
+            // objective rows. An empty objective set is not evidence of mastery.
+            ->whereHas('objectives')
             ->whereDoesntHave(
                 'objectives',
                 fn ($query) =>
@@ -674,6 +677,13 @@ class TutorSessionService
             return $session;
         }
 
+        // A session with no objectives can be left behind by an interrupted
+        // or older start flow. Never convert that incomplete initialization
+        // into a completed/mastered topic.
+        if (!$session->objectives()->exists()) {
+            return $session;
+        }
+
         $hasUnfinished =
             $session
                 ->objectives()
@@ -688,6 +698,17 @@ class TutorSessionService
                 ->exists();
 
         if ($hasUnfinished) {
+            return $session;
+        }
+
+        // Reconciliation is a repair path, not a shortcut to mastery. Require
+        // evidence that the learner actually interacted with the Tutor before
+        // allowing an already-resolved objective set to complete the session.
+        $hasLearnerActivity =
+            $session->messages()->where('role', 'user')->exists()
+            || $session->objectives()->where('attempts', '>', 0)->exists();
+
+        if (!$hasLearnerActivity) {
             return $session;
         }
 
