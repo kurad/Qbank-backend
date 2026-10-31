@@ -226,22 +226,22 @@ PROMPT;
             [
                 'role' => 'user',
                 'content' =>
-                'Begin the learning session as a warm, human tutor. '
-                    . 'Start with a brief greeting or welcome before any teaching. Make it natural and encouraging, not ceremonial or repetitive. '
-                    . 'After the greeting, orient the learner in one short sentence: they may ask questions at any time, request another explanation/example/visual, or ask to practise; a formal understanding check will appear later when enough learning has happened. '
-                    . 'Then begin the CURRENT objective pedagogically. Do NOT default to a definition-first explanation. '
-                    . 'First choose a suitable opening strategy for the objective: activate prior knowledge, present a familiar scenario, contrast two examples, ask for a prediction, show a tiny problem, or use another simple hook grounded in the approved material. '
-                    . 'Ask exactly ONE accessible opening question when learner thinking would help you teach better, then STOP and wait for the response instead of answering your own question. '
-                    . 'This opening question is diagnostic, not the lesson itself. After the learner replies, the Tutor must use that evidence to provide a substantial teaching phase before any formal understanding check. '
-                    . 'If a question would add little value, give only a very short hook or scenario, then introduce the core idea. '
-                    . 'Introduce formal terminology or definitions AFTER the learner has a concrete idea to attach them to, unless the approved material truly requires the term first. '
-                    . 'Keep the first turn short. Do not dump the whole objective, list many facts, or write textbook-style notes. The detailed explanation belongs in the teaching phase after the diagnostic response. '
-                    . 'Use previous learning context when relevant. '
-                    . 'Match the opening strategy to the objective: describe/explain -> familiar scenario or prior-knowledge prompt; identify/classify -> example versus non-example; calculate -> small concrete problem; compare -> two contrasting cases; procedure/programming/database -> realistic task, prediction, or mini-debugging situation; analyse/evaluate -> short case or decision. '
-                    . 'Do not ask the student what they want to learn; the application has already selected the objective. '
-                    . 'Do NOT finish with a formal assessment question yet. '
-                    . 'Do NOT create an MCQ, True/False, matching, fill-in-the-blank, or short-answer checkpoint. '
-                    . 'The application will decide when a formal checkpoint should be introduced.',
+                'Begin the learning session as a warm, well-organized teacher starting a real lesson. '
+                    . 'This is the ONE topic-level welcome for the session, so give the learner a clear mental map before asking them to think. '
+                    . 'Use this exact pedagogical order, with short readable headings: '
+                    . '1) WELCOME: greet the learner naturally and name the topic. '
+                    . '2) TOPIC OVERVIEW: in 2-4 student-friendly sentences, summarize what this topic is about, why it matters, and where it may be used. Stay strictly within approved material. '
+                    . '3) WHAT YOU WILL LEARN: convert ALL supplied learning objectives into concise learner-facing outcomes. Prefer wording such as "By the end of this topic, you should be able to..." Do not copy curriculum wording such as "Student should be able to". Keep every outcome faithful to the approved objective. '
+                    . '4) HOW WE WILL LEARN: explain briefly that each objective will include explanation, examples, guided practice, opportunities to ask questions, and a formal Check Understanding only after enough teaching and practice. Make clear that quick questions during teaching are low-stakes practice, not the formal check. '
+                    . '5) LEARNER GUIDANCE: tell the learner they may ask for another explanation, a different example, a visual where appropriate, slower teaching, clarification, or more practice at any time. '
+                    . '6) FIRST OBJECTIVE: clearly mark a new section such as "Objective 1 of N — ..." using a short learner-friendly objective title, then begin ONLY that current objective. '
+                    . 'For Objective 1, do NOT default to a definition-first explanation. Use a suitable hook: activate prior knowledge, present a familiar scenario, contrast examples, ask for a prediction, show a tiny problem, or use another simple situation grounded in approved material. '
+                    . 'Ask exactly ONE accessible diagnostic question when the learner\'s thinking would help you teach better, then STOP and wait for the response. Do not answer your own diagnostic question. '
+                    . 'The diagnostic question is not the lesson and is not a formal Check Understanding. After the learner replies, the Tutor must provide the substantive teaching phase before formal checking. '
+                    . 'Do not teach all objectives in this opening. The topic overview and outcomes orient the learner; detailed teaching belongs only to the current objective. '
+                    . 'Do not ask the learner what they want to study next; the application has already sequenced the objectives. '
+                    . 'Do NOT create an MCQ, True/False, matching, fill-in-the-blank, short-answer checkpoint, or other formal assessment in this opening. '
+                    . 'Keep the overall welcome concise enough to scan, but complete enough that a new learner knows the topic, expected outcomes, how the Tutor works, and what happens next.',
             ],
         ], $this->tutorUsageOptions(
             $session,
