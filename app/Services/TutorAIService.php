@@ -303,7 +303,8 @@ PROMPT;
                 'role' => 'user',
                 'content' =>
                     'The previous learning objective has been resolved and the student has chosen to continue. '
-                    . 'Move to the CURRENT objective with a brief bridge from the previous learning; do not greet the learner again. '
+                    . 'Move to the CURRENT objective with a brief, student-friendly bridge from what was just learned; do not greet the learner again. '
+                    . 'The first sentence should connect the previous objective to the new one in plain language (for example, "Now that you can..., let\'s use that idea to..."). '
                     . 'Do NOT default to definition-first teaching. Choose a short pedagogical hook suited to the objective: a familiar situation, prior-knowledge connection, example/non-example, prediction, small problem, realistic task, or short case. '
                     . 'Ask at most ONE purposeful conversational diagnostic question when the learner\'s response would genuinely shape the explanation, and stop for the response. '
                     . 'After that diagnostic response, teach the objective in sufficient depth before guided practice and before any formal checkpoint. '

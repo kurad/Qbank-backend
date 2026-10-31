@@ -936,57 +936,66 @@ class TutorCheckpointService
         $classification =
             $evaluation['classification'] ?? 'unclear';
 
-        if ($classification === 'correct') {
-            $parts[] = 'Correct.';
-        } elseif ($classification === 'partially_correct') {
-            $parts[] = 'You have part of the idea, but it is not complete yet.';
-        } elseif ($classification === 'incorrect') {
-            $parts[] = 'Not quite yet.';
+        $objectiveCompleted = !empty($progress['objective_completed']);
+        $sessionCompleted = !empty($progress['session_completed']);
+        $needsReview = ($progress['objective_status'] ?? null) === 'needs_review';
+
+        // Once an objective is resolved, keep the learner-facing feedback concise.
+        // The completion boundary in the conversation carries the transition; do not
+        // expose evaluator-style commentary such as "the checkpoint asks...".
+        if ($objectiveCompleted && !$needsReview) {
+            $parts[] = $sessionCompleted
+                ? 'Well done. You have completed this learning session.'
+                : 'Well done. You have completed this objective.';
         } else {
-            $parts[] = 'Your answer needs a little more clarification.';
+            if ($classification === 'correct') {
+                $parts[] = 'Correct.';
+            } elseif ($classification === 'partially_correct') {
+                $parts[] = 'You have part of the idea, but it is not complete yet.';
+            } elseif ($classification === 'incorrect') {
+                $parts[] = 'Not quite yet.';
+            } else {
+                $parts[] = 'Your answer needs a little more clarification.';
+            }
+
+            $evaluationFeedback = trim(
+                (string) ($evaluation['feedback'] ?? '')
+            );
+
+            if (
+                $evaluationFeedback !== ''
+                && !in_array(
+                    mb_strtolower(rtrim($evaluationFeedback, '.')),
+                    [
+                        'correct',
+                        'that option is not correct',
+                        'that classification is not correct',
+                    ],
+                    true
+                )
+            ) {
+                $parts[] = $evaluationFeedback;
+            }
+
+            $explanation = trim(
+                (string) (
+                    $evaluation['checkpoint_explanation']
+                    ?? $checkpoint['explanation']
+                    ?? ''
+                )
+            );
+
+            if ($explanation !== '') {
+                $parts[] = $explanation;
+            }
         }
 
-        $evaluationFeedback = trim(
-            (string) ($evaluation['feedback'] ?? '')
-        );
-
-        if (
-            $evaluationFeedback !== ''
-            && !in_array(
-                mb_strtolower(rtrim($evaluationFeedback, '.')),
-                [
-                    'correct',
-                    'that option is not correct',
-                    'that classification is not correct',
-                ],
-                true
-            )
-        ) {
-            $parts[] = $evaluationFeedback;
-        }
-
-        $explanation = trim(
-            (string) (
-                $evaluation['checkpoint_explanation']
-                ?? $checkpoint['explanation']
-                ?? ''
-            )
-        );
-
-        if ($explanation !== '') {
-            $parts[] = $explanation;
-        }
-
-        if (($progress['objective_status'] ?? null) === 'needs_review') {
-            $parts[] = !empty($progress['session_completed'])
+        if ($needsReview) {
+            $parts[] = $sessionCompleted
                 ? 'We will mark this objective for review with your teacher instead of keeping you on it. You have reached the end of this learning session.'
                 : 'We will mark this objective for review with your teacher and move on, rather than keeping you on the same concept. You can return to it later with extra support.';
-        } elseif (!empty($progress['session_completed'])) {
-            $parts[] =
-                'You have completed this learning session.';
-        } elseif (!empty($progress['objective_completed'])) {
-            $parts[] =
-                'You have demonstrated the required understanding for this objective. Continue when you are ready for the next objective.';
+        } elseif ($sessionCompleted || $objectiveCompleted) {
+            // Completion wording has already been added above.
         } elseif ($classification === 'correct') {
             $correctAttempts = (int) ($progress['correct_attempts'] ?? 0);
 
