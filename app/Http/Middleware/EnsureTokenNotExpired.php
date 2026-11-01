@@ -27,16 +27,21 @@ class EnsureTokenNotExpired
         }
 
         $ttlMinutes = 60;
+        $gracePeriodMinutes = 30;
 
         $expiredAt = $token->created_at->copy()->addMinutes($ttlMinutes);
 
         if (now()->greaterThan($expiredAt)) {
-            // Optional: delete the token once expired to keep table clean
-            $token->delete();
+            // Keep the token during the refresh grace period so the public
+            // /refresh-token endpoint can exchange it for a fresh token.
+            if (now()->greaterThan($expiredAt->copy()->addMinutes($gracePeriodMinutes))) {
+                $token->delete();
+            }
 
             return response()->json([
                 'message' => 'Token expired.',
                 'code' => 'TOKEN_EXPIRED',
+                'expires_at' => $expiredAt->toIso8601String(),
             ], 401);
         }
 

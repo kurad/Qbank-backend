@@ -129,6 +129,7 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     });
 
     Route::post('/logout', [AuthController::class, 'logout']);
+    Route::get('/session-info', [AuthController::class, 'sessionInfo']);
     Route::get('/admin/dashboard-summary', [AdminDashboardController::class, 'summary']);
     Route::get('/admin/ai-usage', [AIUsageController::class, 'index']);
 

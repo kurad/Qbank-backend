@@ -226,6 +226,28 @@ class AuthController extends Controller
                 ->get()
         );
     }
+    public function sessionInfo(Request $request)
+    {
+        $plainToken = $request->bearerToken();
+        if (!$plainToken) {
+            return response()->json(['message' => 'Authentication token is missing.'], 401);
+        }
+
+        $token = PersonalAccessToken::findToken($plainToken);
+        if (!$token) {
+            return response()->json(['message' => 'Invalid or unknown token.'], 401);
+        }
+
+        $ttlMinutes = 60;
+        $expiresAt = $token->created_at->copy()->addMinutes($ttlMinutes);
+
+        return response()->json([
+            'expires_at' => $expiresAt->toIso8601String(),
+            'server_now' => now()->toIso8601String(),
+            'ttl_minutes' => $ttlMinutes,
+        ]);
+    }
+
     public function logout(Request $request)
     {
         auth()->user()->tokens()->delete();
