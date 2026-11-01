@@ -154,15 +154,12 @@ class StudentPracticeController extends Controller
                                 ];
                             })
                             /*
-                             * Do not show empty topics as available
-                             * practice choices.
+                             * Keep every scheduled topic visible to the learner,
+                             * even when there are currently no approved practice
+                             * questions. The frontend can then show the real
+                             * learning structure and disable practice for topics
+                             * whose question_count is 0.
                              */
-                            ->filter(
-                                fn ($item) =>
-                                    $item[
-                                        'question_count'
-                                    ] > 0
-                            )
                             ->values();
 
                         return [
@@ -219,12 +216,12 @@ class StudentPracticeController extends Controller
                                 ),
                         ];
                     })
-                    ->filter(
-                        fn ($period) =>
-                            $period[
-                                'question_count'
-                            ] > 0
-                    )
+                    /*
+                     * Keep published/current-or-previous learning periods in
+                     * the practice context even when their current question
+                     * count is 0. Availability is communicated through the
+                     * question_count field instead of hiding the period.
+                     */
                     ->values();
 
                 if ($periodPayload->isEmpty()) {
