@@ -14,6 +14,7 @@ use App\Models\StudentQuestionHistory;
 use App\Models\Topic;
 use App\Services\TutorContextService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class StudentPracticeController extends Controller
 {
@@ -44,56 +45,72 @@ class StudentPracticeController extends Controller
         );
 
         /*
-         * Independent Practice is intentionally broader than Tutor and
-         * formal assessment delivery. Learners may practise any APPROVED
-         * question in their own school's question bank, regardless of class,
-         * learning period, or is_assessment_eligible.
+         * Build the catalogue from explicit Question Bank joins rather than
+         * relying on nested Eloquent relation serialization. This guarantees
+         * that every option has concrete grade/subject/unit/topic IDs and
+         * labels for the student UI.
          *
-         * We count answerable leaf questions. Parent stems are excluded from
-         * the count; their sub-questions are counted individually.
+         * Independent Practice includes approved answerable leaf questions
+         * from the learner's own school. It is intentionally independent of
+         * class membership, learning periods and is_assessment_eligible.
          */
-        $questions = Question::query()
-            ->where('status', 'approved')
-            ->where('question_type', '!=', 'parent')
-            ->whereDoesntHave('subQuestions')
-            ->whereHas('topic.gradeSubject', function ($query) use ($student) {
-                $query->where('school_id', $student->school_id);
+        $rows = DB::table('questions as q')
+            ->join('topics as t', 't.id', '=', 'q.topic_id')
+            ->join('grade_subjects as gs', 'gs.id', '=', 't.grade_subject_id')
+            ->join('grade_levels as gl', 'gl.id', '=', 'gs.grade_level_id')
+            ->join('subjects as s', 's.id', '=', 'gs.subject_id')
+            ->leftJoin('units as u', 'u.id', '=', 't.unit_id')
+            ->where('gs.school_id', $student->school_id)
+            ->where('q.status', 'approved')
+            ->where('q.question_type', '!=', 'parent')
+            ->whereNotExists(function ($query) {
+                $query->select(DB::raw(1))
+                    ->from('questions as child')
+                    ->whereColumn('child.parent_question_id', 'q.id');
             })
-            ->with([
-                'topic:id,grade_subject_id,unit_id,topic_name',
-                'topic.unit:id,grade_subject_id,name',
-                'topic.gradeSubject:id,school_id,grade_level_id,subject_id',
-                'topic.gradeSubject.gradeLevel:id,grade_name',
-                'topic.gradeSubject.subject:id,name',
-            ])
+            ->groupBy(
+                'gl.id',
+                'gl.grade_name',
+                'gs.id',
+                's.id',
+                's.name',
+                'u.id',
+                'u.name',
+                't.id',
+                't.topic_name'
+            )
+            ->orderBy('gl.grade_name')
+            ->orderBy('s.name')
+            ->orderByRaw("COALESCE(u.name, 'General topics')")
+            ->orderBy('t.topic_name')
             ->get([
-                'id',
-                'topic_id',
+                'gl.id as grade_id',
+                'gl.grade_name as grade_name',
+                'gs.id as grade_subject_id',
+                's.id as subject_id',
+                's.name as subject_name',
+                'u.id as unit_id',
+                DB::raw("COALESCE(u.name, 'General topics') as unit_name"),
+                't.id as topic_id',
+                't.topic_name as topic_name',
+                DB::raw('COUNT(q.id) as question_count'),
             ]);
 
         $grades = [];
 
-        foreach ($questions as $question) {
-            $topic = $question->topic;
-            $gradeSubject = $topic?->gradeSubject;
-            $gradeLevel = $gradeSubject?->gradeLevel;
-            $subject = $gradeSubject?->subject;
-
-            if (!$topic || !$gradeSubject || !$gradeLevel || !$subject) {
-                continue;
-            }
-
-            $gradeKey = (string) $gradeLevel->id;
-            $subjectKey = (string) $gradeSubject->id;
-            $unitKey = $topic->unit_id
-                ? (string) $topic->unit_id
+        foreach ($rows as $row) {
+            $gradeKey = (string) $row->grade_id;
+            $subjectKey = (string) $row->grade_subject_id;
+            $unitKey = $row->unit_id !== null
+                ? (string) $row->unit_id
                 : 'general';
-            $topicKey = (string) $topic->id;
+            $topicKey = (string) $row->topic_id;
+            $count = (int) $row->question_count;
 
             if (!isset($grades[$gradeKey])) {
                 $grades[$gradeKey] = [
-                    'id' => $gradeLevel->id,
-                    'grade_name' => $gradeLevel->grade_name,
+                    'id' => (int) $row->grade_id,
+                    'grade_name' => (string) $row->grade_name,
                     'question_count' => 0,
                     'subjects' => [],
                 ];
@@ -101,9 +118,9 @@ class StudentPracticeController extends Controller
 
             if (!isset($grades[$gradeKey]['subjects'][$subjectKey])) {
                 $grades[$gradeKey]['subjects'][$subjectKey] = [
-                    'id' => $gradeSubject->id,
-                    'subject_id' => $subject->id,
-                    'name' => $subject->name,
+                    'id' => (int) $row->grade_subject_id,
+                    'subject_id' => (int) $row->subject_id,
+                    'name' => (string) $row->subject_name,
                     'question_count' => 0,
                     'units' => [],
                 ];
@@ -111,26 +128,23 @@ class StudentPracticeController extends Controller
 
             if (!isset($grades[$gradeKey]['subjects'][$subjectKey]['units'][$unitKey])) {
                 $grades[$gradeKey]['subjects'][$subjectKey]['units'][$unitKey] = [
-                    'id' => $topic->unit_id,
+                    'id' => $row->unit_id !== null ? (int) $row->unit_id : null,
                     'key' => $unitKey,
-                    'name' => $topic->unit?->name ?? 'General topics',
+                    'name' => (string) $row->unit_name,
                     'question_count' => 0,
                     'topics' => [],
                 ];
             }
 
-            if (!isset($grades[$gradeKey]['subjects'][$subjectKey]['units'][$unitKey]['topics'][$topicKey])) {
-                $grades[$gradeKey]['subjects'][$subjectKey]['units'][$unitKey]['topics'][$topicKey] = [
-                    'id' => $topic->id,
-                    'topic_name' => $topic->topic_name,
-                    'question_count' => 0,
-                ];
-            }
+            $grades[$gradeKey]['subjects'][$subjectKey]['units'][$unitKey]['topics'][$topicKey] = [
+                'id' => (int) $row->topic_id,
+                'topic_name' => (string) $row->topic_name,
+                'question_count' => $count,
+            ];
 
-            $grades[$gradeKey]['question_count']++;
-            $grades[$gradeKey]['subjects'][$subjectKey]['question_count']++;
-            $grades[$gradeKey]['subjects'][$subjectKey]['units'][$unitKey]['question_count']++;
-            $grades[$gradeKey]['subjects'][$subjectKey]['units'][$unitKey]['topics'][$topicKey]['question_count']++;
+            $grades[$gradeKey]['question_count'] += $count;
+            $grades[$gradeKey]['subjects'][$subjectKey]['question_count'] += $count;
+            $grades[$gradeKey]['subjects'][$subjectKey]['units'][$unitKey]['question_count'] += $count;
         }
 
         $payload = collect($grades)
@@ -139,34 +153,22 @@ class StudentPracticeController extends Controller
                     ->map(function ($subject) {
                         $subject['units'] = collect($subject['units'])
                             ->map(function ($unit) {
-                                $unit['topics'] = collect($unit['topics'])
-                                    ->values()
-                                    ->sortBy('topic_name', SORT_NATURAL | SORT_FLAG_CASE)
-                                    ->values();
-
+                                $unit['topics'] = collect($unit['topics'])->values();
                                 return $unit;
                             })
-                            ->values()
-                            ->sortBy('name', SORT_NATURAL | SORT_FLAG_CASE)
                             ->values();
-
                         return $subject;
                     })
-                    ->values()
-                    ->sortBy('name', SORT_NATURAL | SORT_FLAG_CASE)
                     ->values();
-
                 return $grade;
             })
-            ->values()
-            ->sortBy('grade_name', SORT_NATURAL | SORT_FLAG_CASE)
             ->values();
 
         return response()->json([
             'data' => $payload,
             'meta' => [
-                'school_id' => $student->school_id,
-                'question_count' => $questions->count(),
+                'school_id' => (int) $student->school_id,
+                'question_count' => (int) $rows->sum('question_count'),
             ],
         ]);
     }
