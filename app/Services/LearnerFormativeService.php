@@ -518,18 +518,24 @@ class LearnerFormativeService
 
         // Fair round-robin allocation: every objective gets one before any
         // objective gets a second, and so on, until the 20-question cap.
+        //
+        // Do not mutate nested array values through Collection array access
+        // (e.g. $items[$index]['question_count']++). Laravel Collections use
+        // overloaded array access, so that indirect modification is ignored.
         for ($round = 0; $round < self::QUESTIONS_PER_OBJECTIVE && $remaining > 0; $round++) {
-            foreach ($items as $index => $item) {
+            foreach ($items->keys() as $index) {
                 if ($remaining <= 0) {
                     break;
                 }
 
-                $items[$index]['question_count']++;
+                $item = $items->get($index);
+                $item['question_count'] = (int) ($item['question_count'] ?? 0) + 1;
+                $items->put($index, $item);
                 $remaining--;
             }
         }
 
-        return $items;
+        return $items->values();
     }
 
     protected function selectObjectiveQuestions(Collection $pool, int $limit, string $seed): Collection
