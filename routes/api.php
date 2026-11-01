@@ -539,6 +539,7 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
 
 
     Route::get('/student/practice/context', [StudentPracticeController::class, 'context']);
+    Route::post('/student/practice/prepare', [StudentPracticeController::class, 'prepare']);
     Route::get('/student/practice/topics/{topic}/questions', [StudentPracticeController::class, 'questions']);
     Route::post('/student/practice/attempts', [StudentPracticeController::class, 'startAttempt']);
     Route::post('/student/practice/attempts/{practiceAttempt}/answers', [StudentPracticeController::class, 'saveAttemptAnswer']);

@@ -2,11 +2,15 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Assessment;
+use App\Models\AssessmentQuestion;
 use App\Models\Group;
 use App\Models\LearningPeriod;
 use App\Models\Question;
 use App\Models\PracticeAttempt;
 use App\Models\PracticeAttemptAnswer;
+use App\Models\StudentAssessment;
+use App\Models\StudentQuestionHistory;
 use App\Models\Topic;
 use App\Services\TutorContextService;
 use Illuminate\Http\Request;
@@ -19,17 +23,9 @@ class StudentPracticeController extends Controller
     }
 
     /**
-     * Return only practice content that belongs to classes the
-     * authenticated learner is enrolled in.
-     *
-     * Student practice context is:
-     *
-     * Class
-     * -> Published Learning Period
-     * -> Scheduled Topic
-     * -> Approved assessment-eligible questions
-     *
-     * We intentionally do not use users.grade_level_id.
+     * Build the Independent Practice catalogue directly from the learner's
+     * school question bank. Class membership and learning periods do not
+     * restrict independent practice.
      */
     public function context(Request $request)
     {
@@ -41,278 +37,278 @@ class StudentPracticeController extends Controller
             'Only students can access practice.'
         );
 
-        $groups = $this->context
-            ->studentGroups($student);
+        abort_unless(
+            $student->school_id,
+            422,
+            'Your account is not linked to a school yet.'
+        );
 
-        $today = now()->toDateString();
+        /*
+         * Independent Practice is intentionally broader than Tutor and
+         * formal assessment delivery. Learners may practise any APPROVED
+         * question in their own school's question bank, regardless of class,
+         * learning period, or is_assessment_eligible.
+         *
+         * We count answerable leaf questions. Parent stems are excluded from
+         * the count; their sub-questions are counted individually.
+         */
+        $questions = Question::query()
+            ->where('status', 'approved')
+            ->where('question_type', '!=', 'parent')
+            ->whereDoesntHave('subQuestions')
+            ->whereHas('topic.gradeSubject', function ($query) use ($student) {
+                $query->where('school_id', $student->school_id);
+            })
+            ->with([
+                'topic:id,grade_subject_id,unit_id,topic_name',
+                'topic.unit:id,grade_subject_id,name',
+                'topic.gradeSubject:id,school_id,grade_level_id,subject_id',
+                'topic.gradeSubject.gradeLevel:id,grade_name',
+                'topic.gradeSubject.subject:id,name',
+            ])
+            ->get([
+                'id',
+                'topic_id',
+            ]);
 
-        $payload = $groups
-            ->map(function ($group) use ($student, $today) {
-                $model = Group::with([
-                    'gradeSubject.subject:id,name',
-                    'gradeSubject.gradeLevel:id,grade_name',
-                ])->find($group->id);
+        $grades = [];
 
-                if (!$model) {
-                    return null;
-                }
+        foreach ($questions as $question) {
+            $topic = $question->topic;
+            $gradeSubject = $topic?->gradeSubject;
+            $gradeLevel = $gradeSubject?->gradeLevel;
+            $subject = $gradeSubject?->subject;
 
-                /*
-                 * Practice may include current and previously-started
-                 * published learning periods, but not future periods.
-                 */
-                $periods = $this->context
-                    ->learningPeriodsForStudent(
-                        $student,
-                        $model,
-                        false
-                    )
-                    ->filter(
-                        fn (LearningPeriod $period) =>
-                            $period->start_date
-                                ->toDateString()
-                            <= $today
-                    )
-                    ->values();
+            if (!$topic || !$gradeSubject || !$gradeLevel || !$subject) {
+                continue;
+            }
 
-                $topicIds = $periods
-                    ->flatMap(
-                        fn (LearningPeriod $period) =>
-                            $period->topics
-                                ->pluck('topic_id')
-                    )
-                    ->filter()
-                    ->unique()
-                    ->values();
+            $gradeKey = (string) $gradeLevel->id;
+            $subjectKey = (string) $gradeSubject->id;
+            $unitKey = $topic->unit_id
+                ? (string) $topic->unit_id
+                : 'general';
+            $topicKey = (string) $topic->id;
 
-                $questionCounts = Question::query()
-                    ->whereIn(
-                        'topic_id',
-                        $topicIds
-                    )
-                    ->whereNull(
-                        'parent_question_id'
-                    )
-                    ->where(
-                        'status',
-                        'approved'
-                    )
-                    ->where(
-                        'is_assessment_eligible',
-                        true
-                    )
-                    ->selectRaw(
-                        'topic_id, COUNT(*) as aggregate'
-                    )
-                    ->groupBy('topic_id')
-                    ->pluck(
-                        'aggregate',
-                        'topic_id'
-                    );
+            if (!isset($grades[$gradeKey])) {
+                $grades[$gradeKey] = [
+                    'id' => $gradeLevel->id,
+                    'grade_name' => $gradeLevel->grade_name,
+                    'question_count' => 0,
+                    'subjects' => [],
+                ];
+            }
 
-                $periodPayload = $periods
-                    ->map(function (
-                        LearningPeriod $period
-                    ) use (
-                        $questionCounts,
-                        $today
-                    ) {
-                        $topics = $period
-                            ->topics
-                            ->map(function ($item) use (
-                                $questionCounts
-                            ) {
-                                return [
-                                    'id' =>
-                                        $item->id,
+            if (!isset($grades[$gradeKey]['subjects'][$subjectKey])) {
+                $grades[$gradeKey]['subjects'][$subjectKey] = [
+                    'id' => $gradeSubject->id,
+                    'subject_id' => $subject->id,
+                    'name' => $subject->name,
+                    'question_count' => 0,
+                    'units' => [],
+                ];
+            }
 
-                                    'unit_id' =>
-                                        $item->unit_id,
+            if (!isset($grades[$gradeKey]['subjects'][$subjectKey]['units'][$unitKey])) {
+                $grades[$gradeKey]['subjects'][$subjectKey]['units'][$unitKey] = [
+                    'id' => $topic->unit_id,
+                    'key' => $unitKey,
+                    'name' => $topic->unit?->name ?? 'General topics',
+                    'question_count' => 0,
+                    'topics' => [],
+                ];
+            }
 
-                                    'unit_name' =>
-                                        $item->unit?->name,
+            if (!isset($grades[$gradeKey]['subjects'][$subjectKey]['units'][$unitKey]['topics'][$topicKey])) {
+                $grades[$gradeKey]['subjects'][$subjectKey]['units'][$unitKey]['topics'][$topicKey] = [
+                    'id' => $topic->id,
+                    'topic_name' => $topic->topic_name,
+                    'question_count' => 0,
+                ];
+            }
 
-                                    'topic_id' =>
-                                        $item->topic_id,
+            $grades[$gradeKey]['question_count']++;
+            $grades[$gradeKey]['subjects'][$subjectKey]['question_count']++;
+            $grades[$gradeKey]['subjects'][$subjectKey]['units'][$unitKey]['question_count']++;
+            $grades[$gradeKey]['subjects'][$subjectKey]['units'][$unitKey]['topics'][$topicKey]['question_count']++;
+        }
 
-                                    'topic_name' =>
-                                        $item
-                                            ->topic
-                                            ?->topic_name,
+        $payload = collect($grades)
+            ->map(function ($grade) {
+                $grade['subjects'] = collect($grade['subjects'])
+                    ->map(function ($subject) {
+                        $subject['units'] = collect($subject['units'])
+                            ->map(function ($unit) {
+                                $unit['topics'] = collect($unit['topics'])
+                                    ->values()
+                                    ->sortBy('topic_name', SORT_NATURAL | SORT_FLAG_CASE)
+                                    ->values();
 
-                                    'display_order' =>
-                                        $item
-                                            ->display_order,
-
-                                    'question_count' =>
-                                        (int) (
-                                            $questionCounts[
-                                                $item->topic_id
-                                            ]
-                                            ?? 0
-                                        ),
-                                ];
+                                return $unit;
                             })
-                            /*
-                             * Keep every scheduled topic visible to the learner,
-                             * even when there are currently no approved practice
-                             * questions. The frontend can then show the real
-                             * learning structure and disable practice for topics
-                             * whose question_count is 0.
-                             */
+                            ->values()
+                            ->sortBy('name', SORT_NATURAL | SORT_FLAG_CASE)
                             ->values();
 
-                        return [
-                            'id' =>
-                                $period->id,
-
-                            'title' =>
-                                $period->title,
-
-                            'description' =>
-                                $period
-                                    ->description,
-
-                            'start_date' =>
-                                $period
-                                    ->start_date
-                                    ?->toDateString(),
-
-                            'end_date' =>
-                                $period
-                                    ->end_date
-                                    ?->toDateString(),
-
-                            'learning_state' =>
-                                $period
-                                    ->end_date
-                                    ->toDateString()
-                                < $today
-                                    ? 'previous'
-                                    : 'current',
-
-                            'subject' =>
-                                $period
-                                    ->gradeSubject
-                                    ?->subject
-                                    ?->name,
-
-                            'grade' =>
-                                $period
-                                    ->gradeSubject
-                                    ?->gradeLevel
-                                    ?->grade_name,
-
-                            'grade_subject_id' =>
-                                $period
-                                    ->grade_subject_id,
-
-                            'topics' =>
-                                $topics,
-
-                            'question_count' =>
-                                $topics->sum(
-                                    'question_count'
-                                ),
-                        ];
+                        return $subject;
                     })
-                    /*
-                     * Keep published/current-or-previous learning periods in
-                     * the practice context even when their current question
-                     * count is 0. Availability is communicated through the
-                     * question_count field instead of hiding the period.
-                     */
+                    ->values()
+                    ->sortBy('name', SORT_NATURAL | SORT_FLAG_CASE)
                     ->values();
 
-                if ($periodPayload->isEmpty()) {
-                    return [
-                        'id' =>
-                            $model->id,
-
-                        'group_name' =>
-                            $model->group_name,
-
-                        'class_code' =>
-                            $model->class_code,
-
-                        'academic_year' =>
-                            $model->academic_year,
-
-                        'subject' =>
-                            $model
-                                ->gradeSubject
-                                ?->subject
-                                ?->name,
-
-                        'grade' =>
-                            $model
-                                ->gradeSubject
-                                ?->gradeLevel
-                                ?->grade_name,
-
-                        'grade_subject_id' =>
-                            $model
-                                ->grade_subject_id,
-
-                        'learning_periods' =>
-                            [],
-
-                        'question_count' =>
-                            0,
-                    ];
-                }
-
-                return [
-                    'id' =>
-                        $model->id,
-
-                    'group_name' =>
-                        $model->group_name,
-
-                    'class_code' =>
-                        $model->class_code,
-
-                    'academic_year' =>
-                        $model->academic_year,
-
-                    'subject' =>
-                        $model
-                            ->gradeSubject
-                            ?->subject
-                            ?->name,
-
-                    'grade' =>
-                        $model
-                            ->gradeSubject
-                            ?->gradeLevel
-                            ?->grade_name,
-
-                    'grade_subject_id' =>
-                        $model
-                            ->grade_subject_id,
-
-                    'learning_periods' =>
-                        $periodPayload,
-
-                    'question_count' =>
-                        $periodPayload->sum(
-                            'question_count'
-                        ),
-                ];
+                return $grade;
             })
-            ->filter()
+            ->values()
+            ->sortBy('grade_name', SORT_NATURAL | SORT_FLAG_CASE)
             ->values();
 
         return response()->json([
             'data' => $payload,
+            'meta' => [
+                'school_id' => $student->school_id,
+                'question_count' => $questions->count(),
+            ],
         ]);
     }
 
     /**
-     * Return approved questions only after verifying that:
-     * - learner belongs to the class;
-     * - learning period belongs to that class;
-     * - topic is explicitly scheduled in that learning period.
+     * Create a normal RevisionHub practice assessment from any approved
+     * question-bank topic in the learner's own school.
+     *
+     * This is independent practice: class membership and learning periods
+     * are intentionally not required.
+     */
+    public function prepare(Request $request)
+    {
+        $student = $request->user();
+
+        abort_unless(
+            $student && $student->role === 'student',
+            403,
+            'Only students can start practice.'
+        );
+
+        abort_unless(
+            $student->school_id,
+            422,
+            'Your account is not linked to a school yet.'
+        );
+
+        $validated = $request->validate([
+            'topic_id' => ['required', 'integer', 'exists:topics,id'],
+            'mode' => ['required', 'in:all,custom,unpracticed'],
+            'limit' => ['nullable', 'integer', 'min:1', 'max:100'],
+        ]);
+
+        $topic = Topic::query()
+            ->whereKey($validated['topic_id'])
+            ->whereHas('gradeSubject', function ($query) use ($student) {
+                $query->where('school_id', $student->school_id);
+            })
+            ->with([
+                'gradeSubject.gradeLevel:id,grade_name',
+                'gradeSubject.subject:id,name',
+                'unit:id,name',
+            ])
+            ->firstOrFail();
+
+        $baseQuery = Question::query()
+            ->where('topic_id', $topic->id)
+            ->where('status', 'approved')
+            ->where('question_type', '!=', 'parent')
+            ->whereDoesntHave('subQuestions');
+
+        $availableCount = (clone $baseQuery)->count();
+
+        if ($availableCount === 0) {
+            return response()->json([
+                'message' => 'No approved practice questions are available for this topic yet.',
+            ], 404);
+        }
+
+        $mode = $validated['mode'];
+        $limit = $validated['limit'] ?? null;
+
+        if ($mode === 'custom' && !$limit) {
+            return response()->json([
+                'message' => 'Choose how many questions you want to practise.',
+            ], 422);
+        }
+
+        if ($mode === 'unpracticed') {
+            if (!$limit) {
+                $limit = min(10, $availableCount);
+            }
+
+            $practicedIds = StudentQuestionHistory::query()
+                ->where('student_id', $student->id)
+                ->pluck('question_id');
+
+            if ($practicedIds->isNotEmpty()) {
+                $baseQuery->whereNotIn('id', $practicedIds);
+            }
+        }
+
+        $questions = match ($mode) {
+            'all' => $baseQuery->inRandomOrder()->get(),
+            default => $baseQuery
+                ->inRandomOrder()
+                ->take(min((int) $limit, 100))
+                ->get(),
+        };
+
+        if ($questions->isEmpty()) {
+            return response()->json([
+                'message' => $mode === 'unpracticed'
+                    ? 'You have already practised all available questions in this topic.'
+                    : 'No approved practice questions are available for this topic.',
+            ], 404);
+        }
+
+        $subjectName = $topic->gradeSubject?->subject?->name ?? 'Subject';
+        $topicName = $topic->topic_name ?? 'Topic';
+
+        $practiceAssessment = Assessment::create([
+            'type' => 'practice',
+            'title' => "Practice: {$subjectName} - {$topicName}",
+            'creator_id' => $student->id,
+            'question_count' => $questions->count(),
+            'due_date' => now()->addDay(),
+            'is_timed' => false,
+            'time_limit' => null,
+        ]);
+
+        $practiceAssessment->topics()->attach($topic->id);
+
+        foreach ($questions->values() as $order => $question) {
+            AssessmentQuestion::create([
+                'assessment_id' => $practiceAssessment->id,
+                'question_id' => $question->id,
+                'order' => $order + 1,
+            ]);
+        }
+
+        $studentAssessment = StudentAssessment::create([
+            'student_id' => $student->id,
+            'assessment_id' => $practiceAssessment->id,
+            'started_at' => now(),
+        ]);
+
+        return response()->json([
+            'message' => 'Practice prepared successfully.',
+            'assessment' => $practiceAssessment,
+            'student_assessment' => $studentAssessment,
+            'meta' => [
+                'available_questions' => $availableCount,
+                'selected_questions' => $questions->count(),
+                'mode' => $mode,
+            ],
+        ], 201);
+    }
+
+    /**
+     * Return approved answerable questions for a topic in the learner's
+     * school. Independent Practice does not require class or period IDs.
      */
     public function questions(
         Request $request,
@@ -326,112 +322,42 @@ class StudentPracticeController extends Controller
             'Only students can access practice.'
         );
 
-        $validated = $request->validate([
-            'group_id' => [
-                'required',
-                'integer',
-                'exists:groups,id',
-            ],
-
-            'learning_period_id' => [
-                'required',
-                'integer',
-                'exists:learning_periods,id',
-            ],
-        ]);
-
-        $group = Group::findOrFail(
-            $validated['group_id']
+        abort_unless(
+            $student->school_id,
+            422,
+            'Your account is not linked to a school yet.'
         );
 
-        $period = LearningPeriod::with([
-            'topics',
-        ])->findOrFail(
-            $validated[
-                'learning_period_id'
-            ]
-        );
-
-        /*
-         * Reuse the Tutor context access checks rather than
-         * trusting IDs supplied by the browser.
-         */
-        $allowedPeriods =
-            $this->context
-                ->learningPeriodsForStudent(
-                    $student,
-                    $group,
-                    false
-                );
+        $allowed = Topic::query()
+            ->whereKey($topic->id)
+            ->whereHas('gradeSubject', function ($query) use ($student) {
+                $query->where('school_id', $student->school_id);
+            })
+            ->exists();
 
         abort_unless(
-            $allowedPeriods->contains(
-                'id',
-                $period->id
-            ),
+            $allowed,
             403,
-            'This learning period is not available to you.'
-        );
-
-        abort_unless(
-            $period->start_date
-                ->toDateString()
-            <= now()->toDateString(),
-            403,
-            'This learning period has not started yet.'
-        );
-
-        abort_unless(
-            $period
-                ->topics
-                ->contains(
-                    fn ($item) =>
-                        (int) $item->topic_id
-                        === (int) $topic->id
-                ),
-            403,
-            'This topic is not scheduled in the selected learning period.'
+            'This topic is not available in your school question bank.'
         );
 
         $questions = Question::query()
-            ->where(
-                'topic_id',
-                $topic->id
-            )
-            ->whereNull(
-                'parent_question_id'
-            )
-            ->where(
-                'status',
-                'approved'
-            )
-            ->where(
-                'is_assessment_eligible',
-                true
-            )
+            ->where('topic_id', $topic->id)
+            ->where('status', 'approved')
+            ->where('question_type', '!=', 'parent')
+            ->whereDoesntHave('subQuestions')
             ->with([
                 'learningObjective:id,topic_id,code,objective',
-                'subQuestions.learningObjective:id,topic_id,code,objective',
+                'parent:id,topic_id,question,question_type,options,is_math',
             ])
             ->inRandomOrder()
             ->get();
 
         return response()->json([
-            'data' =>
-                $questions
-                    ->values(),
+            'data' => $questions->values(),
             'meta' => [
-                'group_id' =>
-                    $group->id,
-
-                'learning_period_id' =>
-                    $period->id,
-
-                'topic_id' =>
-                    $topic->id,
-
-                'question_count' =>
-                    $questions->count(),
+                'topic_id' => $topic->id,
+                'question_count' => $questions->count(),
             ],
         ]);
     }
