@@ -474,13 +474,15 @@ class TeacherGradebookService
 
         $attempts = $attemptQuery
             ->with([
-                'assessment:id,title,type,creator_id,due_date,delivery_mode,status',
+                'assessment:id,title,type,purpose,creator_id,due_date,delivery_mode,status',
                 'assessment.groups' => fn ($q) => $q
                     ->whereIn('groups.id', $groupIds)
                     ->select('groups.id', 'group_name', 'grade_subject_id', 'academic_year'),
                 'assessment.assessmentQuestions.question:id,marks',
-                'studentAnswers.question:id,question_type,question,marks,correct_answer,explanation,question_image,correct_answer_image,learning_objective_id',
+                'studentAnswers.question:id,question_type,question,options,marks,correct_answer,explanation,question_image,correct_answer_image,learning_objective_id',
                 'studentAnswers.question.learningObjective:id,code,objective',
+                'studentAnswers.reviewedBy:id,name',
+                'studentAnswers.markReviews.reviewer:id,name',
             ])
             ->orderByDesc('completed_at')
             ->orderByDesc('assigned_at')
@@ -502,6 +504,8 @@ class TeacherGradebookService
                     'assessment_id' => $attempt->assessment_id,
                     'title' => $attempt->assessment?->title,
                     'type' => $attempt->assessment?->type,
+                    'purpose' => $attempt->assessment?->purpose,
+                    'is_formative' => $attempt->assessment?->type === 'formative',
                     'delivery_mode' => $attempt->assessment?->delivery_mode,
                     'status' => $attempt->status,
                     'score' => round((float) $attempt->score, 2),
@@ -513,18 +517,35 @@ class TeacherGradebookService
                     'answers' => $attempt->studentAnswers->map(function (StudentAnswer $answer) {
                         $question = $answer->question;
 
+                        $reviews = $answer->markReviews ?? collect();
+                        $firstReview = $reviews->first();
+
                         return [
                             'id' => $answer->id,
                             'question_id' => $answer->question_id,
                             'question_type' => $question?->question_type,
                             'question' => $question?->question,
                             'question_image_url' => $question?->question_image_url,
+                            'options' => $question?->options,
+                            'correct_answer' => $question?->correct_answer,
+                            'explanation' => $question?->explanation,
                             'answer' => $answer->answer,
+                            'system_points' => (float) ($firstReview?->previous_points ?? $answer->points_earned ?? 0),
                             'points_earned' => (float) ($answer->points_earned ?? 0),
                             'marks' => (float) ($question?->marks ?? 0),
                             'is_correct' => $answer->is_correct,
                             'reviewed_at' => optional($answer->reviewed_at)->toDateTimeString(),
+                            'reviewed_by' => $answer->reviewedBy?->name,
                             'teacher_feedback' => $answer->teacher_feedback,
+                            'review_count' => $reviews->count(),
+                            'review_history' => $reviews->map(fn ($review) => [
+                                'id' => $review->id,
+                                'previous_points' => (float) $review->previous_points,
+                                'new_points' => (float) $review->new_points,
+                                'feedback' => $review->feedback,
+                                'reviewed_by' => $review->reviewer?->name,
+                                'reviewed_at' => optional($review->created_at)->toDateTimeString(),
+                            ])->values()->all(),
                             'objective_code' => $question?->learningObjective?->code,
                             'objective' => $question?->learningObjective?->objective,
                         ];
