@@ -389,6 +389,127 @@ class HomeController extends Controller
                 ->count();
 
         /*
+         * Student-facing topic progress for the current learning periods.
+         *
+         * Keep this pedagogical and easy to understand: students see where
+         * each topic stands (not started / learning / needs review / mastered)
+         * plus objective progress. Internal evaluation scores are deliberately
+         * not exposed.
+         */
+        $topicProgress = $currentTopicAssignments
+            ->map(function ($assignment) use (
+                $currentTutorSessions,
+                $currentTutorObjectives
+            ) {
+                $period = $assignment->dashboard_period;
+                $topic = $assignment->topic;
+
+                if (!$period || !$topic) {
+                    return null;
+                }
+
+                $objectiveIds = $topic->learningObjectives
+                    ?->where('status', 'active')
+                    ->pluck('id')
+                    ->map(fn ($id) => (int) $id)
+                    ->values()
+                    ?? collect();
+
+                $objectiveRows = $currentTutorObjectives
+                    ->whereIn('learning_objective_id', $objectiveIds);
+
+                $states = $objectiveRows
+                    ->filter(fn ($row) => $row->learning_objective_id)
+                    ->groupBy('learning_objective_id')
+                    ->map(function ($rows) {
+                        if ($rows->contains('status', 'completed')) {
+                            return 'completed';
+                        }
+
+                        if ($rows->contains('status', 'needs_review')) {
+                            return 'needs_review';
+                        }
+
+                        if ($rows->contains('status', 'in_progress')) {
+                            return 'in_progress';
+                        }
+
+                        return 'not_started';
+                    });
+
+                $totalObjectives = $objectiveIds->count();
+                $masteredObjectives = $states
+                    ->filter(fn ($status) => $status === 'completed')
+                    ->count();
+                $reviewObjectives = $states
+                    ->filter(fn ($status) => $status === 'needs_review')
+                    ->count();
+                $activeObjectives = $states
+                    ->filter(fn ($status) => $status === 'in_progress')
+                    ->count();
+                $resolvedObjectives = $masteredObjectives + $reviewObjectives;
+
+                $latestSession = $currentTutorSessions
+                    ->first(function ($session) use ($period, $topic) {
+                        return (int) $session->learning_period_id === (int) $period->id
+                            && (int) $session->topic_id === (int) $topic->id;
+                    });
+
+                $covered = $latestSession?->status === 'completed'
+                    || ($totalObjectives > 0 && $resolvedObjectives >= $totalObjectives);
+
+                if ($covered && $reviewObjectives > 0) {
+                    $status = 'needs_review';
+                    $statusLabel = 'Needs review';
+                } elseif ($covered) {
+                    $status = 'mastered';
+                    $statusLabel = 'Mastered';
+                } elseif ($latestSession?->status === 'active' || $activeObjectives > 0 || $states->isNotEmpty()) {
+                    $status = 'learning';
+                    $statusLabel = 'Learning';
+                } else {
+                    $status = 'not_started';
+                    $statusLabel = 'Not started';
+                }
+
+                $progressPercent = $covered
+                    ? 100
+                    : ($totalObjectives > 0
+                        ? round(($resolvedObjectives / $totalObjectives) * 100, 1)
+                        : 0);
+
+                return [
+                    'learning_period_id' => $period->id,
+                    'learning_period' => $period->title,
+                    'group_id' => $period->group_id,
+                    'grade_subject_id' => $period->grade_subject_id,
+                    'subject' => $period->gradeSubject?->subject?->name,
+                    'grade' => $period->gradeSubject?->gradeLevel?->grade_name,
+                    'topic_id' => $topic->id,
+                    'topic' => $topic->topic_name,
+                    'unit_id' => $assignment->unit_id,
+                    'unit' => $assignment->unit?->name,
+                    'display_order' => (int) ($assignment->display_order ?? 0),
+                    'status' => $status,
+                    'status_label' => $statusLabel,
+                    'progress_percent' => $progressPercent,
+                    'total_objectives' => $totalObjectives,
+                    'mastered_objectives' => $masteredObjectives,
+                    'needs_review_objectives' => $reviewObjectives,
+                    'active_objectives' => $activeObjectives,
+                    'resolved_objectives' => $resolvedObjectives,
+                    'session_id' => $latestSession?->id,
+                    'last_activity_at' => optional($latestSession?->last_activity_at)?->toIso8601String(),
+                ];
+            })
+            ->filter()
+            ->sortBy([
+                ['learning_period_id', 'asc'],
+                ['display_order', 'asc'],
+            ])
+            ->values();
+
+        /*
          * Prefer an ACTIVE Tutor session in a current learning
          * period. This is the learner's real ongoing topic.
          */
@@ -765,6 +886,7 @@ class HomeController extends Controller
                 'current_periods' => $currentLearningPeriods->count(),
             ],
             'current_learning' => $currentLearning,
+            'topic_progress' => $topicProgress,
             'subjectPerformance' => $subjectPerformance,
             'recentScores' => $recentScores,
             'weeklyProgress' => $lastSixWeeks->values(),
