@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Question;
 use App\Models\LearningPeriod;
 use App\Models\StudentAssessment;
+use App\Models\StudentAnswer;
 use App\Models\Subject;
 use App\Models\Topic;
 use App\Models\TutorSession;
@@ -95,6 +96,25 @@ class HomeController extends Controller
         $assessmentCompletionRate = $totalAssessments > 0
             ? round(($completedAssessments / $totalAssessments) * 100, 1)
             : 0;
+
+        // Accuracy is based only on answers for which the system/teacher has
+        // a resolved correctness value. Open-ended answers awaiting review are
+        // intentionally excluded rather than counted as incorrect.
+        $resolvedAnswerQuery = StudentAnswer::query()
+            ->whereNotNull('is_correct')
+            ->whereHas('studentAssessment', function ($query) use ($user) {
+                $query->where('student_id', $user->id)
+                    ->whereIn('status', ['completed', 'graded']);
+            });
+
+        $resolvedAnswerCount = (clone $resolvedAnswerQuery)->count();
+        $correctAnswerCount = (clone $resolvedAnswerQuery)
+            ->where('is_correct', true)
+            ->count();
+
+        $assessmentAccuracy = $resolvedAnswerCount > 0
+            ? round(($correctAnswerCount / $resolvedAnswerCount) * 100, 1)
+            : null;
 
         $totalPractices = $studentAssessments
             ->filter(fn ($item) => $item->assessment?->type === 'practice')
@@ -869,6 +889,8 @@ class HomeController extends Controller
                 'assessment_completion_rate' => $assessmentCompletionRate,
                 'average_score' => $averageScore,
                 'best_score' => $bestScore,
+                'accuracy' => $assessmentAccuracy,
+                'accuracy_answer_count' => $resolvedAnswerCount,
                 'total_practices' => $totalPractices,
                 'tutor_sessions' => $tutorSessions->count(),
                 'active_tutor_sessions' => $tutorSessions->where('status', 'active')->count(),

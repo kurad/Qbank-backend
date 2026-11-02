@@ -751,8 +751,9 @@ class AssessmentController extends Controller
             return response()->json(['message' => 'Unauthorized'], 403);
         }
 
-        // Ensure the assessment is completed
-        if ($studentAssessment->status !== 'completed') {
+        // Completed assessments remain reviewable after a teacher re-marks
+        // them and the status moves to `graded`.
+        if (!in_array($studentAssessment->status, ['completed', 'graded'], true)) {
             return response()->json(['message' => 'Assessment not completed yet'], 400);
         }
 
