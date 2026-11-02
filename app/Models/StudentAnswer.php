@@ -47,5 +47,10 @@ class StudentAnswer extends Model
     {
         return $this->belongsTo(User::class, 'reviewed_by');
     }
+
+    public function markReviews()
+    {
+        return $this->hasMany(StudentAnswerMarkReview::class, 'student_answer_id')->oldest('id');
+    }
     
 }

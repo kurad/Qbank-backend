@@ -6,9 +6,11 @@ use App\Models\Assessment;
 use App\Models\Group;
 use App\Models\StudentAssessment;
 use App\Models\StudentAnswer;
+use App\Models\StudentAnswerMarkReview;
 use App\Models\TutorResponseEvaluation;
 use App\Models\User;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 
 class TeacherGradebookService
 {
@@ -704,6 +706,212 @@ class TeacherGradebookService
             'assessment_score' => (float) $attempt->score,
             'assessment_max_score' => (float) $attempt->max_score,
             'remaining_manual_answers' => $remaining,
+        ];
+    }
+
+
+    public function formativeReview(User $teacher, array $filters = []): Collection
+    {
+        $this->ensureTeacherOrAdmin($teacher);
+
+        $groups = $this->accessibleGroups($teacher, $filters);
+        $groupIds = $groups->pluck('id')->all();
+
+        if (empty($groupIds)) {
+            return collect();
+        }
+
+        $query = StudentAssessment::query()
+            ->whereHas('assessment', function ($assessment) use ($groupIds, $filters) {
+                $assessment
+                    ->where('type', 'formative')
+                    ->whereHas('groups', fn ($g) => $g->whereIn('groups.id', $groupIds));
+
+            })
+            ->whereIn('status', ['completed', 'graded', 'under_review']);
+
+        if (!empty($filters['from'])) {
+            $query->whereDate('completed_at', '>=', $filters['from']);
+        }
+
+        if (!empty($filters['to'])) {
+            $query->whereDate('completed_at', '<=', $filters['to']);
+        }
+
+        return $query
+            ->with([
+                'student:id,name,email',
+                'assessment:id,title,type,purpose,learning_period_id',
+                'assessment.learningPeriod:id,title',
+                'assessment.groups' => fn ($q) => $q
+                    ->whereIn('groups.id', $groupIds)
+                    ->select('groups.id', 'group_name'),
+                'studentAnswers.question:id,question_type,question,options,correct_answer,marks,explanation,question_image,learning_objective_id',
+                'studentAnswers.question.learningObjective:id,code,objective',
+                'studentAnswers.reviewedBy:id,name',
+                'studentAnswers.markReviews.reviewer:id,name',
+            ])
+            ->orderByDesc('completed_at')
+            ->orderByDesc('id')
+            ->get()
+            ->map(function (StudentAssessment $attempt) {
+                $answers = $attempt->studentAnswers
+                    ->sortBy('id')
+                    ->map(function (StudentAnswer $answer) {
+                        $question = $answer->question;
+                        $reviews = $answer->markReviews ?? collect();
+                        $firstReview = $reviews->first();
+
+                        return [
+                            'answer_id' => $answer->id,
+                            'question_id' => $answer->question_id,
+                            'question_type' => $question?->question_type,
+                            'question' => $question?->question,
+                            'question_image_url' => $question?->question_image_url,
+                            'options' => $question?->options,
+                            'correct_answer' => $question?->correct_answer,
+                            'explanation' => $question?->explanation,
+                            'marks' => (float) ($question?->marks ?? 0),
+                            'student_answer' => $answer->answer,
+                            'system_points' => (float) ($firstReview?->previous_points ?? $answer->points_earned ?? 0),
+                            'current_points' => (float) ($answer->points_earned ?? 0),
+                            'system_is_correct' => $firstReview
+                                ? $firstReview->previous_is_correct
+                                : $answer->is_correct,
+                            'current_is_correct' => $answer->is_correct,
+                            'teacher_feedback' => $answer->teacher_feedback,
+                            'reviewed_at' => optional($answer->reviewed_at)->toDateTimeString(),
+                            'reviewed_by' => $answer->reviewedBy?->name,
+                            'review_count' => $reviews->count(),
+                            'objective_code' => $question?->learningObjective?->code,
+                            'objective' => $question?->learningObjective?->objective,
+                            'review_history' => $reviews->map(fn ($review) => [
+                                'id' => $review->id,
+                                'previous_points' => (float) $review->previous_points,
+                                'new_points' => (float) $review->new_points,
+                                'feedback' => $review->feedback,
+                                'reviewed_by' => $review->reviewer?->name,
+                                'reviewed_at' => optional($review->created_at)->toDateTimeString(),
+                            ])->values()->all(),
+                        ];
+                    })
+                    ->values();
+
+                return [
+                    'student_assessment_id' => $attempt->id,
+                    'student_id' => $attempt->student_id,
+                    'student_name' => $attempt->student?->name,
+                    'student_email' => $attempt->student?->email,
+                    'assessment_id' => $attempt->assessment_id,
+                    'assessment_title' => $attempt->assessment?->title,
+                    'assessment_purpose' => $attempt->assessment?->purpose,
+                    'learning_period' => $attempt->assessment?->learningPeriod?->title,
+                    'classes' => $attempt->assessment?->groups?->pluck('group_name')->values()->all() ?? [],
+                    'status' => $attempt->status,
+                    'score' => (float) ($attempt->score ?? 0),
+                    'max_score' => (float) ($attempt->max_score ?? 0),
+                    'completed_at' => optional($attempt->completed_at)->toDateTimeString(),
+                    'answers' => $answers->all(),
+                    'reviewed_answers' => $answers->where('review_count', '>', 0)->count(),
+                    'answer_count' => $answers->count(),
+                ];
+            })
+            ->values();
+    }
+
+    public function reviewFormativeAnswer(
+        User $teacher,
+        StudentAnswer $answer,
+        float $points,
+        ?string $feedback = null
+    ): array {
+        $this->ensureTeacherOrAdmin($teacher);
+
+        $answer->loadMissing([
+            'question:id,question_type,marks',
+            'studentAssessment.assessment.groups:id,group_name,created_by,grade_subject_id',
+            'studentAssessment.studentAnswers.question:id,marks',
+        ]);
+
+        $attempt = $answer->studentAssessment;
+        $assessment = $attempt?->assessment;
+
+        abort_unless(
+            $attempt && $assessment && $assessment->type === 'formative',
+            422,
+            'This response is not part of a formative assessment.'
+        );
+
+        $accessibleGroupIds = $this->accessibleGroups($teacher)->pluck('id');
+        $answerGroupIds = $assessment->groups?->pluck('id') ?? collect();
+        abort_if(
+            $answerGroupIds->intersect($accessibleGroupIds)->isEmpty(),
+            403,
+            'You are not authorized to review this response.'
+        );
+
+        $maxMarks = (float) ($answer->question?->marks ?? 0);
+        abort_if(
+            $points < 0 || $points > $maxMarks,
+            422,
+            'Points must be between 0 and ' . $maxMarks . '.'
+        );
+
+        $previousPoints = (float) ($answer->points_earned ?? 0);
+        $previousCorrect = $answer->is_correct;
+        $newCorrect = $maxMarks > 0 && $points >= $maxMarks;
+
+        DB::transaction(function () use (
+            $answer,
+            $attempt,
+            $teacher,
+            $points,
+            $feedback,
+            $previousPoints,
+            $previousCorrect,
+            $newCorrect
+        ) {
+            StudentAnswerMarkReview::create([
+                'student_answer_id' => $answer->id,
+                'student_assessment_id' => $attempt->id,
+                'reviewed_by' => $teacher->id,
+                'previous_points' => $previousPoints,
+                'new_points' => $points,
+                'previous_is_correct' => $previousCorrect,
+                'new_is_correct' => $newCorrect,
+                'feedback' => $feedback ? trim($feedback) : null,
+            ]);
+
+            $answer->update([
+                'points_earned' => round($points, 2),
+                'is_correct' => $newCorrect,
+                'reviewed_by' => $teacher->id,
+                'reviewed_at' => now(),
+                'teacher_feedback' => $feedback ? trim($feedback) : null,
+            ]);
+
+            $answers = $attempt->studentAnswers()->with('question:id,marks')->get();
+            $score = (float) $answers->sum(fn ($item) => (float) ($item->points_earned ?? 0));
+            $maxScore = (float) $answers->sum(fn ($item) => (float) ($item->question?->marks ?? 0));
+
+            $attempt->update([
+                'score' => round($score, 2),
+                'max_score' => round($maxScore, 2),
+                'status' => 'graded',
+            ]);
+        });
+
+        $attempt->refresh();
+        $answer->refresh();
+
+        return [
+            'answer_id' => $answer->id,
+            'points_earned' => (float) $answer->points_earned,
+            'reviewed_at' => optional($answer->reviewed_at)->toDateTimeString(),
+            'student_assessment_id' => $attempt->id,
+            'assessment_status' => $attempt->status,
+            'assessment_score' => (float) $attempt->score,
+            'assessment_max_score' => (float) $attempt->max_score,
         ];
     }
 

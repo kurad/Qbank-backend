@@ -36,6 +36,35 @@ class TeacherGradebookController extends Controller
         ]);
     }
 
+
+    public function formativeReview(Request $request)
+    {
+        return response()->json([
+            'data' => $this->gradebook->formativeReview(
+                $request->user(),
+                $this->filters($request)
+            ),
+        ]);
+    }
+
+    public function reviewFormativeAnswer(Request $request, StudentAnswer $answer)
+    {
+        $validated = $request->validate([
+            'points' => ['required', 'numeric', 'min:0'],
+            'feedback' => ['nullable', 'string', 'max:3000'],
+        ]);
+
+        return response()->json([
+            'message' => 'Formative response reviewed successfully.',
+            'data' => $this->gradebook->reviewFormativeAnswer(
+                $request->user(),
+                $answer,
+                (float) $validated['points'],
+                $validated['feedback'] ?? null
+            ),
+        ]);
+    }
+
     public function reviewQueue(Request $request)
     {
         return response()->json([

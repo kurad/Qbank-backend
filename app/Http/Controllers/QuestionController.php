@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\GradeSubject;
 use App\Models\LearningObjective;
+use App\Models\KnowledgeChunk;
 use App\Models\Question;
 use App\Models\Topic;
 use Illuminate\Http\Request;
@@ -1980,6 +1981,67 @@ TEXT;
         return $clean;
     }
 
+    protected function questionGenerationGrounding(Topic $topic, string $objectiveText = ''): string
+    {
+        $base = KnowledgeChunk::query()
+            ->where('status', 'ready')
+            ->where('subject_id', $topic->gradeSubject?->subject_id)
+            ->whereHas('courseMaterial', function ($query) {
+                $query->where('status', 'approved')
+                    ->whereIn('processing_status', ['ready', 'completed']);
+            });
+
+        $chunks = (clone $base)
+            ->where('topic_id', $topic->id)
+            ->get();
+
+        if ($chunks->isEmpty() && $topic->unit_id) {
+            $chunks = (clone $base)
+                ->where('unit_id', $topic->unit_id)
+                ->whereNull('topic_id')
+                ->get();
+        }
+
+        if ($chunks->isEmpty()) {
+            return '';
+        }
+
+        $search = mb_strtolower(trim(implode(' ', [
+            $topic->topic_name ?? $topic->name ?? '',
+            $objectiveText,
+        ])));
+
+        $terms = collect(preg_split('/\s+/u', $search, -1, PREG_SPLIT_NO_EMPTY) ?: [])
+            ->map(fn ($term) => preg_replace('/[^\pL\pN]+/u', '', $term))
+            ->filter(fn ($term) => mb_strlen($term) >= 4)
+            ->unique()
+            ->take(25);
+
+        $ranked = $chunks
+            ->map(function ($chunk) use ($terms, $topic) {
+                $content = mb_strtolower((string) $chunk->content);
+                $score = (int) $chunk->topic_id === (int) $topic->id ? 100 : 30;
+
+                foreach ($terms as $term) {
+                    if (str_contains($content, $term)) {
+                        $score += min(12, substr_count($content, $term) * 2);
+                    }
+                }
+
+                $chunk->question_generation_score = $score;
+                return $chunk;
+            })
+            ->sortByDesc('question_generation_score')
+            ->take(8)
+            ->values();
+
+        $text = $ranked
+            ->map(fn ($chunk, $index) => 'Evidence ' . ($index + 1) . ":\n" . trim((string) $chunk->content))
+            ->implode("\n\n");
+
+        return mb_substr($text, 0, 14000);
+    }
+
     public function generateAIQuestions(Request $request)
     {
         $validated = $request->validate([
@@ -2030,10 +2092,39 @@ TEXT;
                 'max:100',
             ],
 
+            'question_style' => [
+                'nullable',
+                'in:balanced,scenario_based,application_based,exam_style,case_study',
+            ],
+
+            'distractor_quality' => [
+                'nullable',
+                'in:standard,challenging,misconception_based',
+            ],
+
+            'focus_tags' => [
+                'nullable',
+                'array',
+                'max:10',
+            ],
+
+            'focus_tags.*' => [
+                'string',
+                Rule::in([
+                    'avoid_giveaways',
+                    'common_misconceptions',
+                    'practical_context',
+                    'require_reasoning',
+                    'use_code',
+                    'avoid_recall',
+                    'varied_scenarios',
+                ]),
+            ],
+
             'instruction' => [
                 'nullable',
                 'string',
-                'max:1000',
+                'max:2000',
             ],
         ]);
 
@@ -2054,6 +2145,9 @@ TEXT;
             $count = (int) ($validated['count'] ?? 5);
             $marks = $validated['marks'] ?? null;
             $instruction = trim($validated['instruction'] ?? '');
+            $questionStyle = $validated['question_style'] ?? 'balanced';
+            $distractorQuality = $validated['distractor_quality'] ?? 'challenging';
+            $focusTags = collect($validated['focus_tags'] ?? [])->values();
 
             $objective = null;
 
@@ -2067,7 +2161,8 @@ TEXT;
                 ?? $topic->gradeSubject?->subject?->subject_name
                 ?? 'the subject';
 
-            $gradeName = $topic->gradeSubject?->gradeLevel?->name
+            $gradeName = $topic->gradeSubject?->gradeLevel?->grade_name
+                ?? $topic->gradeSubject?->gradeLevel?->name
                 ?? $topic->gradeSubject?->gradeLevel?->grade
                 ?? '';
 
@@ -2078,21 +2173,74 @@ TEXT;
                 ?? '';
 
             $typeInstructions = match ($validated['question_type']) {
-                'mcq' => 'Each question must have exactly 4 distinct options and one correct answer. Return options as an array of strings and correct_answer as the correct option string.',
-                'true_false' => 'Return options as ["True", "False"] and correct_answer as either "True" or "False".',
-                'short_answer' => 'Return options as an empty array and correct_answer as the expected answer or key answer points.',
-                'matching' => 'Return options as an object with left and right arrays. Return correct_answer as an array of objects containing left_index and right_index.',
-                'fill_blank' => 'Write one clear sentence with exactly one blank represented by ______. Return correct_answer as the accepted answer text.',
-                'open_ended' => 'Write an open-ended question that requires explanation, reasoning, analysis, or creation. Return correct_answer as a concise model answer or marking guidance.',
+                'mcq' => 'Each question must have exactly 4 distinct options and exactly one correct answer. Distractors must be plausible and test the same concept; avoid obviously silly, unrelated, grammatically mismatched, or noticeably shorter/longer distractors. Return options as an array of strings and correct_answer as the correct option string.',
+                'true_false' => 'Write statements that test genuine understanding rather than trivial wording tricks. Return options as ["True", "False"] and correct_answer as either "True" or "False".',
+                'short_answer' => 'Ask for a concise constructed response that demonstrates the requested cognitive level. Return options as an empty array and correct_answer as the expected answer or key answer points.',
+                'matching' => 'Use one coherent relationship for all pairs, with plausible alternatives and no one-to-one clues from wording or length. Return options as an object with left and right arrays. Return correct_answer as an array of objects containing left_index and right_index.',
+                'fill_blank' => 'Write one clear sentence with exactly one meaningful blank represented by ______. The surrounding wording must not make the answer obvious. Return correct_answer as the accepted answer text.',
+                'open_ended' => 'Write an open-ended question that requires explanation, reasoning, analysis, evaluation, or creation at the requested Bloom level. Return correct_answer as a concise model answer or marking guidance.',
                 default => '',
             };
 
+            $bloomInstruction = match ($validated['difficulty_level']) {
+                'remembering' => 'Test accurate recall of essential curriculum knowledge, but avoid giveaway wording and trivial cues.',
+                'understanding' => 'Require learners to interpret, explain, classify, distinguish, summarize, or recognize meaning in a new wording/context; do not merely repeat a definition from the objective.',
+                'applying' => 'Require learners to use the concept, rule, method, syntax, or procedure in a concrete situation or example.',
+                'analyzing' => 'Require learners to examine relationships, diagnose an error, compare alternatives, infer a cause, or distinguish components using evidence from the scenario.',
+                'evaluating' => 'Require learners to judge, justify, prioritize, critique, or select the best solution using curriculum-supported criteria.',
+                'creating' => 'Require learners to design, construct, propose, or formulate a valid solution/product from the taught concepts.',
+                default => 'Match the requested cognitive demand closely.',
+            };
+
+            $styleInstruction = match ($questionStyle) {
+                'scenario_based' => 'Use realistic, concise scenarios as the main stem context. The learner should need to interpret the situation before answering.',
+                'application_based' => 'Prioritize doing/using the concept over stating definitions. Use concrete tasks, examples, code, data, or decisions where appropriate.',
+                'exam_style' => 'Use formal examination wording: precise, concise, unambiguous, and suitable for independent assessment.',
+                'case_study' => 'Use a short shared case or realistic situation and ask questions that require extracting relevant information and reasoning from it.',
+                default => 'Use a balanced mix of direct conceptual checks and contextual/application questions appropriate to the requested Bloom level.',
+            };
+
+            $distractorInstruction = match ($distractorQuality) {
+                'misconception_based' => 'For objective questions, build distractors from realistic learner misconceptions, common confusions, wrong procedures, or near-correct interpretations. Never use nonsense distractors.',
+                'challenging' => 'For objective questions, make all distractors plausible, parallel in style and similar in length. The correct option must not stand out through wording, specificity, grammar, or length.',
+                default => 'Use clear, relevant distractors that are incorrect for defensible curriculum reasons.',
+            };
+
+            $focusRules = [
+                'avoid_giveaways' => 'Do not reveal the answer through wording, option length, grammatical agreement, repeated keywords, absolutes such as always/never, or one unusually detailed option.',
+                'common_misconceptions' => 'Where appropriate, target common misconceptions or confusions learners may have about this objective.',
+                'practical_context' => 'Prefer realistic practical/classroom/workplace contexts where the curriculum naturally supports them.',
+                'require_reasoning' => 'Make the learner process information or reason before answering; avoid questions solvable by superficial keyword matching.',
+                'use_code' => 'For computing/database/programming content, include short code, commands, SQL, tables, or outputs when they directly support the objective.',
+                'avoid_recall' => 'Avoid pure definition/recall questions unless the selected Bloom level explicitly requires remembering. Reframe as interpretation, distinction, or application when possible.',
+                'varied_scenarios' => 'Vary names, situations, data, representations, and reasoning paths so generated questions are not templates with only small substitutions.',
+            ];
+
+            $selectedFocusRules = $focusTags
+                ->map(fn ($tag) => $focusRules[$tag] ?? null)
+                ->filter()
+                ->values()
+                ->all();
+
             $instructionText = $instruction !== ''
-                ? "Additional teacher instruction:\n{$instruction}\n"
+                ? "TEACHER-SPECIFIC INSTRUCTIONS\n{$instruction}\n"
                 : '';
 
             $marksText = $marks !== null
                 ? "Default marks for each generated question: {$marks}.\n"
+                : '';
+
+            $groundingText = $this->questionGenerationGrounding(
+                $topic,
+                $objectiveText
+            );
+
+            $groundingSection = $groundingText !== ''
+                ? "APPROVED CURRICULUM EVIDENCE\n{$groundingText}\n\n"
+                : "APPROVED CURRICULUM EVIDENCE\nNo extracted approved material was available for this topic/objective. Stay strictly within the learning objective and topic; do not invent curriculum scope beyond them.\n\n";
+
+            $focusSection = !empty($selectedFocusRules)
+                ? "TEACHER QUALITY CONTROLS\n- " . implode("\n- ", $selectedFocusRules) . "\n\n"
                 : '';
 
             $optionsExample = $validated['question_type'] === 'matching'
@@ -2104,26 +2252,33 @@ TEXT;
                 : '""';
 
             $prompt = <<<PROMPT
-Generate {$count} original assessment question(s) for the teacher.
+Generate exactly {$count} original, teacher-ready assessment question(s).
 
-CURRICULUM CONTEXT
+CURRICULUM TARGET
 Subject: {$subjectName}
 Grade: {$gradeName}
 Unit: {$unitName}
-Topic: {$topic->name}
+Topic: {$topic->topic_name}
 Learning objective: {$objectiveText}
 Question type: {$validated['question_type']}
-Difficulty: {$validated['difficulty_level']}
-{$marksText}{$instructionText}
-QUESTION REQUIREMENTS
-- Questions must be directly relevant to the specified topic and learning objective when one is provided.
-- Match the requested difficulty level.
-- Make every question different from the others in wording and content.
-- Do not create duplicate or near-duplicate questions.
-- Do not introduce unrelated curriculum content.
-- Use clear teacher-ready language.
-- For mathematical content, use standard LaTeX notation where appropriate.
+Bloom / cognitive level: {$validated['difficulty_level']}
+{$marksText}
+{$groundingSection}{$focusSection}{$instructionText}
+ASSESSMENT DESIGN RULES
+- PRIMARY RULE: Every question must directly measure the stated learning objective. Relevance is more important than variety.
+- Use the approved curriculum evidence as the factual boundary when it is provided. Do not test facts, terminology, methods, or edge cases that are absent from that evidence/objective.
+- {$bloomInstruction}
+- {$styleInstruction}
+- {$distractorInstruction}
 - {$typeInstructions}
+- Make every generated question substantively different. Do not create near-duplicates that only change names, numbers, or surface wording.
+- Avoid ambiguity: there must be a defensible correct answer based on the supplied curriculum context.
+- Keep language appropriate for the stated grade. Avoid unnecessary vocabulary that makes reading harder than the concept being assessed.
+- Do not refer to "the material above", "the learning objective", or internal RevisionHub instructions in the student-facing question.
+- Explanations must state why the answer is correct and, for objective questions, briefly distinguish the key misconception behind plausible distractors where useful.
+- For mathematical content, use standard LaTeX notation where appropriate.
+
+Before returning a question, silently check: (1) objective alignment, (2) Bloom alignment, (3) factual support, (4) answer uniqueness, and (5) distractor quality. Replace any question that fails one of these checks.
 
 Return ONLY valid JSON in exactly this structure:
 {
@@ -2223,7 +2378,7 @@ PROMPT;
                 [
                     [
                         'role' => 'system',
-                        'content' => 'You are an expert assessment-question generator. Generate accurate, curriculum-aligned questions and return only the requested JSON structure.',
+                        'content' => 'You are a rigorous assessment designer. Prioritize curriculum fidelity, objective alignment, cognitive validity, plausible distractors, and unambiguous marking. Use only the supplied curriculum scope and return only the requested JSON structure.',
                     ],
                     [
                         'role' => 'user',
@@ -2232,8 +2387,14 @@ PROMPT;
                 ],
                 $schema,
                 [
-                    'temperature' => 0.7,
+                    'temperature' => 0.55,
                     'max_tokens' => 8192,
+                    '_usage_feature' => 'Question Generation',
+                    '_usage_user_id' => auth()->id(),
+                    '_usage_school_id' => auth()->user()?->school_id,
+                    '_usage_role' => auth()->user()?->role,
+                    '_usage_topic_id' => $topic->id,
+                    '_usage_learning_objective_id' => $objective?->id,
                 ]
             );
 
