@@ -205,7 +205,8 @@ class AuthController extends Controller
             'user' => $user,
             'token' => $plainTextToken,
             'user_role' => $user->role,
-            'expires_at' => now()->addMinutes($ttlMinutes)->toDateTimeString(),
+            'expires_at' => now()->addMinutes($ttlMinutes)->toIso8601String(),
+            'server_now' => now()->toIso8601String(),
         ]);
     }
     public function getStudents(Request $request)
@@ -296,7 +297,8 @@ class AuthController extends Controller
             'token' => $newPlainToken,
             'user' => $user,
             'user_role' => $user->role,
-            'expires_at' => now()->addMinutes($ttlMinutes)->toDateTimeString(),
+            'expires_at' => now()->addMinutes($ttlMinutes)->toIso8601String(),
+            'server_now' => now()->toIso8601String(),
         ]);
     }
 }
