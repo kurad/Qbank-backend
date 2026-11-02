@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Assessment;
 use App\Models\Group;
+use App\Models\LearningPeriod;
 use App\Models\StudentAssessment;
 use App\Models\StudentAnswer;
 use App\Models\StudentAnswerMarkReview;
@@ -20,6 +21,7 @@ class TeacherGradebookService
 
         $groups = $this->accessibleGroups($teacher, $filters);
         $groupIds = $groups->pluck('id')->all();
+        $periods = $this->learningPeriods($groupIds);
 
         $students = $groups
             ->flatMap(fn (Group $group) => $group->students)
@@ -44,6 +46,7 @@ class TeacherGradebookService
                 'group_id' => $filters['group_id'] ?? null,
                 'grade_subject_id' => $filters['grade_subject_id'] ?? null,
                 'assessment_type' => $filters['assessment_type'] ?? null,
+                'learning_period_id' => $filters['learning_period_id'] ?? null,
                 'from' => $filters['from'] ?? null,
                 'to' => $filters['to'] ?? null,
             ],
@@ -70,6 +73,19 @@ class TeacherGradebookService
                     ->unique('id')
                     ->values(),
 
+                'learning_periods' => $periods->map(fn (LearningPeriod $period) => [
+                    'id' => $period->id,
+                    'title' => $period->title,
+                    'group_id' => $period->group_id,
+                    'group_name' => $period->group?->group_name,
+                    'grade_subject_id' => $period->grade_subject_id,
+                    'subject' => $period->gradeSubject?->subject?->name,
+                    'grade' => $period->gradeSubject?->gradeLevel?->grade_name,
+                    'start_date' => $period->start_date ? (string) $period->start_date : null,
+                    'end_date' => $period->end_date ? (string) $period->end_date : null,
+                    'period_state' => $this->periodState($period),
+                ])->values(),
+
                 'assessment_types' => [
                     ['value' => 'quiz', 'label' => 'Quiz'],
                     ['value' => 'exam', 'label' => 'Exam'],
@@ -94,6 +110,7 @@ class TeacherGradebookService
                     ->count(),
             ],
 
+            'period_summaries' => $this->periodSummaries($periods, $students, $assessments, $checks)->all(),
             'assessment_columns' => $assessments->values()->all(),
             'students' => $studentRows->values()->all(),
             'understanding_checks' => $checks->values()->all(),
@@ -211,6 +228,10 @@ class TeacherGradebookService
             $query->where('type', $filters['assessment_type']);
         }
 
+        if (!empty($filters['learning_period_id'])) {
+            $query->where('learning_period_id', (int) $filters['learning_period_id']);
+        }
+
         $from = $filters['from'] ?? null;
         $to = $filters['to'] ?? null;
 
@@ -235,6 +256,7 @@ class TeacherGradebookService
                 return [
                     'key' => $assessment->id . '-' . $group->id,
                     'assessment_id' => $assessment->id,
+                    'learning_period_id' => $assessment->learning_period_id,
                     'group_id' => $group->id,
                     'group_name' => $group->group_name,
                     'title' => $assessment->title,
@@ -277,6 +299,11 @@ class TeacherGradebookService
             $query->whereHas('session', fn ($q) => $q->where('grade_subject_id', $gradeSubjectId));
         }
 
+        if (!empty($filters['learning_period_id'])) {
+            $learningPeriodId = (int) $filters['learning_period_id'];
+            $query->whereHas('session', fn ($q) => $q->where('learning_period_id', $learningPeriodId));
+        }
+
         if (!empty($filters['from'])) {
             $query->whereDate('created_at', '>=', $filters['from']);
         }
@@ -295,6 +322,7 @@ class TeacherGradebookService
                 'student_name' => $evaluation->student?->name,
                 'group_id' => $evaluation->session?->group_id,
                 'group_name' => $evaluation->session?->group?->group_name,
+                'learning_period_id' => $evaluation->session?->learning_period_id,
                 'unit' => $topic?->unit?->name,
                 'topic' => $topic?->topic_name,
                 'learning_objective_id' => $objective?->id,
@@ -464,6 +492,12 @@ class TeacherGradebookService
             );
         }
 
+        if (!empty($filters['learning_period_id'])) {
+            $attemptQuery->whereHas('assessment', fn ($q) =>
+                $q->where('learning_period_id', (int) $filters['learning_period_id'])
+            );
+        }
+
         if (!empty($filters['from'])) {
             $attemptQuery->whereDate('completed_at', '>=', $filters['from']);
         }
@@ -474,7 +508,8 @@ class TeacherGradebookService
 
         $attempts = $attemptQuery
             ->with([
-                'assessment:id,title,type,purpose,creator_id,due_date,delivery_mode,status',
+                'assessment:id,title,type,purpose,creator_id,due_date,delivery_mode,status,learning_period_id',
+                'assessment.learningPeriod:id,title,start_date,end_date',
                 'assessment.groups' => fn ($q) => $q
                     ->whereIn('groups.id', $groupIds)
                     ->select('groups.id', 'group_name', 'grade_subject_id', 'academic_year'),
@@ -505,6 +540,8 @@ class TeacherGradebookService
                     'title' => $attempt->assessment?->title,
                     'type' => $attempt->assessment?->type,
                     'purpose' => $attempt->assessment?->purpose,
+                    'learning_period_id' => $attempt->assessment?->learning_period_id,
+                    'learning_period' => $attempt->assessment?->learningPeriod?->title,
                     'is_formative' => $attempt->assessment?->type === 'formative',
                     'delivery_mode' => $attempt->assessment?->delivery_mode,
                     'status' => $attempt->status,
@@ -609,6 +646,12 @@ class TeacherGradebookService
                 if (!empty($filters['assessment_type'])) {
                     $q->whereHas('assessment', fn ($assessment) =>
                         $assessment->where('type', $filters['assessment_type'])
+                    );
+                }
+
+                if (!empty($filters['learning_period_id'])) {
+                    $q->whereHas('assessment', fn ($assessment) =>
+                        $assessment->where('learning_period_id', (int) $filters['learning_period_id'])
                     );
                 }
 
@@ -757,6 +800,12 @@ class TeacherGradebookService
 
         if (!empty($filters['to'])) {
             $query->whereDate('completed_at', '<=', $filters['to']);
+        }
+
+        if (!empty($filters['learning_period_id'])) {
+            $query->whereHas('assessment', fn ($assessment) =>
+                $assessment->where('learning_period_id', (int) $filters['learning_period_id'])
+            );
         }
 
         return $query
@@ -934,6 +983,92 @@ class TeacherGradebookService
             'assessment_score' => (float) $attempt->score,
             'assessment_max_score' => (float) $attempt->max_score,
         ];
+    }
+
+
+    protected function learningPeriods(array $groupIds): Collection
+    {
+        if (empty($groupIds)) {
+            return collect();
+        }
+
+        return LearningPeriod::query()
+            ->whereIn('group_id', $groupIds)
+            ->where('status', 'published')
+            ->with([
+                'group:id,group_name,grade_subject_id',
+                'group.students:id,name,email',
+                'gradeSubject:id,subject_id,grade_level_id',
+                'gradeSubject.subject:id,name',
+                'gradeSubject.gradeLevel:id,grade_name',
+            ])
+            ->orderByDesc('start_date')
+            ->orderByDesc('id')
+            ->get();
+    }
+
+    protected function periodState(LearningPeriod $period): string
+    {
+        $today = now()->startOfDay();
+        $start = $period->start_date ? $period->start_date->copy()->startOfDay() : null;
+        $end = $period->end_date ? $period->end_date->copy()->endOfDay() : null;
+
+        if ($start && $start->gt($today)) {
+            return 'upcoming';
+        }
+
+        if ($end && $end->lt($today)) {
+            return 'previous';
+        }
+
+        return 'current';
+    }
+
+    protected function periodSummaries(
+        Collection $periods,
+        Collection $students,
+        Collection $assessments,
+        Collection $checks
+    ): Collection {
+        return $periods->map(function (LearningPeriod $period) use ($students, $assessments, $checks) {
+            $periodAssessments = $assessments
+                ->filter(fn ($column) => (int) ($column['learning_period_id'] ?? 0) === (int) $period->id);
+
+            $periodChecks = $checks
+                ->filter(fn ($check) => (int) ($check['learning_period_id'] ?? 0) === (int) $period->id);
+
+            $scores = collect();
+            foreach ($periodAssessments as $column) {
+                foreach ($column['attempts'] as $attempt) {
+                    if (!$attempt || !in_array($attempt->status, ['completed', 'graded'], true)) {
+                        continue;
+                    }
+                    $max = (float) $attempt->max_score;
+                    if ($max > 0) {
+                        $scores->push(round(((float) $attempt->score / $max) * 100, 1));
+                    }
+                }
+            }
+
+            $groupStudents = $period->group?->students ?? collect();
+
+            return [
+                'id' => $period->id,
+                'title' => $period->title,
+                'group_id' => $period->group_id,
+                'group_name' => $period->group?->group_name,
+                'subject' => $period->gradeSubject?->subject?->name,
+                'grade' => $period->gradeSubject?->gradeLevel?->grade_name,
+                'start_date' => $period->start_date ? (string) $period->start_date : null,
+                'end_date' => $period->end_date ? (string) $period->end_date : null,
+                'period_state' => $this->periodState($period),
+                'students' => $groupStudents->count(),
+                'assessments' => $periodAssessments->count(),
+                'assessment_average' => $this->average($scores),
+                'understanding_checks' => $periodChecks->count(),
+                'check_average' => $this->average($periodChecks->pluck('score')->filter(fn ($value) => $value !== null)),
+            ];
+        })->values();
     }
 
     protected function average(Collection $values): ?float

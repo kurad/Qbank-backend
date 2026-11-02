@@ -123,6 +123,7 @@ class TeacherGradebookController extends Controller
             'group_id' => ['nullable', 'integer'],
             'grade_subject_id' => ['nullable', 'integer'],
             'assessment_type' => ['nullable', 'string', 'max:50'],
+            'learning_period_id' => ['nullable', 'integer', 'exists:learning_periods,id'],
             'from' => ['nullable', 'date'],
             'to' => ['nullable', 'date', 'after_or_equal:from'],
         ]);
