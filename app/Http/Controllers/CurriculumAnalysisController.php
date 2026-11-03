@@ -445,7 +445,8 @@ class CurriculumAnalysisController extends Controller
         try {
             DB::transaction(function () use (
                 $curriculumAnalysis,
-                $user
+                $user,
+                $chunkingService
             ) {
                 /*
                  * -----------------------------------------------------

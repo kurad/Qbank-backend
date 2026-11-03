@@ -5,6 +5,9 @@ namespace App\Http\Controllers;
 use App\Models\TutorSession;
 use App\Models\User;
 use App\Models\TutorConversationReview;
+use App\Models\Group;
+use App\Models\LearningPeriod;
+use App\Models\Topic;
 use App\Services\AI\AIGateway;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -52,21 +55,92 @@ class TeacherTutorHistoryController extends Controller
             'q' => ['nullable', 'string', 'max:120'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:50'],
         ]);
-        $query = $this->baseQuery($request->user());
-        foreach (['student_id','group_id','grade_subject_id','learning_period_id','topic_id','status'] as $key) {
-            if (isset($filters[$key])) $query->where($key, $filters[$key]);
+        $actor = $request->user();
+
+        /*
+         * Build filter options from the teacher's actual Tutor-session scope.
+         * Class is the broadest filter. Learning-period and topic options then
+         * narrow to that class so teachers do not see unrelated choices.
+         */
+        $groupIds = (clone $this->baseQuery($actor))
+            ->whereNotNull('group_id')
+            ->distinct()
+            ->pluck('group_id');
+
+        $groups = Group::query()
+            ->whereIn('id', $groupIds)
+            ->orderBy('group_name')
+            ->get(['id', 'group_name']);
+
+        $periodScope = $this->baseQuery($actor);
+        if (!empty($filters['group_id'])) {
+            $periodScope->where('group_id', $filters['group_id']);
         }
+
+        $periodIds = $periodScope
+            ->whereNotNull('learning_period_id')
+            ->distinct()
+            ->pluck('learning_period_id');
+
+        $learningPeriods = LearningPeriod::query()
+            ->whereIn('id', $periodIds)
+            ->orderByDesc('start_date')
+            ->orderByDesc('id')
+            ->get(['id', 'group_id', 'title', 'start_date', 'end_date', 'status']);
+
+        $topicScope = $this->baseQuery($actor);
+        if (!empty($filters['group_id'])) {
+            $topicScope->where('group_id', $filters['group_id']);
+        }
+        if (!empty($filters['learning_period_id'])) {
+            $topicScope->where('learning_period_id', $filters['learning_period_id']);
+        }
+
+        $topicIds = $topicScope
+            ->whereNotNull('topic_id')
+            ->distinct()
+            ->pluck('topic_id');
+
+        $topics = Topic::query()
+            ->whereIn('id', $topicIds)
+            ->orderBy('topic_name')
+            ->get(['id', 'topic_name']);
+
+        $query = $this->baseQuery($actor);
+        foreach (['student_id','group_id','grade_subject_id','learning_period_id','topic_id','status'] as $key) {
+            if (isset($filters[$key]) && $filters[$key] !== null && $filters[$key] !== '') {
+                $query->where($key, $filters[$key]);
+            }
+        }
+
         if (!empty($filters['q'])) {
             $term = '%' . str_replace(['%', '_'], ['\\%', '\\_'], $filters['q']) . '%';
             $query->where(fn ($q) => $q->where('title', 'like', $term)
                 ->orWhereHas('student', fn ($s) => $s->where('name', 'like', $term))
                 ->orWhereHas('topic', fn ($t) => $t->where('topic_name', 'like', $term)));
         }
-        return response()->json(['data' => $query
-            ->with(['student:id,name', 'group:id,group_name', 'gradeSubject.subject:id,name',
-                'learningPeriod:id,title', 'topic:id,topic_name'])
-            ->withCount('messages')->orderByDesc('last_activity_at')->orderByDesc('id')
-            ->paginate($filters['per_page'] ?? 20)]);
+
+        $sessions = $query
+            ->with([
+                'student:id,name',
+                'group:id,group_name',
+                'gradeSubject.subject:id,name',
+                'learningPeriod:id,group_id,title,start_date,end_date,status',
+                'topic:id,topic_name',
+            ])
+            ->withCount('messages')
+            ->orderByDesc('last_activity_at')
+            ->orderByDesc('id')
+            ->paginate($filters['per_page'] ?? 20);
+
+        return response()->json([
+            'data' => $sessions,
+            'filter_options' => [
+                'groups' => $groups,
+                'learning_periods' => $learningPeriods,
+                'topics' => $topics,
+            ],
+        ]);
     }
 
     public function analyze(Request $request, TutorSession $tutorSession, AIGateway $ai)
