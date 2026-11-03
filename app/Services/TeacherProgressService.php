@@ -162,6 +162,22 @@ class TeacherProgressService
                         $studentRows->pluck('progress')
                     ),
 
+                'learning_interaction' =>
+                    $this->weightedInteractionAverage($studentRows),
+
+                'evaluated_responses' =>
+                    (int) $studentRows->sum('interaction_responses'),
+
+                'improving_learners' =>
+                    $studentRows
+                        ->where('interaction_trend', 'improving')
+                        ->count(),
+
+                'students_needing_attention' =>
+                    $studentRows
+                        ->filter(fn ($row) => !empty($row['needs_teacher_attention']))
+                        ->count(),
+
                 'learning_periods' =>
                     $periods->count(),
 
@@ -1166,6 +1182,22 @@ class TeacherProgressService
                     }
                 }
 
+                $interactionEvaluations = $studentSessions
+                    ->flatMap(
+                        fn ($session) => $session->objectives
+                            ->flatMap(
+                                fn ($objective) => collect(
+                                    $objective->responseEvaluations ?? []
+                                )
+                            )
+                    )
+                    ->sortBy([['created_at', 'asc'], ['id', 'asc']])
+                    ->values();
+
+                $interaction = $this->interactionSummary(
+                    $interactionEvaluations
+                );
+
                 $completedObjectives =
                     collect($objectiveStates)
                         ->filter(
@@ -1247,6 +1279,21 @@ class TeacherProgressService
                         )->sum(
                             'correct_attempts'
                         ),
+
+                    'interaction_score' =>
+                        $interaction['score'],
+
+                    'interaction_responses' =>
+                        $interaction['responses'],
+
+                    'interaction_trend' =>
+                        $interaction['trend'],
+
+                    'interaction_trend_delta' =>
+                        $interaction['trend_delta'],
+
+                    'interaction_recoveries' =>
+                        $interaction['recoveries'],
 
                     'attention_objectives' =>
                         collect($objectiveStates)
@@ -1620,6 +1667,11 @@ class TeacherProgressService
                                 'objectives_completed' => 0,
                                 'attempts' => 0,
                                 'correct_attempts' => 0,
+                                'interaction_score' => null,
+                                'interaction_responses' => 0,
+                                'interaction_trend' => 'insufficient_data',
+                                'interaction_trend_delta' => null,
+                                'interaction_recoveries' => 0,
                                 'attention_objectives' => 0,
                                 'max_struggle_level' => 0,
                                 'attention_detail' => null,
@@ -1636,6 +1688,44 @@ class TeacherProgressService
                         ->filter()
                         ->sortDesc()
                         ->first();
+
+                $interactionResponses = (int) $rows
+                    ->sum('interaction_responses');
+
+                $interactionScore = $interactionResponses > 0
+                    ? round(
+                        (float) $rows->sum(
+                            fn ($row) =>
+                                (float) ($row['interaction_score'] ?? 0)
+                                * (int) ($row['interaction_responses'] ?? 0)
+                        ) / $interactionResponses,
+                        1
+                    )
+                    : null;
+
+                $trendRows = $rows
+                    ->filter(
+                        fn ($row) => in_array(
+                            $row['interaction_trend'] ?? null,
+                            ['improving', 'stable', 'declining'],
+                            true
+                        )
+                    );
+
+                $trendDelta = $trendRows->isNotEmpty()
+                    ? round(
+                        (float) $trendRows->avg('interaction_trend_delta'),
+                        1
+                    )
+                    : null;
+
+                $interactionTrend = match (true) {
+                    $trendDelta === null && $interactionResponses >= 2 => 'building',
+                    $trendDelta === null => 'insufficient_data',
+                    $trendDelta >= 5 => 'improving',
+                    $trendDelta <= -5 => 'declining',
+                    default => 'stable',
+                };
 
                 return [
                     'id' =>
@@ -1699,6 +1789,21 @@ class TeacherProgressService
                             'correct_attempts'
                         ),
 
+                    'interaction_score' =>
+                        $interactionScore,
+
+                    'interaction_responses' =>
+                        $interactionResponses,
+
+                    'interaction_trend' =>
+                        $interactionTrend,
+
+                    'interaction_trend_delta' =>
+                        $trendDelta,
+
+                    'interaction_recoveries' =>
+                        (int) $rows->sum('interaction_recoveries'),
+
                     'attention_objectives' =>
                         $rows->sum('attention_objectives'),
 
@@ -1723,6 +1828,104 @@ class TeacherProgressService
                             ?->toISOString(),
                 ];
             }
+        );
+    }
+
+    protected function interactionSummary(Collection $evaluations): array
+    {
+        $evaluations = $evaluations
+            ->filter(fn ($evaluation) => $evaluation->understanding_score !== null)
+            ->values();
+
+        $count = $evaluations->count();
+
+        if ($count === 0) {
+            return [
+                'score' => null,
+                'responses' => 0,
+                'trend' => 'insufficient_data',
+                'trend_delta' => null,
+                'recoveries' => 0,
+            ];
+        }
+
+        $objectiveScores = $evaluations
+            ->filter(fn ($evaluation) => $evaluation->tutor_session_objective_id)
+            ->groupBy('tutor_session_objective_id')
+            ->map(function ($rows) {
+                $ordered = $rows->sortBy('id')->values();
+                $journeyAverage = (float) $ordered->avg('understanding_score');
+                $latestScore = (float) ($ordered->last()?->understanding_score ?? 0);
+
+                return ($journeyAverage * 0.35) + ($latestScore * 0.65);
+            });
+
+        $score = $objectiveScores->isNotEmpty()
+            ? round((float) $objectiveScores->avg(), 1)
+            : round((float) $evaluations->avg('understanding_score'), 1);
+
+        $recent = $evaluations->take(-5);
+        $previous = $count > 5
+            ? $evaluations->slice(max(0, $count - 10), 5)
+            : collect();
+        $trendDelta = null;
+        $trend = $count >= 2 ? 'building' : 'insufficient_data';
+
+        if ($recent->count() >= 2 && $previous->count() >= 2) {
+            $trendDelta = round(
+                (float) $recent->avg('understanding_score')
+                - (float) $previous->avg('understanding_score'),
+                1
+            );
+
+            $trend = match (true) {
+                $trendDelta >= 5 => 'improving',
+                $trendDelta <= -5 => 'declining',
+                default => 'stable',
+            };
+        }
+
+        $recoveries = $evaluations
+            ->groupBy('tutor_session_objective_id')
+            ->filter(function ($rows) {
+                $ordered = $rows->sortBy('id')->values();
+                $weakIndex = $ordered->search(
+                    fn ($row) => (int) $row->understanding_score < 60
+                );
+
+                return $weakIndex !== false
+                    && $ordered
+                        ->slice($weakIndex + 1)
+                        ->contains(
+                            fn ($row) => (int) $row->understanding_score >= 80
+                        );
+            })
+            ->count();
+
+        return [
+            'score' => $score,
+            'responses' => $count,
+            'trend' => $trend,
+            'trend_delta' => $trendDelta,
+            'recoveries' => $recoveries,
+        ];
+    }
+
+    protected function weightedInteractionAverage(Collection $studentRows): ?float
+    {
+        $responses = (int) $studentRows->sum('interaction_responses');
+
+        if ($responses <= 0) {
+            return null;
+        }
+
+        return round(
+            (float) $studentRows->sum(
+                fn ($row) =>
+                    (float) ($row['interaction_score'] ?? 0)
+                    * (int) ($row['interaction_responses'] ?? 0)
+            ) / $responses,
+            1
         );
     }
 

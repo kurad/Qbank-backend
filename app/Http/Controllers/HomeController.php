@@ -10,6 +10,7 @@ use App\Models\Subject;
 use App\Models\Topic;
 use App\Models\TutorSession;
 use App\Models\TutorSessionObjective;
+use App\Models\TutorResponseEvaluation;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -203,6 +204,110 @@ class HomeController extends Controller
 
         $currentPeriodIds =
             $currentLearningPeriods->pluck('id');
+
+        /*
+         * Learning Interaction describes the learner's response quality
+         * throughout Tutor checks in the CURRENT learning scope. Unlike an
+         * assessment/check headline score, it includes every evaluated
+         * response attempt (including retries), so recovery and recent trend
+         * remain visible instead of only the final result.
+         */
+        $interactionEvaluations = TutorResponseEvaluation::query()
+            ->where('student_id', $user->id)
+            ->when(
+                $currentPeriodIds->isNotEmpty(),
+                fn ($query) => $query->whereHas(
+                    'session',
+                    fn ($sessionQuery) => $sessionQuery
+                        ->whereIn('learning_period_id', $currentPeriodIds)
+                        ->where(function ($modeQuery) {
+                            $modeQuery->whereNull('session_mode')
+                                ->orWhere('session_mode', 'learning');
+                        })
+                ),
+                fn ($query) => $query->whereRaw('1 = 0')
+            )
+            ->orderBy('created_at')
+            ->orderBy('id')
+            ->get([
+                'id',
+                'tutor_session_objective_id',
+                'understanding_score',
+                'classification',
+                'correct',
+                'misconception',
+                'created_at',
+            ]);
+
+        $interactionResponseCount = $interactionEvaluations->count();
+
+        // Balance the metric by learning objective so an objective with many
+        // retries cannot dominate the dashboard. Within each objective, the
+        // latest demonstrated understanding carries more weight (65%) than
+        // the earlier response journey (35%), allowing genuine recovery to
+        // improve the learner's current interaction profile.
+        $objectiveInteractionScores = $interactionEvaluations
+            ->filter(fn ($evaluation) => $evaluation->tutor_session_objective_id)
+            ->groupBy('tutor_session_objective_id')
+            ->map(function ($rows) {
+                $ordered = $rows->sortBy('id')->values();
+                $journeyAverage = (float) $ordered->avg('understanding_score');
+                $latestScore = (float) ($ordered->last()?->understanding_score ?? 0);
+
+                return ($journeyAverage * 0.35) + ($latestScore * 0.65);
+            });
+
+        $learningInteractionScore = $objectiveInteractionScores->isNotEmpty()
+            ? round((float) $objectiveInteractionScores->avg(), 1)
+            : ($interactionResponseCount > 0
+                ? round((float) $interactionEvaluations->avg('understanding_score'), 1)
+                : null);
+
+        $recentInteraction = $interactionEvaluations->take(-5);
+        $previousInteraction = $interactionResponseCount > 5
+            ? $interactionEvaluations
+                ->slice(max(0, $interactionResponseCount - 10), 5)
+            : collect();
+
+        $interactionTrendDelta = null;
+        $interactionTrend = 'insufficient_data';
+
+        if ($recentInteraction->count() >= 2 && $previousInteraction->count() >= 2) {
+            $interactionTrendDelta = round(
+                (float) $recentInteraction->avg('understanding_score')
+                - (float) $previousInteraction->avg('understanding_score'),
+                1
+            );
+
+            $interactionTrend = match (true) {
+                $interactionTrendDelta >= 5 => 'improving',
+                $interactionTrendDelta <= -5 => 'declining',
+                default => 'stable',
+            };
+        } elseif ($recentInteraction->count() >= 2) {
+            $interactionTrend = 'building';
+        }
+
+        $interactionRecoveries = $interactionEvaluations
+            ->filter(fn ($evaluation) => $evaluation->tutor_session_objective_id)
+            ->groupBy('tutor_session_objective_id')
+            ->filter(function ($rows) {
+                $ordered = $rows->sortBy('id')->values();
+                $firstWeakIndex = $ordered->search(
+                    fn ($row) => (int) $row->understanding_score < 60
+                );
+
+                if ($firstWeakIndex === false) {
+                    return false;
+                }
+
+                return $ordered
+                    ->slice($firstWeakIndex + 1)
+                    ->contains(
+                        fn ($row) => (int) $row->understanding_score >= 80
+                    );
+            })
+            ->count();
 
         $currentTutorSessions = TutorSession::query()
             ->with([
@@ -889,8 +994,17 @@ class HomeController extends Controller
                 'assessment_completion_rate' => $assessmentCompletionRate,
                 'average_score' => $averageScore,
                 'best_score' => $bestScore,
+                // Legacy assessment-answer accuracy remains available for
+                // older clients, but the current dashboard presents Learning
+                // Interaction instead because assessment results already have
+                // their own score cards.
                 'accuracy' => $assessmentAccuracy,
                 'accuracy_answer_count' => $resolvedAnswerCount,
+                'learning_interaction' => $learningInteractionScore,
+                'interaction_response_count' => $interactionResponseCount,
+                'interaction_trend' => $interactionTrend,
+                'interaction_trend_delta' => $interactionTrendDelta,
+                'interaction_recoveries' => $interactionRecoveries,
                 'total_practices' => $totalPractices,
                 'tutor_sessions' => $tutorSessions->count(),
                 'active_tutor_sessions' => $tutorSessions->where('status', 'active')->count(),
