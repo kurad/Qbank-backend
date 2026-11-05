@@ -1720,6 +1720,7 @@ PROMPT;
         );
         $notationInterpretation = $this->notationInterpretationPolicy($session);
         $notationInterpretation .= "\n" . $this->englishEvaluationPolicy($session);
+        $notationInterpretation .= "\n" . $this->sqlEvaluationFairnessPolicy($session);
 
         $systemPrompt = <<<PROMPT
 You are the learning-evaluation component of a guided AI tutor.
@@ -1952,6 +1953,7 @@ PROMPT;
             $this->formatChunks($chunks);
         $notationInterpretation = $this->notationInterpretationPolicy($session);
         $notationInterpretation .= "\n" . $this->englishEvaluationPolicy($session);
+        $notationInterpretation .= "\n" . $this->sqlEvaluationFairnessPolicy($session);
 
         $systemPrompt = <<<PROMPT
 You are the formal short-answer evaluation component of an adaptive
@@ -2166,6 +2168,53 @@ ENGLISH EVALUATION FAIRNESS
 - For writing tasks, evaluate the specified criteria against the student's actual draft; avoid inventing a rubric, genre convention, word count, or mandatory vocabulary absent from the task or teacher material.
 - Treat errors unrelated to the measured objective as optional formative feedback, not automatic grounds to mark the answer incorrect.
 - Give concise, evidence-based diagnostic feedback and name one concrete misconception when supported; preserve the application's required JSON output, classification and scoring conventions.
+POLICY;
+    }
+
+    /**
+     * SQL-specific evaluation fairness.
+     *
+     * SQL keywords are case-insensitive in normal instructional use, so
+     * keyword casing alone must never change correctness. Keep genuine
+     * case-sensitive data/identifier semantics intact where the question or
+     * approved material explicitly makes them relevant.
+     */
+    protected function sqlEvaluationFairnessPolicy(TutorSession $session): string
+    {
+        $context = strtolower(trim(implode(' ', array_filter([
+            (string) ($session->gradeSubject?->subject?->name ?? ''),
+            (string) ($session->unit?->name ?? ''),
+            (string) ($session->topic?->topic_name ?? ''),
+            (string) ($this->currentObjective($session)?->learningObjective?->objective ?? ''),
+            (string) ($this->currentObjective($session)?->learningObjective?->description ?? ''),
+        ]))));
+
+        if (
+            !str_contains($context, 'sql')
+            && !str_contains($context, 'database')
+            && !str_contains($context, 'structured query language')
+        ) {
+            return '';
+        }
+
+        return <<<'POLICY'
+============================================================
+SQL EVALUATION FAIRNESS
+============================================================
+- SQL keyword and command casing is NOT evidence of correctness or incorrectness.
+- Treat keyword variants such as SELECT/select/SeLeCt, FROM/from, WHERE/where,
+  CREATE/create, INSERT/insert, UPDATE/update, DELETE/delete, ALTER/alter,
+  DROP/drop, PRIMARY KEY/primary key and FOREIGN KEY/foreign key as equivalent
+  when their SQL meaning and syntax are otherwise correct.
+- Do not mark a learner wrong merely for writing SQL keywords in lowercase,
+  uppercase or mixed case.
+- Evaluate SQL by structure, semantics, required clauses, identifiers and the
+  result/constraint the statement expresses.
+- Preserve genuine case-sensitive distinctions only when the question or
+  approved teacher material explicitly makes case significant, for example a
+  quoted string literal/value or a database-specific case-sensitive identifier.
+- Do not silently correct a structurally wrong SQL statement just because its
+  keywords are recognizable.
 POLICY;
     }
 
@@ -3034,6 +3083,13 @@ SOURCE-SUFFICIENCY RULE:
 - If the learner specifically asks for an unsupported detail and it remains unsupported, tell the student briefly that the lesson material does not provide that specific detail.
 - Do not automatically convert the gap into instructions to research external sources.
 - Prefer directing the student to the teacher's map/notes or teacher clarification when the missing detail is necessary.
+
+TEACHER-PROVIDED SUPPORTING SOURCE EXCEPTION:
+- If the current objective has support_status "supporting_source", the application has already verified that the primary material is insufficient and that one or more teacher-provided supporting sources contain the missing information.
+- In that case, TEACHER-APPROVED SUPPORTING SOURCE blocks in the supplied context are permitted lesson content for THIS CURRENT LEARNING GOAL.
+- Use them only to close the identified gap. Do not expand into unrelated parts of the linked website.
+- The supporting source is temporary for this learning goal; once mastery is demonstrated and the application advances, return to the primary teacher material.
+- Never browse, invent, or introduce any source that was not explicitly provided by the teacher and supplied in the current context.
 ============================================================
 CURRENT LEARNING OBJECTIVE
 ============================================================
@@ -3187,14 +3243,37 @@ PROMPT;
         }
         return $chunks
             ->map(function ($chunk, $index) {
+                $scope =
+                    $chunk->tutor_material_scope
+                    ?? 'teacher material';
+
+                if ($scope === 'teacher_supporting_source') {
+                    $title =
+                        $chunk->tutor_supporting_source_title
+                        ?? 'Teacher supporting source';
+                    $url =
+                        $chunk->tutor_supporting_source_url
+                        ?? '';
+
+                    return sprintf(
+                        "TEACHER-APPROVED SUPPORTING SOURCE %d\n"
+                            . "Title: %s\n"
+                            . "URL: %s\n"
+                            . "Use: only to close the verified gap in the current learning goal.\n"
+                            . "Content:\n%s",
+                        $index + 1,
+                        $title,
+                        $url,
+                        trim((string) $chunk->content)
+                    );
+                }
+
                 $title =
                     $chunk
                     ->courseMaterial
                     ?->title
                     ?? 'Teacher material';
-                $scope =
-                    $chunk->tutor_material_scope
-                    ?? 'teacher material';
+
                 return sprintf(
                     "TEACHER SOURCE %d\n"
                         . "Title: %s\n"

@@ -86,6 +86,11 @@ class CourseMaterial extends Model
     {
         return $this->hasMany(CurriculumAnalysis::class);
     }
+
+    public function supportingSources()
+    {
+        return $this->hasMany(CourseMaterialSupportingSource::class);
+    }
     public function pages()
     {
         return $this->hasMany(CourseMaterialPage::class)

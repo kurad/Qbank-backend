@@ -8,6 +8,10 @@ use Illuminate\Support\Collection;
 
 class TutorKnowledgeService
 {
+    public function __construct(
+        protected TutorSupportingSourceService $supportingSources
+    ) {}
+
     public function retrieve(
         TutorSession $session,
         string $query,
@@ -64,11 +68,7 @@ class TutorKnowledgeService
             }
         }
 
-        if ($chunks->isEmpty()) {
-            return collect();
-        }
-
-        return $chunks
+        $ranked = $chunks
             ->map(function ($chunk) use ($session, $terms, $searchText) {
                 $chunk->tutor_relevance_score = $this->scoreChunk(
                     $chunk,
@@ -82,6 +82,43 @@ class TutorKnowledgeService
             ->sortByDesc('tutor_relevance_score')
             ->take(max(1, $limit))
             ->values();
+
+        $currentObjective = $session->objectives
+            ->sortBy('objective_order')
+            ->first(fn ($objective) => !in_array(
+                strtolower((string) $objective->status),
+                ['completed', 'mastered', 'needs_review', 'material_gap'],
+                true
+            ));
+
+        if (
+            !$currentObjective
+            || strtolower((string) ($currentObjective->support_status ?? ''))
+                !== 'supporting_source'
+        ) {
+            return $ranked;
+        }
+
+        $supportingSources =
+            $this->supportingSources
+                ->sourcesForObjective($currentObjective);
+
+        foreach ($supportingSources as $source) {
+            $synthetic = new \stdClass();
+            $synthetic->content =
+                $source->tutor_support_excerpt;
+            $synthetic->courseMaterial = null;
+            $synthetic->tutor_material_scope =
+                'teacher_supporting_source';
+            $synthetic->tutor_supporting_source_title =
+                $source->cached_title ?: $source->title;
+            $synthetic->tutor_supporting_source_url =
+                $source->url;
+
+            $ranked->push($synthetic);
+        }
+
+        return $ranked->values();
     }
 
     protected function buildSearchText(TutorSession $session, string $query): string

@@ -17,7 +17,8 @@ class TutorSessionService
         protected TutorContextService $context,
         protected TutorAIService $ai,
         protected TutorDifficultyService $difficulty,
-        protected StudentTopicLearningService $topicLearning
+        protected StudentTopicLearningService $topicLearning,
+        protected TutorSupportingSourceService $supportingSources
     ) {}
 
     public function create(User $student, array $data): TutorSession
@@ -224,6 +225,48 @@ class TutorSessionService
                 return $current->fresh()->load('learningObjective');
             }
 
+            /*
+             * Primary material is insufficient. Before leaving the learning
+             * goal behind, consult only the supporting web sources explicitly
+             * provided by the teacher for this approved course material.
+             */
+            $supporting = $this->supportingSources->resolve(
+                $session,
+                $current
+            );
+
+            if (($supporting['status'] ?? null) === 'supported') {
+                $current->support_status = 'supporting_source';
+                $current->support_reason =
+                    $supporting['reason']
+                    ?? 'Teacher-provided supporting sources are being used.';
+                $current->supporting_source_ids =
+                    $supporting['source_ids'] ?? [];
+                $current->supporting_source_started_at =
+                    $current->supporting_source_started_at ?? now();
+
+                if ($current->status === 'not_started') {
+                    $current->status = 'in_progress';
+                    $current->started_at = $current->started_at ?? now();
+                }
+
+                $current->save();
+
+                $session->messages()->create([
+                    'role' => 'assistant',
+                    'message_type' => 'supporting_source_notice',
+                    'content' =>
+                        'The main learning material does not fully cover this part, so I will use an additional source your teacher provided to help you learn it. Once you demonstrate understanding, we will continue with the main material.',
+                    'metadata' => [
+                        'learning_objective_id' => $current->learning_objective_id,
+                        'support_status' => 'supporting_source',
+                        'supporting_source_ids' => $current->supporting_source_ids,
+                    ],
+                ]);
+
+                return $current->fresh()->load('learningObjective');
+            }
+
             $current->status = 'material_gap';
             $current->completed_at = now();
             $current->save();
@@ -235,8 +278,7 @@ class TutorSessionService
                 'role' => 'assistant',
                 'message_type' => 'material_gap',
                 'content' =>
-                    'This learning goal is part of the topic, but the approved learning material does not currently provide enough information for me to teach and check it fairly. '
-                    . 'I will leave it for your teacher to update rather than fill the gap with outside information.',
+                    'This learning goal is part of the topic, but neither the main material nor the supporting sources provided by your teacher contain enough information for me to teach and check it fairly. I will flag this gap for your teacher.',
                 'metadata' => [
                     'learning_objective_id' => $current->learning_objective_id,
                     'learning_goal' => $goalText,
@@ -415,6 +457,14 @@ class TutorSessionService
 
             $current->status = 'completed';
             $current->completed_at = now();
+
+            if (
+                strtolower((string) ($current->support_status ?? ''))
+                === 'supporting_source'
+            ) {
+                $current->supporting_source_mastered_at = now();
+            }
+
             $current->save();
 
             $freshSession = $session->fresh()->load('objectives.learningObjective');

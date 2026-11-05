@@ -9,6 +9,7 @@ use App\Http\Controllers\AuthController;
 use App\Http\Controllers\TeacherAccessController;
 use App\Http\Controllers\ClassInvitationController;
 use App\Http\Controllers\CourseMaterialController;
+use App\Http\Controllers\CourseMaterialSupportingSourceController;
 use App\Http\Controllers\CurriculumAnalysisController;
 use App\Http\Controllers\GradeLevelController;
 use App\Http\Controllers\GradeSubjectController;
@@ -236,6 +237,9 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     Route::get('/course-materials/{courseMaterial}/download', [CourseMaterialController::class, 'downloadOriginal']);
     Route::post('/course-materials', [CourseMaterialController::class, 'store']);
     Route::post('/course-materials/{courseMaterial}/approve', [CourseMaterialController::class, 'approve']);
+    Route::post('/course-materials/{courseMaterial}/supporting-sources', [CourseMaterialSupportingSourceController::class, 'store']);
+    Route::post('/course-material-supporting-sources/{supportingSource}/refresh', [CourseMaterialSupportingSourceController::class, 'refresh']);
+    Route::delete('/course-material-supporting-sources/{supportingSource}', [CourseMaterialSupportingSourceController::class, 'destroy']);
     Route::delete('/course-materials/{courseMaterial}', [CourseMaterialController::class, 'destroy']);
 
 

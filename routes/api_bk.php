@@ -1,9 +1,12 @@
 <?php
 
+use App\Http\Controllers\AdminDashboardController;
+use App\Http\Controllers\AIUsageController;
 use App\Http\Controllers\AssessmentBuilderController;
 use App\Http\Controllers\AssessmentController;
 use App\Http\Controllers\AssessmentSectionController;
 use App\Http\Controllers\AuthController;
+use App\Http\Controllers\TeacherAccessController;
 use App\Http\Controllers\ClassInvitationController;
 use App\Http\Controllers\CourseMaterialController;
 use App\Http\Controllers\CurriculumAnalysisController;
@@ -13,17 +16,25 @@ use App\Http\Controllers\GroupController;
 use App\Http\Controllers\HomeController;
 use App\Http\Controllers\LearningObjectiveController;
 use App\Http\Controllers\LearningPeriodController;
+use App\Http\Controllers\LearningSupportController;
 use App\Http\Controllers\ModernAssessmentBuilderController;
 use App\Http\Controllers\PaperGeneratorController;
 use App\Http\Controllers\PracticePaperController;
 use App\Http\Controllers\QuestionController;
+use App\Http\Controllers\QuestionnaireImportController;
 use App\Http\Controllers\SchoolController;
+use App\Http\Controllers\SchoolStudentController;
+use App\Http\Controllers\SystemSchoolUserController;
 use App\Http\Controllers\StudentAnswerController;
 use App\Http\Controllers\StudentAssessmentController;
+use App\Http\Controllers\StudentResultsController;
 use App\Http\Controllers\SubjectController;
+use App\Http\Controllers\TeacherGradebookController;
 use App\Http\Controllers\TeacherProgressController;
+use App\Http\Controllers\TeacherTutorHistoryController;
 use App\Http\Controllers\TopicController;
 use App\Http\Controllers\TutorController;
+use App\Http\Controllers\EnglishWritingController;
 use App\Http\Controllers\UnitController;
 use App\Models\User;
 use Illuminate\Auth\Events\Verified;
@@ -37,6 +48,10 @@ use Illuminate\Support\Facades\Route;
 |--------------------------------------------------------------------------
 */
 
+use App\Http\Controllers\StudentPracticeController;
+use App\Http\Controllers\TeacherLearningActivityController;
+use App\Http\Controllers\StudentFormativeAssessmentController;
+use App\Http\Controllers\StudentLearnerFormativeController;
 Route::get('/email/verify/{id}/{hash}', function (Request $request, $id, $hash) {
     $user = User::findOrFail($id);
 
@@ -82,43 +97,16 @@ Route::post('/email/resend-verification', function (Request $request) {
 
 Route::post('/login', [AuthController::class, 'login']);
 Route::post('/register', [AuthController::class, 'register']);
+Route::get('/teacher-invitations/{token}', [TeacherAccessController::class, 'preview']);
+Route::post('/teacher-invitations/{token}/register', [TeacherAccessController::class, 'registerFromInvitation']);
+
 Route::post('/refresh-token', [AuthController::class, 'refreshToken']);
 
 // Public class invitation preview
 Route::get('/class-invitations/{classCode}', [ClassInvitationController::class, 'show']);
-
+Route::post('/class-invitations/{classCode}/resolve-account', [ClassInvitationController::class, 'resolveAccount'])->middleware('throttle:10,1');
 Route::get('/auth/google', [AuthController::class, 'redirectToGoogle']);
 Route::get('/auth/google/callback', [AuthController::class, 'handleGoogleCallback']);
-
-
-/*
-|--------------------------------------------------------------------------
-| Public Basic Data Routes
-|--------------------------------------------------------------------------
-*/
-
-Route::get('/subjects', [SubjectController::class, 'index']);
-Route::get('/subjects/search', [SubjectController::class, 'searchSubjects']);
-Route::get('/subjects/details', [SubjectController::class, 'subjectsByGrade']);
-Route::get('/subjects/overview', [HomeController::class, 'subjectsOverview']);
-Route::get('/subjects/{subject}/topics', [HomeController::class, 'subjectTopics']);
-Route::get('/subjects/{subject}/grades', [SubjectController::class, 'gradesForSubject']);
-Route::get('/subjects/{id}/topics', [TopicController::class, 'topicsBySubject']);
-Route::get('/subjects/{subjectId}/topics-with-questions', [QuestionController::class, 'topicsWithQuestionsBySubject']);
-Route::get('/subjects/{subjectId}/grades/{gradeId}/topics', [TopicController::class, 'topicsBySubjectAndGrade']);
-Route::get('/subjects/{subjectId}/grades/{gradeId}/units', [TopicController::class, 'topicsBySubjectGrade']);
-Route::get('/grade-levels', [GradeLevelController::class, 'index']);
-Route::get('/grade-subjects/{gradeId}/{subjectId}/topics', [TopicController::class, 'topicsByGradeAndSubject']);
-Route::get('/topics', [TopicController::class, 'index']);
-Route::get('/topics-by-subject', [TopicController::class, 'topicsBySubject']);
-Route::get('/questions/all', [QuestionController::class, 'allQuestions']);
-Route::get('/questions/search', [QuestionController::class, 'search']);
-Route::get('/questions/{id}', [QuestionController::class, 'show']);
-Route::post('/questions/{id}/approve-for-assessment', [QuestionController::class, 'approveForAssessment']);
-Route::post('/questions/{id}/reject-for-assessment', [QuestionController::class, 'rejectForAssessment']);
-Route::get('/questions/assessment-pool/objective/{learningObjectiveId}', [QuestionController::class, 'assessmentQuestionsByObjective']);
-Route::get('/reports/questions-per-subject', [HomeController::class, 'questionsPerSubject']);
-
 
 /*
 |--------------------------------------------------------------------------
@@ -134,11 +122,39 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     |--------------------------------------------------------------------------
     */
 
+
+
     Route::get('/user', function (Request $request) {
         return $request->user();
     });
 
     Route::post('/logout', [AuthController::class, 'logout']);
+    Route::get('/session-info', [AuthController::class, 'sessionInfo']);
+    Route::get('/admin/dashboard-summary', [AdminDashboardController::class, 'summary']);
+    Route::get('/admin/ai-usage', [AIUsageController::class, 'index']);
+
+    // Teacher access management / invitation acceptance
+    Route::post('/teacher-invitations/{token}/accept', [TeacherAccessController::class, 'acceptExisting']);
+    Route::get('/teacher-management/context', [TeacherAccessController::class, 'context']);
+    Route::get('/teacher-management/teachers', [TeacherAccessController::class, 'teachers']);
+    Route::get('/teacher-management/requests', [TeacherAccessController::class, 'pendingRequests']);
+    Route::post('/teacher-management/requests/{user}/approve', [TeacherAccessController::class, 'approve']);
+    Route::post('/teacher-management/requests/{user}/reject', [TeacherAccessController::class, 'reject']);
+    Route::get('/teacher-management/invitations', [TeacherAccessController::class, 'invitations']);
+    Route::post('/teacher-management/invitations', [TeacherAccessController::class, 'invite']);
+    Route::post('/teacher-management/invitations/{teacherInvitation}/resend', [TeacherAccessController::class, 'resend']);
+    Route::post('/teacher-management/invitations/{teacherInvitation}/revoke', [TeacherAccessController::class, 'revoke']);
+
+
+    // School-level student management. System Admins do not manage student accounts.
+    // System Admin: school-scoped teacher/student access management.
+    Route::get('/system/schools/user-options', [SystemSchoolUserController::class, 'schools']);
+    Route::get('/system/schools/{school}/users', [SystemSchoolUserController::class, 'index']);
+    Route::patch('/system/schools/{school}/users/{user}/status', [SystemSchoolUserController::class, 'updateStatus'])->middleware('throttle:20,1');
+
+    Route::get('/school-management/students', [SchoolStudentController::class, 'index']);
+    Route::patch('/school-management/students/{student}/status', [SchoolStudentController::class, 'updateStatus']);
+
 
 
     /*
@@ -147,6 +163,29 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     |--------------------------------------------------------------------------
     */
 
+
+    Route::get('/subjects', [SubjectController::class, 'index']);
+    Route::get('/subjects/search', [SubjectController::class, 'searchSubjects']);
+    Route::get('/subjects/details', [SubjectController::class, 'subjectsByGrade']);
+    Route::get('/subjects/overview', [HomeController::class, 'subjectsOverview']);
+    Route::get('/subjects/{subject}/topics', [HomeController::class, 'subjectTopics']);
+    Route::get('/subjects/{subject}/grades', [SubjectController::class, 'gradesForSubject']);
+    Route::get('/subjects/{id}/topics', [TopicController::class, 'topicsBySubject']);
+    Route::get('/subjects/{subjectId}/topics-with-questions', [QuestionController::class, 'topicsWithQuestionsBySubject']);
+    Route::get('/subjects/{subjectId}/grades/{gradeId}/topics', [TopicController::class, 'topicsBySubjectAndGrade']);
+    Route::get('/subjects/{subjectId}/grades/{gradeId}/units', [TopicController::class, 'topicsBySubjectGrade']);
+    Route::get('/grade-levels', [GradeLevelController::class, 'index']);
+    Route::get('/grade-subjects/{gradeId}/{subjectId}/topics', [TopicController::class, 'topicsByGradeAndSubject']);
+    Route::get('/topics', [TopicController::class, 'index']);
+    Route::get('/topics-by-subject', [TopicController::class, 'topicsBySubject']);
+    Route::get('/questions/all', [QuestionController::class, 'allQuestions']);
+    Route::get('/questions/search', [QuestionController::class, 'search']);
+    Route::get('/questions/{id}', [QuestionController::class, 'show']);
+    Route::post('/questions/{id}/approve-for-assessment', [QuestionController::class, 'approveForAssessment']);
+    Route::post('/questions/{id}/reject-for-assessment', [QuestionController::class, 'rejectForAssessment']);
+    Route::get('/questions/assessment-pool/objective/{learningObjectiveId}', [QuestionController::class, 'assessmentQuestionsByObjective']);
+    Route::get('/reports/questions-per-subject', [HomeController::class, 'questionsPerSubject']);
+
     Route::get('/topics/{id}/question-count', [QuestionController::class, 'getQuestionCount']);
     Route::get('/topics/{topic}/questions', [QuestionController::class, 'byTopic']);
     Route::get('/topics/{topic}/questions/no-pagination', [QuestionController::class, 'byTopicNoPagination']);
@@ -154,17 +193,15 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
 
     /*
     |--------------------------------------------------------------------------
-    | School & User Management
+    | School Client & Student Lookup
     |--------------------------------------------------------------------------
     */
 
     Route::get('/grade-levels/{gradeId}/subjects', [SubjectController::class, 'subjectsByGrade']);
     Route::get('/schools', [SchoolController::class, 'index']);
+    Route::get('/schools/{school}', [SchoolController::class, 'show']);
     Route::post('/schools', [SchoolController::class, 'store']);
     Route::match(['put', 'patch'], '/schools/{id}', [SchoolController::class, 'update']);
-    Route::get('/users', [AuthController::class, 'index']);
-    Route::put('/users/{id}', [AuthController::class, 'updateUser']);
-    Route::delete('/users/{id}', [AuthController::class, 'deleteUser']);
     Route::get('/students', [AuthController::class, 'getStudents']);
 
 
@@ -183,6 +220,7 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     Route::post('/subjects', [SubjectController::class, 'createSubject']);
     Route::put('/subjects/{id}', [SubjectController::class, 'update']);
 
+    Route::post('/topics', [TopicController::class, 'store']);
     Route::put('/topics/{topic}', [TopicController::class, 'update']);
     Route::delete('/topics/{id}', [TopicController::class, 'destroy']);
 
@@ -194,6 +232,8 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     */
 
     Route::get('/course-materials', [CourseMaterialController::class, 'index']);
+    Route::get('/course-materials/{courseMaterial}/view', [CourseMaterialController::class, 'viewOriginal']);
+    Route::get('/course-materials/{courseMaterial}/download', [CourseMaterialController::class, 'downloadOriginal']);
     Route::post('/course-materials', [CourseMaterialController::class, 'store']);
     Route::post('/course-materials/{courseMaterial}/approve', [CourseMaterialController::class, 'approve']);
     Route::delete('/course-materials/{courseMaterial}', [CourseMaterialController::class, 'destroy']);
@@ -266,10 +306,19 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     Route::get('/tutor/sessions', [TutorController::class, 'sessions']);
     Route::get('/tutor/sessions/{tutorSession}', [TutorController::class, 'showSession']);
     Route::post('/tutor/sessions/{tutorSession}/messages', [TutorController::class, 'message']);
+    // English-only writing workspace: additive; does not alter tutor progress or messages.
+    Route::get('/tutor/sessions/{tutorSession}/english-writing', [EnglishWritingController::class, 'index']);
+    Route::post('/tutor/sessions/{tutorSession}/english-writing', [EnglishWritingController::class, 'store'])->middleware('throttle:8,1');
+    Route::get('/tutor/messages/{tutorMessage}/attachments/{index}', [TutorController::class, 'messageAttachment'])->whereNumber('index');
     Route::post('/tutor/sessions/{tutorSession}/end', [TutorController::class, 'endSession']);
     Route::post('/tutor/sessions/{tutorSession}/continue', [TutorController::class, 'continueLearning']);
+    Route::post('/tutor/sessions/{tutorSession}/move-on', [TutorController::class, 'moveOnTopic']);
     Route::post('/tutor/sessions/{tutorSession}/checkpoints/{checkpointMessage}/answer', [TutorController::class, 'answerCheckpoint']);
     Route::post('/tutor/sessions/{tutorSession}/checkpoints/{checkpointMessage}/skip', [TutorController::class, 'skipCheckpoint']);
+    Route::post(
+        '/tutor/sessions/{tutorSession}/next-objective',
+        [TutorController::class, 'nextObjective']
+    );
     /*
     |--------------------------------------------------------------------------
     | Legacy Tutor Endpoint
@@ -289,6 +338,7 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     Route::put('/questions/{id}', [QuestionController::class, 'update']);
     Route::delete('/questions/{id}', [QuestionController::class, 'destroy']);
     Route::get('/my-questions', [QuestionController::class, 'myQuestions']);
+    Route::post('/questions/ai-assist', [QuestionController::class, 'aiAssist']);
     Route::post('/questions/ai-generate', [QuestionController::class, 'generateAIQuestions']);
     Route::post('/questions/ai-generate/store', [QuestionController::class, 'storeAIQuestions']);
     Route::get('/questions/by-topics', [AssessmentBuilderController::class, 'questionsByTopics']);
@@ -383,8 +433,14 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
 
     Route::get('/student/practice-assessments', [AssessmentController::class, 'practice']);
     Route::get('/student/assigned-assessments', [AssessmentController::class, 'assignedAssessments']);
+    Route::get('/student/results', [StudentResultsController::class, 'index']);
     Route::get('/student/assessment-results/{id}', [AssessmentController::class, 'showResults']);
     Route::get('/student/statistics', [HomeController::class, 'statistics']);
+    Route::get('/student/learning-periods/{learningPeriod}/formative', [StudentFormativeAssessmentController::class, 'show']);
+    Route::get('/student/learning-periods/{learningPeriod}/learner-formative', [StudentLearnerFormativeController::class, 'show']);
+    Route::post('/student/learning-periods/{learningPeriod}/learner-formative/prepare', [StudentLearnerFormativeController::class, 'prepare']);
+    Route::get('/student/learner-formative-attempts/{attempt}/questions', [StudentLearnerFormativeController::class, 'questions']);
+    Route::post('/student/learner-formative-attempts/{attempt}/submit', [StudentLearnerFormativeController::class, 'submit']);
     Route::post('/assessments/submit-answers', [StudentAnswerController::class, 'storeStudentAnswers']);
     Route::post('/assessments/update-short-answer-confidence', [StudentAnswerController::class, 'updateShortAnswerConfidence']);
 
@@ -410,6 +466,8 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     Route::get('/groups/{group}/assignments/{assessment}/submissions', [GroupController::class, 'assignmentSubmissions']);
 
 
+    Route::get('/student/groups/{id}', [GroupController::class, 'studentShow']);
+    Route::get('/student/groups/{id}/assignments', [GroupController::class, 'studentAssignments']);
     /*
     |--------------------------------------------------------------------------
     | Student Assessment Runtime
@@ -475,7 +533,42 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     Route::post('/curriculum-analyses/{curriculumAnalysis}/approve', [CurriculumAnalysisController::class, 'approve']);
     Route::post('/course-materials/{courseMaterial}/extract', [CourseMaterialController::class, 'extract']);
     Route::post('/course-materials/{courseMaterial}/analyze-content', [CourseMaterialController::class, 'analyzeContent']);
+    Route::post('/course-materials/{courseMaterial}/reanalyze',[CourseMaterialController::class, 'reanalyze']);
+    Route::get('/course-materials/processing-status', [CourseMaterialController::class, 'processingStatuses']);
     Route::get('/course-materials/{courseMaterial}/processing-status', [CourseMaterialController::class, 'processingStatus']);
+
+
+    Route::get('/student/practice/context', [StudentPracticeController::class, 'context']);
+    Route::post('/student/practice/prepare', [StudentPracticeController::class, 'prepare']);
+    Route::get('/student/practice/topics/{topic}/questions', [StudentPracticeController::class, 'questions']);
+    Route::post('/student/practice/attempts', [StudentPracticeController::class, 'startAttempt']);
+    Route::post('/student/practice/attempts/{practiceAttempt}/answers', [StudentPracticeController::class, 'saveAttemptAnswer']);
+    Route::post('/student/practice/attempts/{practiceAttempt}/complete', [StudentPracticeController::class, 'completeAttempt']);
+    Route::get('/student/practice/history', [StudentPracticeController::class, 'history']);
+    Route::get('/student/practice/attempts/{practiceAttempt}', [StudentPracticeController::class, 'reviewAttempt']);
+
+
+    Route::get('/student/support/threads', [LearningSupportController::class, 'studentThreads']);
+    Route::post('/student/support/threads/{thread}/messages', [LearningSupportController::class, 'addMessage']);
+
+    Route::get('/teacher/tutor-history', [TeacherTutorHistoryController::class, 'index']);
+    Route::get('/teacher/tutor-history/{tutorSession}', [TeacherTutorHistoryController::class, 'show']);
+    Route::post('/teacher/tutor-history/{tutorSession}/analyze', [TeacherTutorHistoryController::class, 'analyze'])->middleware('throttle:6,1');
+    // Phase 1C: English writing draft history and teacher reviews (existing teacher authorization applies).
+    Route::get('/teacher/tutor-history/{tutorSession}/writing', [TeacherTutorHistoryController::class, 'writing']);
+    Route::put('/teacher/tutor-history/{tutorSession}/writing/{draft}/review', [TeacherTutorHistoryController::class, 'reviewWriting'])->middleware('throttle:12,1');
+
+    Route::get('/teacher/support/needs-review', [LearningSupportController::class, 'teacherNeedsReview']);
+    Route::get('/teacher/support/threads', [LearningSupportController::class, 'teacherThreads']);
+    Route::post('/teacher/support/threads', [LearningSupportController::class, 'createThread']);
+    Route::post('/teacher/support/threads/{thread}/messages', [LearningSupportController::class, 'addMessage']);
+    Route::post('/teacher/support/threads/{thread}/check-ins', [LearningSupportController::class, 'scheduleCheckIn']);
+    Route::patch('/teacher/support/check-ins/{checkIn}', [LearningSupportController::class, 'updateCheckIn']);
+
+    Route::prefix('teacher/learning-activity')->group(function () {
+        Route::get('/', [TeacherLearningActivityController::class, 'index']);
+        Route::get('/students/{student}', [TeacherLearningActivityController::class, 'student']);
+    });
 
     Route::prefix('teacher/progress')->group(function () {
 
@@ -486,5 +579,25 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
         Route::get('/activity', [TeacherProgressController::class, 'activity']);
         Route::get('/learning-periods/{learningPeriod}', [TeacherProgressController::class, 'learningPeriod']);
         Route::get('/students/{student}', [TeacherProgressController::class, 'student']);
+    });
+
+    Route::prefix('teacher/gradebook')->group(function () {
+        Route::get('/', [TeacherGradebookController::class, 'index']);
+        Route::get('/export', [TeacherGradebookController::class, 'export']);
+        Route::get('/review-queue', [TeacherGradebookController::class, 'reviewQueue']);
+        Route::get('/formative-review', [TeacherGradebookController::class, 'formativeReview']);
+        Route::put('/formative-answers/{answer}', [TeacherGradebookController::class, 'reviewFormativeAnswer']);
+        Route::get('/students/{student}', [TeacherGradebookController::class, 'student']);
+        Route::put('/answers/{answer}', [TeacherGradebookController::class, 'reviewAnswer']);
+    });
+
+    Route::prefix('teacher/questionnaire-imports')->group(function () {
+        Route::get('/', [QuestionnaireImportController::class, 'index']);
+        Route::post('/', [QuestionnaireImportController::class, 'store']);
+        Route::get('/{questionnaireImport}', [QuestionnaireImportController::class, 'show']);
+        Route::post('/{questionnaireImport}/reprocess', [QuestionnaireImportController::class, 'reprocess']);
+        Route::put('/{questionnaireImport}/items/{item}', [QuestionnaireImportController::class, 'updateItem']);
+        Route::post('/{questionnaireImport}/approve', [QuestionnaireImportController::class, 'approve']);
+        Route::delete('/{questionnaireImport}', [QuestionnaireImportController::class, 'destroy']);
     });
 });

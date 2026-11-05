@@ -23,6 +23,9 @@ class TutorSessionObjective extends Model
         'notes',
         'support_status',
         'support_reason',
+        'supporting_source_ids',
+        'supporting_source_started_at',
+        'supporting_source_mastered_at',
     ];
 
     protected $casts = [
@@ -31,6 +34,9 @@ class TutorSessionObjective extends Model
         'correct_attempts' => 'integer',
         'started_at' => 'datetime',
         'completed_at' => 'datetime',
+        'supporting_source_ids' => 'array',
+        'supporting_source_started_at' => 'datetime',
+        'supporting_source_mastered_at' => 'datetime',
     ];
 
     public function session(): BelongsTo

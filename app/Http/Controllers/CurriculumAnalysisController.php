@@ -73,7 +73,8 @@ class CurriculumAnalysisController extends Controller
 
         return response()->json([
             'data' => $curriculumAnalysis->load([
-                'courseMaterial:id,title,unit_id,subject_id',
+                'courseMaterial:id,title,unit_id,subject_id,teacher_id',
+                'courseMaterial.supportingSources:id,course_material_id,title,url,domain,status,cached_title,content_type,validated_at,last_error',
                 'unit:id,name',
                 'topics.objectives',
             ]),
@@ -311,7 +312,8 @@ class CurriculumAnalysisController extends Controller
 
                 'data' =>
                     $curriculumAnalysis->fresh([
-                        'courseMaterial:id,title,unit_id,subject_id',
+                        'courseMaterial:id,title,unit_id,subject_id,teacher_id',
+                'courseMaterial.supportingSources:id,course_material_id,title,url,domain,status,cached_title,content_type,validated_at,last_error',
                         'unit:id,name',
                         'topics.objectives',
                     ]),
@@ -372,7 +374,8 @@ class CurriculumAnalysisController extends Controller
 
                     'data' =>
                         $curriculumAnalysis->fresh()->load([
-                            'courseMaterial:id,title,unit_id,subject_id,status,approved_by,approved_at',
+                            'courseMaterial:id,title,unit_id,subject_id,teacher_id,status,approved_by,approved_at',
+                            'courseMaterial.supportingSources:id,course_material_id,title,url,domain,status,cached_title,content_type,validated_at,last_error',
                             'unit:id,name',
                             'topics.objectives',
                         ]),
@@ -706,7 +709,8 @@ class CurriculumAnalysisController extends Controller
 
                 'data' =>
                     $curriculumAnalysis->fresh([
-                        'courseMaterial:id,title,unit_id,subject_id,status,approved_by,approved_at',
+                        'courseMaterial:id,title,unit_id,subject_id,teacher_id,status,approved_by,approved_at',
+                            'courseMaterial.supportingSources:id,course_material_id,title,url,domain,status,cached_title,content_type,validated_at,last_error',
                         'unit:id,name',
                         'topics.objectives',
                     ]),
