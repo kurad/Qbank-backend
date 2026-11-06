@@ -341,6 +341,21 @@ class TutorSessionService
             // A mastery-confirming response must satisfy BOTH conditions.
             $qualifyingCorrect = $classification === 'correct' && $score >= 80;
 
+            /*
+             * A focused recovery check is created only after the learner has
+             * already demonstrated strong partial understanding on the same
+             * objective. If that small recovery check is then answered
+             * correctly, the two pieces of evidence together are sufficient:
+             *
+             *   strong partial checkpoint + correct targeted recovery
+             *
+             * This avoids forcing the learner to rewrite an entire multi-part
+             * response merely to repair one missing concept.
+             */
+            $recoveryConfirmed =
+                $qualifyingCorrect
+                && !empty($evaluation['recovery_confirmed']);
+
             $current->attempts = (int) $current->attempts + 1;
 
             if ($qualifyingCorrect) {
@@ -353,10 +368,18 @@ class TutorSessionService
                 'feedback' => $evaluation['feedback'] ?? null,
                 'evidence' => $evaluation['evidence'] ?? null,
                 'misconception' => $evaluation['misconception'] ?? null,
+                'recovery_confirmed' => $recoveryConfirmed,
             ], JSON_UNESCAPED_UNICODE);
 
-            $objectiveCompleted = $qualifyingCorrect
-                && (int) $current->correct_attempts >= 2;
+            $objectiveCompleted =
+                $qualifyingCorrect
+                && (
+                    (int) $current->correct_attempts >= 2
+                    || (
+                        $recoveryConfirmed
+                        && (int) $current->attempts >= 2
+                    )
+                );
 
             if (!$objectiveCompleted) {
                 $current->save();

@@ -777,6 +777,166 @@ PROMPT;
         ];
     }
 
+    /**
+     * Generate a very small recovery check after a learner has already shown
+     * meaningful understanding but missed ONE important element.
+     *
+     * The recovery must target only the unresolved gap. It is intentionally
+     * short-answer so the learner can demonstrate the repaired understanding
+     * in their own words without repeating the whole original checkpoint.
+     */
+    public function generateTargetedRecoveryCheckpoint(
+        TutorSession $session,
+        array $originalCheckpoint,
+        array $evaluation,
+        string $studentResponse
+    ): array {
+        $this->loadTutorContext($session);
+
+        $currentObjective = $this->currentObjective($session);
+
+        if (
+            !$currentObjective
+            || !$currentObjective->learningObjective
+        ) {
+            throw new \RuntimeException(
+                'A recovery check cannot be generated because there is no active learning objective.'
+            );
+        }
+
+        $objective = $currentObjective->learningObjective;
+
+        $chunks = $this->teachingContext(
+            $session,
+            trim(
+                (string) (
+                    $evaluation['misconception']
+                    ?? $evaluation['feedback']
+                    ?? $objective->objective
+                )
+            ),
+            4
+        );
+
+        $teacherContext = $this->formatChunks($chunks);
+        $notationPolicy = $this->subjectNotationPolicy($session);
+        $notationPolicy .= "\n" . $this->englishLearningPolicy($session);
+
+        $originalQuestion = trim(
+            (string) ($originalCheckpoint['question'] ?? '')
+        );
+
+        $misconception = trim(
+            (string) (
+                $evaluation['misconception']
+                ?? $evaluation['feedback']
+                ?? 'one important missing idea'
+            )
+        );
+
+        $systemPrompt = <<<PROMPT
+You are creating ONE tiny TARGETED RECOVERY CHECK for a school AI Tutor.
+
+The learner already demonstrated meaningful understanding on a broader formal
+checkpoint but missed ONE important element. Do NOT make the learner repeat the
+whole original question.
+
+============================================================
+LEARNING CONTEXT
+============================================================
+Class: {$session->group?->group_name}
+Subject: {$session->gradeSubject?->subject?->name}
+Grade Level: {$session->gradeSubject?->gradeLevel?->grade_name}
+Unit: {$session->unit?->name}
+Topic: {$session->topic?->topic_name}
+
+{$notationPolicy}
+
+============================================================
+CURRENT LEARNING OBJECTIVE
+============================================================
+Code: {$objective->code}
+Objective: {$objective->objective}
+Description: {$objective->description}
+
+============================================================
+ORIGINAL CHECKPOINT
+============================================================
+{$originalQuestion}
+
+============================================================
+LEARNER RESPONSE
+============================================================
+{$studentResponse}
+
+============================================================
+UNRESOLVED GAP
+============================================================
+{$misconception}
+
+============================================================
+RECOVERY DESIGN RULES
+============================================================
+- Ask exactly ONE small short-answer question.
+- Test ONLY the unresolved gap above.
+- Do not ask the learner to redefine, rewrite, or repeat parts they already
+  demonstrated correctly.
+- Keep the expected response brief: normally one sentence, phrase, small
+  explanation, or one focused example.
+- The question should feel encouraging and achievable, not punitive.
+- Do not expose scores, classifications, attempt counts, or internal labels.
+- Use ONLY the teacher-provided knowledge below as the curriculum boundary.
+- Do not assess enrichment knowledge that is absent from the approved context.
+- expected_answer describes the essential understanding for this small gap.
+- evaluation_criteria should contain 1 to 3 concise criteria.
+
+============================================================
+APPROVED TEACHER-PROVIDED KNOWLEDGE
+============================================================
+{$teacherContext}
+
+Return only the structured short-answer checkpoint.
+PROMPT;
+
+        $decoded = $this->ai->json([
+            [
+                'role' => 'system',
+                'content' => $systemPrompt,
+            ],
+            [
+                'role' => 'user',
+                'content' =>
+                    'Create the one focused recovery check. Return only the structured response.',
+            ],
+        ], $this->checkpointResponseSchema('short_answer'), $this->tutorUsageOptions(
+            $session,
+            'Tutor Targeted Recovery Check',
+            [
+                'temperature' => 0.15,
+                'max_tokens' => 900,
+            ]
+        ));
+
+        $checkpoint = $this->parseCheckpoint(
+            json_encode(
+                $decoded,
+                JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+            ),
+            'short_answer',
+            $currentObjective->learning_objective_id
+        );
+
+        return [
+            ...$checkpoint,
+            'assessment_mode' => 'targeted_recovery',
+            'response_depth' => 'very_short',
+            'strategy' => 'repair_missing_piece',
+            'recovery_mode' => true,
+            'recovery_focus' => $misconception,
+            'recovery_of_question' => $originalQuestion,
+        ];
+    }
+
     public function respondToEvaluation(
         TutorSession $session,
         string $studentMessage,
@@ -856,11 +1016,17 @@ If the classification is "incorrect":
 - Give the student time to process the correction.
 - The application decides when another formal checkpoint occurs.
 If the classification is "partially_correct":
-- Acknowledge ONLY the part that is actually correct.
-- Clearly identify the important missing or inaccurate part.
+- Start by recognizing the SPECIFIC understanding the learner demonstrated.
+- Clearly identify the ONE most important missing or inaccurate part.
 - Do NOT describe the whole response as correct.
-- Teach the missing idea.
+- Keep the tone calm and encouraging: the learner should understand that they
+  are making progress, not that all previous work was discarded.
+- Teach only the missing idea rather than reteaching everything they already
+  demonstrated.
 - Use an example or comparison when useful.
+- If the application says a targeted recovery check is open, prepare the
+  learner for that small check rather than asking them to repeat the original
+  broad answer.
 - Do NOT automatically generate another assessment question.
 - The application decides when another formal checkpoint occurs.
 If the classification is "unclear":
@@ -1783,12 +1949,29 @@ The answer does not need to be perfect, but it must contain the important
 conceptual elements required by the question.
 partially_correct
 Use when the response demonstrates meaningful relevant understanding,
-but an important element is:
+but an IMPORTANT element required by the actual question or evaluation
+criteria is:
 - missing;
 - inaccurate;
 - incomplete;
 - confused; or
 - affected by a misconception.
+
+Do NOT classify a response as partially_correct merely because it omits a
+secondary technical detail that was not necessary to demonstrate the central
+understanding requested by the question.
+
+For a multi-part question:
+- judge each requested part proportionally;
+- preserve credit for parts that are clearly correct;
+- identify only the unresolved part;
+- do not make one small omission erase strong understanding across the rest of
+  the response.
+
+A strong response with one repairable missing element may still receive an
+understanding_score in the 75-89 range even when classification remains
+partially_correct. The application may use that evidence to create a focused
+recovery check rather than repeating the whole question.
 incorrect
 Use when the response:
 - gives a substantially wrong explanation;

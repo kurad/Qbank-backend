@@ -26,7 +26,7 @@ class LearnerFormativeService
         protected AIGateway $ai
     ) {}
 
-    private const QUESTIONS_PER_OBJECTIVE = 3;
+    private const QUESTIONS_PER_OBJECTIVE = 10;
 
     private const MAX_QUESTIONS = 20;
 
@@ -516,8 +516,10 @@ class LearnerFormativeService
             $items->count() * self::QUESTIONS_PER_OBJECTIVE
         );
 
-        // Fair round-robin allocation: every objective gets one before any
-        // objective gets a second, and so on, until the 20-question cap.
+        // Target up to 10 questions per objective, subject to the hard
+        // 20-question assessment cap. Allocation remains fair: every
+        // objective receives one before any objective receives a second,
+        // continuing round-robin until the target/cap is reached.
         //
         // Do not mutate nested array values through Collection array access
         // (e.g. $items[$index]['question_count']++). Laravel Collections use
@@ -763,7 +765,7 @@ PROMPT;
             $schema,
             [
                 'temperature' => 0.35,
-                'max_tokens' => 5000,
+                'max_tokens' => min(12000, max(5000, $count * 700)),
                 '_usage_feature' => 'Learner Formative Assessment Generation',
                 '_usage_user_id' => $attempt->student_id,
                 '_usage_school_id' => $attempt->student?->school_id,

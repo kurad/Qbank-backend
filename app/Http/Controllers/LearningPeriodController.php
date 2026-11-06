@@ -236,6 +236,190 @@ class LearningPeriodController extends Controller
     }
 
     /**
+     * Create the same learning assignment for multiple classes atomically.
+     *
+     * Each class still receives its own LearningPeriod record. This preserves
+     * the existing data model and keeps later editing/progress independent per
+     * class, while allowing a teacher to assign the same topics in one action.
+     */
+    public function batchStore(Request $request)
+    {
+        $data = $request->validate([
+            'group_ids' => [
+                'required',
+                'array',
+                'min:1',
+            ],
+            'group_ids.*' => [
+                'required',
+                'integer',
+                'distinct',
+                'exists:groups,id',
+            ],
+            'grade_subject_id' => [
+                'required',
+                'integer',
+                'exists:grade_subjects,id',
+            ],
+            'title' => [
+                'required',
+                'string',
+                'max:255',
+            ],
+            'description' => [
+                'nullable',
+                'string',
+            ],
+            'start_date' => [
+                'required',
+                'date',
+            ],
+            'end_date' => [
+                'required',
+                'date',
+                'after_or_equal:start_date',
+            ],
+            'topic_ids' => [
+                'required',
+                'array',
+                'min:1',
+                'max:100',
+            ],
+            'topic_ids.*' => [
+                'required',
+                'integer',
+                'distinct',
+                'exists:topics,id',
+            ],
+            'publish' => [
+                'sometimes',
+                'boolean',
+            ],
+        ]);
+
+        $groupIds = collect($data['group_ids'])
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values();
+
+        $groups = Group::query()
+            ->whereIn('id', $groupIds->all())
+            ->get()
+            ->keyBy('id');
+
+        abort_unless(
+            $groups->count() === $groupIds->count(),
+            422,
+            'One or more selected classes could not be found.'
+        );
+
+        $gradeSubject = GradeSubject::findOrFail(
+            $data['grade_subject_id']
+        );
+
+        /*
+         * Validate authorization for EVERY selected class before creating
+         * anything. The DB transaction below then keeps the batch all-or-none.
+         */
+        foreach ($groupIds as $groupId) {
+            $this->ensureCanManageSubject(
+                $request,
+                $groups->get($groupId),
+                $gradeSubject
+            );
+        }
+
+        $topicIds = collect($data['topic_ids'])
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values();
+
+        $topics = Topic::query()
+            ->with('unit:id,name')
+            ->whereIn('id', $topicIds->all())
+            ->get()
+            ->keyBy('id');
+
+        abort_unless(
+            $topics->count() === $topicIds->count(),
+            422,
+            'One or more selected topics could not be found.'
+        );
+
+        foreach ($topicIds as $topicId) {
+            $topic = $topics->get($topicId);
+
+            abort_unless(
+                $topic && $topic->unit,
+                422,
+                'One or more selected topics do not have a valid unit.'
+            );
+
+            abort_unless(
+                (int) $topic->grade_subject_id ===
+                    (int) $gradeSubject->id,
+                422,
+                'One or more selected topics do not belong to the selected subject.'
+            );
+        }
+
+        $publish = (bool) ($data['publish'] ?? false);
+
+        $created = DB::transaction(function () use (
+            $request,
+            $data,
+            $groupIds,
+            $gradeSubject,
+            $topicIds,
+            $topics,
+            $publish
+        ) {
+            $periods = collect();
+
+            foreach ($groupIds as $groupId) {
+                $period = LearningPeriod::create([
+                    'group_id' => $groupId,
+                    'grade_subject_id' => $gradeSubject->id,
+                    'title' => $data['title'],
+                    'description' => $data['description'] ?? null,
+                    'start_date' => $data['start_date'],
+                    'end_date' => $data['end_date'],
+                    'status' => $publish ? 'published' : 'draft',
+                    'created_by' => $request->user()->id,
+                    'published_at' => $publish ? now() : null,
+                ]);
+
+                foreach ($topicIds as $index => $topicId) {
+                    $topic = $topics->get($topicId);
+
+                    $period->topics()->create([
+                        'unit_id' => $topic->unit_id,
+                        'topic_id' => $topic->id,
+                        'display_order' => $index + 1,
+                    ]);
+                }
+
+                $periods->push(
+                    $period->fresh()->load(
+                        $this->periodRelations()
+                    )
+                );
+            }
+
+            return $periods;
+        });
+
+        return response()->json([
+            'message' => $publish
+                ? 'Learning was assigned and published to the selected classes successfully.'
+                : 'Learning periods were created for the selected classes successfully.',
+            'created_count' => $created->count(),
+            'data' => $created->values(),
+        ], 201);
+    }
+
+
+    /**
      * Show a learning period.
      */
     public function show(

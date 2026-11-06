@@ -18,7 +18,7 @@ use Throwable;
 
 class LearningPeriodFormativeService
 {
-    private const QUESTIONS_PER_OBJECTIVE = 3;
+    private const QUESTIONS_PER_OBJECTIVE = 10;
 
     private const MAX_QUESTIONS = 20;
 
@@ -422,6 +422,12 @@ class LearningPeriodFormativeService
             $items->count() * self::QUESTIONS_PER_OBJECTIVE
         );
 
+        /*
+         * Target up to 10 questions per objective, but never exceed 20
+         * questions for the complete formative. With more than two objectives,
+         * the hard cap takes precedence and questions are distributed fairly
+         * round-robin across all included objectives.
+         */
         for ($round = 0; $round < self::QUESTIONS_PER_OBJECTIVE && $remaining > 0; $round++) {
             foreach ($items as $index => $item) {
                 if ($remaining <= 0) {
@@ -585,7 +591,7 @@ PROMPT;
             $schema,
             [
                 'temperature' => 0.35,
-                'max_tokens' => 5000,
+                'max_tokens' => min(12000, max(5000, $count * 700)),
             ]
         );
 

@@ -255,6 +255,7 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
 
     Route::get('/learning-periods', [LearningPeriodController::class, 'index']);
     Route::post('/learning-periods', [LearningPeriodController::class, 'store']);
+    Route::post('/learning-periods/batch', [LearningPeriodController::class, 'batchStore']);
     Route::get('/learning-periods/{learningPeriod}', [LearningPeriodController::class, 'show']);
     Route::put('/learning-periods/{learningPeriod}', [LearningPeriodController::class, 'update']);
     Route::post('/learning-periods/{learningPeriod}/publish', [LearningPeriodController::class, 'publish']);

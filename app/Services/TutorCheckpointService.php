@@ -322,6 +322,64 @@ class TutorCheckpointService
             $studentAnswer
         );
 
+        /*
+         * Strong partial understanding should not force the learner to repeat
+         * an entire broad checkpoint. When there is one identifiable missing
+         * concept, prepare a focused recovery check instead.
+         */
+        $recoveryCheckpoint = null;
+        $classification = strtolower(
+            (string) ($evaluation['classification'] ?? 'unclear')
+        );
+        $understandingScore = (int) (
+            $evaluation['understanding_score'] ?? 0
+        );
+        $hasFocusedGap = trim(
+            (string) ($evaluation['misconception'] ?? '')
+        ) !== '';
+
+        if (
+            empty($checkpoint['recovery_mode'])
+            && $classification === 'partially_correct'
+            && $understandingScore >= 65
+            && $hasFocusedGap
+        ) {
+            try {
+                $recoveryCheckpoint =
+                    $this->ai->generateTargetedRecoveryCheckpoint(
+                        $session,
+                        $checkpoint,
+                        $evaluation,
+                        $this->answerAsText(
+                            $checkpoint,
+                            $studentAnswer
+                        )
+                    );
+            } catch (\Throwable $e) {
+                \Log::warning(
+                    'Tutor targeted recovery generation failed; falling back to normal retry.',
+                    [
+                        'session_id' => $session->id,
+                        'checkpoint_message_id' => $checkpointMessage->id,
+                        'message' => $e->getMessage(),
+                    ]
+                );
+            }
+        }
+
+        /*
+         * A correct answer to an already-focused recovery check completes the
+         * missing evidence when combined with the strong partial response that
+         * caused that recovery check to be generated.
+         */
+        if (
+            !empty($checkpoint['recovery_mode'])
+            && ($evaluation['classification'] ?? null) === 'correct'
+            && (int) ($evaluation['understanding_score'] ?? 0) >= 80
+        ) {
+            $evaluation['recovery_confirmed'] = true;
+        }
+
         $stored = DB::transaction(function () use (
             $session,
             $checkpointMessage,
@@ -329,7 +387,8 @@ class TutorCheckpointService
             $objective,
             $studentAnswer,
             $studentId,
-            $evaluation
+            $evaluation,
+            $recoveryCheckpoint
         ) {
             $lockedCheckpointMessage = TutorMessage::query()
                 ->whereKey($checkpointMessage->id)
@@ -414,6 +473,8 @@ class TutorCheckpointService
                 'understanding_score' => (int) ($evaluation['understanding_score'] ?? 0),
                 'feedback' => $evaluation['feedback'] ?? null,
                 'misconception' => $evaluation['misconception'] ?? null,
+                'recovery_confirmed' =>
+                    !empty($evaluation['recovery_confirmed']),
                 'submitted_at' => now()->toISOString(),
             ];
 
@@ -432,6 +493,41 @@ class TutorCheckpointService
             ];
 
             if ($retryAllowed) {
+                /*
+                 * For strong partial understanding, convert the open retry
+                 * into a small recovery check. Preserve the full attempt
+                 * history and original question for audit/review.
+                 */
+                if (is_array($recoveryCheckpoint)) {
+                    $lockedMetadata['checkpoint']['original_question'] =
+                        $lockedMetadata['checkpoint']['original_question']
+                        ?? ($lockedCheckpoint['question'] ?? null);
+
+                    foreach ([
+                        'question',
+                        'type',
+                        'options',
+                        'correct_answer',
+                        'accepted_answers',
+                        'expected_answer',
+                        'evaluation_criteria',
+                        'assessment_mode',
+                        'response_depth',
+                        'strategy',
+                        'recovery_mode',
+                        'recovery_focus',
+                        'recovery_of_question',
+                    ] as $key) {
+                        if (array_key_exists($key, $recoveryCheckpoint)) {
+                            $lockedMetadata['checkpoint'][$key] =
+                                $recoveryCheckpoint[$key];
+                        }
+                    }
+
+                    $lockedMetadata['checkpoint']['recovery_generated_at'] =
+                        now()->toISOString();
+                }
+
                 $lockedMetadata['checkpoint']['status'] = 'retry_ready';
                 $lockedMetadata['checkpoint']['retry_ready_at'] = now()->toISOString();
                 unset($lockedMetadata['checkpoint']['answered_at']);
@@ -503,18 +599,20 @@ class TutorCheckpointService
                     'checkpoint_retry_allowed' => $retryAllowed,
                     'checkpoint_attempt_number' => $stored['checkpoint_attempt_number'] ?? null,
                     'max_checkpoint_attempts' => $stored['max_checkpoint_attempts'] ?? self::MAX_CHECKPOINT_ATTEMPTS,
+                    'targeted_recovery' =>
+                        is_array($recoveryCheckpoint),
                 ]
             )
             : $this->buildFeedback($checkpoint, $evaluation, $stored['progress']);
 
         if ($retryAllowed) {
-            $attempt = (int) ($stored['checkpoint_attempt_number'] ?? 1);
-            $remaining = max(0, self::MAX_CHECKPOINT_ATTEMPTS - $attempt);
             $feedback = trim($feedback)
                 . "\n\n"
-                . ($remaining === 1
-                    ? 'You have one more attempt on this same question. Ask me about anything that is still unclear, then revise your answer when you are ready.'
-                    : 'Ask me about anything that is still unclear, then try this same question again in your own words when you are ready.');
+                . (
+                    is_array($recoveryCheckpoint)
+                        ? 'You are close. I have narrowed the next check to just the one idea that still needs strengthening, so you do not need to repeat everything you already explained correctly.'
+                        : 'Take a moment with the feedback above. You can ask for another explanation or example before trying again when you feel ready.'
+                );
         }
 
         $messageType = !empty($stored['progress']['objective_resolved'])
