@@ -58,6 +58,44 @@ class TutorSessionService
             ]);
         }
 
+        /*
+         * Keep normal learning sequential within the SAME learning period.
+         *
+         * A learner who has already started another topic must resolve it
+         * before opening a new one. "Resolve" means the topic becomes covered
+         * either through mastery or through the existing move-on/needs-review
+         * pathway. Review sessions remain exempt, and learning in a different
+         * period/subject is unaffected.
+         */
+        if ($sessionMode === 'learning') {
+            $unfinishedState = StudentTopicLearningState::query()
+                ->with('topic:id,topic_name')
+                ->where('student_id', $student->id)
+                ->where(
+                    'learning_period_id',
+                    $resolved['learningPeriod']->id
+                )
+                ->where('progression_status', 'in_progress')
+                ->where(
+                    'topic_id',
+                    '!=',
+                    $resolved['topic']->id
+                )
+                ->latest('updated_at')
+                ->first();
+
+            if ($unfinishedState) {
+                $unfinishedName =
+                    $unfinishedState->topic?->topic_name
+                    ?: 'your unfinished topic';
+
+                throw ValidationException::withMessages([
+                    'topic_id' =>
+                        "Please finish or move on from \"{$unfinishedName}\" before starting another topic in this learning period.",
+                ]);
+            }
+        }
+
         // Do not create a duplicate active session for the same assigned topic.
         $existing = TutorSession::query()
             ->where('student_id', $student->id)
