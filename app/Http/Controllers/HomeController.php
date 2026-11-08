@@ -926,6 +926,193 @@ class HomeController extends Controller
             }
         }
 
+        /*
+         * ---------------------------------------------------------
+         * LEARNING HISTORY
+         * ---------------------------------------------------------
+         *
+         * Current topic progress above is deliberately scoped to learning
+         * periods active today. The dashboard also needs an easy way for a
+         * learner to return to topics studied earlier, including topics from
+         * periods that have already ended.
+         *
+         * Build history from actual Tutor sessions instead of from today's
+         * published-period scope. Multiple learning/review sessions for the
+         * same period/topic are collapsed into one history item.
+         */
+        $learningHistorySessions = TutorSession::query()
+            ->where('student_id', $user->id)
+            ->where(function ($query) {
+                $query
+                    ->whereNull('session_mode')
+                    ->orWhereIn('session_mode', ['learning', 'review']);
+            })
+            ->with([
+                'group:id,group_name,class_code',
+                'learningPeriod:id,group_id,grade_subject_id,title,start_date,end_date,status',
+                'learningPeriod.gradeSubject.subject:id,name',
+                'learningPeriod.gradeSubject.gradeLevel:id,grade_name',
+                'unit:id,name',
+                'topic:id,topic_name,unit_id,grade_subject_id',
+                'topic.learningObjectives:id,topic_id,status',
+                'objectives:id,tutor_session_id,learning_objective_id,status,completed_at',
+            ])
+            ->orderByDesc('last_activity_at')
+            ->orderByDesc('id')
+            ->get();
+
+        $learningHistory = $learningHistorySessions
+            ->groupBy(function (TutorSession $session) {
+                return $session->learning_period_id . ':' . $session->topic_id;
+            })
+            ->map(function ($sessions) use ($today) {
+                $ordered = $sessions
+                    ->sortByDesc(fn ($session) => optional($session->last_activity_at)?->timestamp ?? 0)
+                    ->values();
+
+                $latest = $ordered->first();
+
+                if (!$latest?->learningPeriod || !$latest?->topic) {
+                    return null;
+                }
+
+                $period = $latest->learningPeriod;
+                $topic = $latest->topic;
+
+                $activeObjectiveIds = $topic->learningObjectives
+                    ?->where('status', 'active')
+                    ->pluck('id')
+                    ->map(fn ($id) => (int) $id)
+                    ->values()
+                    ?? collect();
+
+                $objectiveRows = $ordered
+                    ->flatMap(fn ($session) => $session->objectives)
+                    ->filter(function ($row) use ($activeObjectiveIds) {
+                        return $row->learning_objective_id
+                            && (
+                                $activeObjectiveIds->isEmpty()
+                                || $activeObjectiveIds->contains((int) $row->learning_objective_id)
+                            );
+                    });
+
+                $objectiveStates = $objectiveRows
+                    ->groupBy('learning_objective_id')
+                    ->map(function ($rows) {
+                        if ($rows->contains('status', 'completed')) {
+                            return 'completed';
+                        }
+
+                        if ($rows->contains('status', 'needs_review')) {
+                            return 'needs_review';
+                        }
+
+                        if ($rows->contains('status', 'in_progress')) {
+                            return 'in_progress';
+                        }
+
+                        return 'not_started';
+                    });
+
+                $totalObjectives = max(
+                    $activeObjectiveIds->count(),
+                    $objectiveStates->count()
+                );
+
+                $masteredObjectives = $objectiveStates
+                    ->filter(fn ($status) => $status === 'completed')
+                    ->count();
+
+                $reviewObjectives = $objectiveStates
+                    ->filter(fn ($status) => $status === 'needs_review')
+                    ->count();
+
+                $activeObjectives = $objectiveStates
+                    ->filter(fn ($status) => $status === 'in_progress')
+                    ->count();
+
+                $resolvedObjectives =
+                    $masteredObjectives + $reviewObjectives;
+
+                $covered =
+                    $latest->status === 'completed'
+                    || (
+                        $totalObjectives > 0
+                        && $resolvedObjectives >= $totalObjectives
+                    );
+
+                if ($covered && $reviewObjectives > 0) {
+                    $status = 'needs_review';
+                    $statusLabel = 'Needs review';
+                } elseif ($covered) {
+                    $status = 'mastered';
+                    $statusLabel = 'Mastered';
+                } elseif (
+                    $latest->status === 'active'
+                    || $activeObjectives > 0
+                    || $objectiveStates->isNotEmpty()
+                ) {
+                    $status = 'learning';
+                    $statusLabel = 'Learning';
+                } else {
+                    $status = 'not_started';
+                    $statusLabel = 'Not started';
+                }
+
+                $progressPercent = $covered
+                    ? 100
+                    : (
+                        $totalObjectives > 0
+                            ? round(
+                                ($resolvedObjectives / $totalObjectives) * 100,
+                                1
+                            )
+                            : 0
+                    );
+
+                $periodState =
+                    $period->end_date->toDateString() < $today
+                        ? 'previous'
+                        : 'current';
+
+                return [
+                    'learning_period_id' => $period->id,
+                    'learning_period' => $period->title,
+                    'learning_period_state' => $periodState,
+                    'group_id' => $latest->group_id,
+                    'group_name' => $latest->group?->group_name,
+                    'grade_subject_id' => $period->grade_subject_id,
+                    'subject' => $period->gradeSubject?->subject?->name,
+                    'grade' => $period->gradeSubject?->gradeLevel?->grade_name,
+                    'unit_id' => $latest->unit_id,
+                    'unit' => $latest->unit?->name,
+                    'topic_id' => $topic->id,
+                    'topic' => $topic->topic_name,
+                    'status' => $status,
+                    'status_label' => $statusLabel,
+                    'progress_percent' => $progressPercent,
+                    'total_objectives' => $totalObjectives,
+                    'mastered_objectives' => $masteredObjectives,
+                    'needs_review_objectives' => $reviewObjectives,
+                    'active_objectives' => $activeObjectives,
+                    'resolved_objectives' => $resolvedObjectives,
+                    'session_id' => $latest->id,
+                    'session_status' => $latest->status,
+                    'session_count' => $ordered->count(),
+                    'last_activity_at' =>
+                        optional($latest->last_activity_at)?->toIso8601String(),
+                ];
+            })
+            ->filter()
+            ->sortByDesc(function ($item) {
+                return optional(
+                    $item['last_activity_at']
+                        ? \Carbon\Carbon::parse($item['last_activity_at'])
+                        : null
+                )?->timestamp ?? 0;
+            })
+            ->values();
+
         $tutorSessions = TutorSession::query()
             ->where('student_id', $user->id)
             ->where(function ($query) {
@@ -1023,6 +1210,7 @@ class HomeController extends Controller
             ],
             'current_learning' => $currentLearning,
             'topic_progress' => $topicProgress,
+            'learning_history' => $learningHistory,
             'subjectPerformance' => $subjectPerformance,
             'recentScores' => $recentScores,
             'weeklyProgress' => $lastSixWeeks->values(),

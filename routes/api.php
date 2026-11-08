@@ -479,6 +479,7 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     |--------------------------------------------------------------------------
     */
 
+    Route::get('/student/my-assessments', [StudentAssessmentController::class, 'assessmentHub']);
     Route::get('/assessments', [StudentAssessmentController::class, 'myAssessments']);
     Route::get('/assessments/{studentAssessment}', [StudentAssessmentController::class, 'show']);
     Route::post('/assessments/{assessment}/start', [StudentAssessmentController::class, 'startAssessment']);
