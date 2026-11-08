@@ -2934,6 +2934,39 @@ PROMPT;
             $this->normalizeQuestionWithSubQuestions($question)
         );
 
+        /*
+         * When the teacher returns from editing a question, the frontend can
+         * ask which pagination page contains that question. Questions in this
+         * endpoint are ordered by ascending ID, so the page can be calculated
+         * without loading every question into the browser.
+         */
+        $focusPage = null;
+        $focusQuestionId = (int) $request->input(
+            'focus_question_id',
+            0
+        );
+
+        if ($focusQuestionId > 0) {
+            $focusExists = Question::query()
+                ->where('learning_objective_id', $objective->id)
+                ->whereNull('parent_question_id')
+                ->whereKey($focusQuestionId)
+                ->exists();
+
+            if ($focusExists) {
+                $position = Question::query()
+                    ->where('learning_objective_id', $objective->id)
+                    ->whereNull('parent_question_id')
+                    ->where('id', '<=', $focusQuestionId)
+                    ->count();
+
+                $focusPage = max(
+                    1,
+                    (int) ceil($position / $pageSize)
+                );
+            }
+        }
+
         return response()->json([
             'success' => true,
             'data' => $questions->items(),
@@ -2942,6 +2975,7 @@ PROMPT;
                 'last_page' => $questions->lastPage(),
                 'per_page' => $questions->perPage(),
                 'total' => $questions->total(),
+                'focus_page' => $focusPage,
             ],
         ]);
     }
