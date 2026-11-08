@@ -914,6 +914,7 @@ class AssessmentController extends Controller
                 'student_assessment_id' => $studentAssessment->id, // ✅ ADD THIS
                 'question_id' => $question->id,
                 'question_text' => $question->question,
+                'stimulus' => $question->stimulus,
                 'question_type' => $question->question_type,
                 'options' => $options,
                 // Support multiple possible answer field names used across flows

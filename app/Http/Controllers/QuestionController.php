@@ -55,6 +55,8 @@ class QuestionController extends Controller
                 ]);
             }
 
+            $this->prepareStimulusRequest($request);
+
             $validated = $this->validateQuestionData($request);
 
             $topic = Topic::with('gradeSubject')->findOrFail($validated['topic_id']);
@@ -245,6 +247,182 @@ class QuestionController extends Controller
         }
     }
 
+    /**
+     * Decode and normalize the optional structured supporting content used by
+     * manual and AI-authored questions. The public database/API name remains
+     * "stimulus"; teacher-facing screens use familiar labels such as
+     * "Add Table" and "Add Code".
+     */
+    private function prepareStimulusRequest(Request $request): void
+    {
+        if (!$request->has('stimulus')) {
+            return;
+        }
+
+        $raw = $request->input('stimulus');
+
+        if (is_string($raw)) {
+            $decoded = json_decode($raw, true);
+
+            if (json_last_error() !== JSON_ERROR_NONE) {
+                $request->merge(['stimulus' => []]);
+                return;
+            }
+
+            $raw = $decoded;
+        }
+
+        $request->merge([
+            'stimulus' => $this->normalizeQuestionStimulus($raw),
+        ]);
+    }
+
+    /**
+     * Canonical stimulus shape stored on questions.
+     *
+     * table:
+     * {
+     *   type: "table",
+     *   title: "Orders",
+     *   columns: [{key:"region",label:"region"}],
+     *   rows: [{region:"East"}]
+     * }
+     *
+     * code:
+     * {
+     *   type: "code",
+     *   title: "Query",
+     *   language: "sql",
+     *   content: "SELECT ..."
+     * }
+     */
+    private function normalizeQuestionStimulus($value): array
+    {
+        if (is_string($value)) {
+            $decoded = json_decode($value, true);
+            $value = json_last_error() === JSON_ERROR_NONE ? $decoded : [];
+        }
+
+        if (!is_array($value)) {
+            return [];
+        }
+
+        $items = [];
+
+        foreach (array_slice(array_values($value), 0, 6) as $item) {
+            if (!is_array($item)) {
+                continue;
+            }
+
+            $type = strtolower(trim((string) ($item['type'] ?? '')));
+
+            if ($type === 'code') {
+                $content = trim((string) ($item['content'] ?? ''));
+
+                if ($content === '') {
+                    continue;
+                }
+
+                $items[] = [
+                    'type' => 'code',
+                    'title' => trim((string) ($item['title'] ?? '')) ?: null,
+                    'language' => strtolower(trim((string) ($item['language'] ?? 'text'))) ?: 'text',
+                    'content' => $content,
+                ];
+
+                continue;
+            }
+
+            if ($type !== 'table') {
+                continue;
+            }
+
+            $rawColumns = is_array($item['columns'] ?? null)
+                ? $item['columns']
+                : [];
+
+            $columns = [];
+            $usedKeys = [];
+
+            foreach (array_slice(array_values($rawColumns), 0, 12) as $index => $column) {
+                if (is_array($column)) {
+                    $label = trim((string) ($column['label'] ?? $column['key'] ?? ''));
+                    $candidate = trim((string) ($column['key'] ?? ''));
+                } else {
+                    $label = trim((string) $column);
+                    $candidate = '';
+                }
+
+                if ($label === '') {
+                    continue;
+                }
+
+                $baseKey = $candidate !== ''
+                    ? preg_replace('/[^a-zA-Z0-9_]+/', '_', $candidate)
+                    : preg_replace('/[^a-zA-Z0-9_]+/', '_', strtolower($label));
+
+                $baseKey = trim((string) $baseKey, '_');
+
+                if ($baseKey === '') {
+                    $baseKey = 'column_' . ($index + 1);
+                }
+
+                $key = $baseKey;
+                $suffix = 2;
+
+                while (in_array($key, $usedKeys, true)) {
+                    $key = $baseKey . '_' . $suffix++;
+                }
+
+                $usedKeys[] = $key;
+                $columns[] = [
+                    'key' => $key,
+                    'label' => $label,
+                ];
+            }
+
+            if (count($columns) === 0) {
+                continue;
+            }
+
+            $rows = [];
+            $rawRows = is_array($item['rows'] ?? null)
+                ? array_slice(array_values($item['rows']), 0, 100)
+                : [];
+
+            foreach ($rawRows as $rawRow) {
+                $row = [];
+
+                if (is_array($rawRow) && array_is_list($rawRow)) {
+                    foreach ($columns as $columnIndex => $column) {
+                        $row[$column['key']] = isset($rawRow[$columnIndex])
+                            ? (string) $rawRow[$columnIndex]
+                            : '';
+                    }
+                } elseif (is_array($rawRow)) {
+                    foreach ($columns as $column) {
+                        $row[$column['key']] = isset($rawRow[$column['key']])
+                            ? (string) $rawRow[$column['key']]
+                            : '';
+                    }
+                } else {
+                    continue;
+                }
+
+                $rows[] = $row;
+            }
+
+            $items[] = [
+                'type' => 'table',
+                'title' => trim((string) ($item['title'] ?? '')) ?: null,
+                'columns' => $columns,
+                'rows' => $rows,
+            ];
+        }
+
+        return $items;
+    }
+
     /*
     |--------------------------------------------------------------------------
     | VALIDATION
@@ -318,6 +496,60 @@ class QuestionController extends Controller
             'explanation' => [
                 'nullable',
                 'string',
+            ],
+
+            'stimulus' => [
+                'nullable',
+                'array',
+                'max:6',
+            ],
+
+            'stimulus.*.type' => [
+                'required_with:stimulus',
+                'string',
+                Rule::in(['table', 'code']),
+            ],
+
+            'stimulus.*.title' => [
+                'nullable',
+                'string',
+                'max:255',
+            ],
+
+            'stimulus.*.language' => [
+                'nullable',
+                'string',
+                'max:50',
+            ],
+
+            'stimulus.*.content' => [
+                'nullable',
+                'string',
+                'max:20000',
+            ],
+
+            'stimulus.*.columns' => [
+                'nullable',
+                'array',
+                'max:12',
+            ],
+
+            'stimulus.*.columns.*.key' => [
+                'required_with:stimulus.*.columns',
+                'string',
+                'max:100',
+            ],
+
+            'stimulus.*.columns.*.label' => [
+                'required_with:stimulus.*.columns',
+                'string',
+                'max:255',
+            ],
+
+            'stimulus.*.rows' => [
+                'nullable',
+                'array',
+                'max:100',
             ],
 
             'question_image' => [
@@ -586,6 +818,8 @@ class QuestionController extends Controller
                     'marks' => null,
                 ]);
             }
+
+            $this->prepareStimulusRequest($request);
 
             $validated = $this->validateQuestionData($request);
 
@@ -2277,6 +2511,11 @@ ASSESSMENT DESIGN RULES
 - Do not refer to "the material above", "the learning objective", or internal RevisionHub instructions in the student-facing question.
 - Explanations must state why the answer is correct and, for objective questions, briefly distinguish the key misconception behind plausible distractors where useful.
 - For mathematical content, use standard LaTeX notation where appropriate.
+- When structured data makes a question clearer or more authentic, put that data in stimulus instead of embedding tuples/rows awkwardly in prose.
+- Use stimulus only when it genuinely helps. Ordinary questions should return an empty stimulus array.
+- For a table stimulus, return type "table", a short title, columns as an array of column-name strings, and rows as arrays whose values match the column order.
+- For a code stimulus, return type "code", an optional title, language (for example sql or python), and content.
+- Never put the answer itself into stimulus.
 
 Before returning a question, silently check: (1) objective alignment, (2) Bloom alignment, (3) factual support, (4) answer uniqueness, and (5) distractor quality. Replace any question that fails one of these checks.
 
@@ -2289,6 +2528,7 @@ Return ONLY valid JSON in exactly this structure:
       "difficulty_level": "{$validated['difficulty_level']}",
       "options": {$optionsExample},
       "correct_answer": {$answerExample},
+      "stimulus": [],
       "explanation": "Brief explanation of the answer"
     }
   ]
@@ -2354,6 +2594,33 @@ PROMPT;
                                     : [
                                         'type' => 'STRING',
                                     ],
+                                'stimulus' => [
+                                    'type' => 'ARRAY',
+                                    'items' => [
+                                        'type' => 'OBJECT',
+                                        'properties' => [
+                                            'type' => [
+                                                'type' => 'STRING',
+                                                'enum' => ['table', 'code'],
+                                            ],
+                                            'title' => ['type' => 'STRING'],
+                                            'language' => ['type' => 'STRING'],
+                                            'content' => ['type' => 'STRING'],
+                                            'columns' => [
+                                                'type' => 'ARRAY',
+                                                'items' => ['type' => 'STRING'],
+                                            ],
+                                            'rows' => [
+                                                'type' => 'ARRAY',
+                                                'items' => [
+                                                    'type' => 'ARRAY',
+                                                    'items' => ['type' => 'STRING'],
+                                                ],
+                                            ],
+                                        ],
+                                        'required' => ['type'],
+                                    ],
+                                ],
                                 'explanation' => [
                                     'type' => 'STRING',
                                 ],
@@ -2428,6 +2695,9 @@ PROMPT;
                 $q['source'] = 'ai';
                 $q['status'] = 'draft';
                 $q['is_assessment_eligible'] = false;
+                $q['stimulus'] = $this->normalizeQuestionStimulus(
+                    $q['stimulus'] ?? []
+                );
 
                 if (!isset($q['options']) || !is_array($q['options'])) {
                     $q['options'] = [];
@@ -2670,6 +2940,10 @@ PROMPT;
                     if (!array_key_exists('is_required', $item)) {
                         $item['is_required'] = true;
                     }
+
+                    $item['stimulus'] = $this->normalizeQuestionStimulus(
+                        $item['stimulus'] ?? []
+                    );
 
                     $topic = Topic::with('gradeSubject')->findOrFail($item['topic_id'] ?? 0);
                     $this->ownsTopic($topic);

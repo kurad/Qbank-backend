@@ -24,6 +24,7 @@ class Question extends Model
         'question_type',
         'question',
         'question_fingerprint',
+        'stimulus',
         'options',
         'correct_answer',
         'correct_answer_image',
@@ -45,6 +46,7 @@ class Question extends Model
     protected $casts = [
         'options' => 'array',
         'correct_answer' => 'array',
+        'stimulus' => 'array',
         'is_math' => 'boolean',
         'is_chemistry' => 'boolean',
         'multiple_answers' => 'boolean',
