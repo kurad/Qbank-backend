@@ -298,6 +298,11 @@ class TutorSessionService
             }
 
             $supportStatus = strtolower((string) ($current->support_status ?? 'unknown'));
+            $support = [
+                'status' => $supportStatus,
+                'reason' => $current->support_reason,
+                'missing_focus' => [],
+            ];
 
             if ($supportStatus === 'unknown') {
                 $support = $this->ai->assessObjectiveMaterialSupport(
@@ -312,7 +317,7 @@ class TutorSessionService
                 $supportStatus = strtolower((string) $current->support_status);
             }
 
-            if ($supportStatus !== 'unsupported') {
+            if ($supportStatus === 'supported') {
                 if ($current->status === 'not_started') {
                     $current->status = 'in_progress';
                     $current->started_at = $current->started_at ?? now();
@@ -323,13 +328,20 @@ class TutorSessionService
             }
 
             /*
-             * Primary material is insufficient. Before leaving the learning
-             * goal behind, consult only the supporting web sources explicitly
-             * provided by the teacher for this approved course material.
+             * Primary material is either PARTIAL or UNSUPPORTED.
+             * Both states mean the full objective cannot yet be taught and
+             * assessed fairly from the primary extraction alone. Before
+             * declaring a gap, consult only teacher-approved supporting
+             * sources and ask them to fill the verified missing focus.
              */
             $supporting = $this->supportingSources->resolve(
                 $session,
-                $current
+                $current,
+                [
+                    'status' => $supportStatus,
+                    'reason' => $current->support_reason,
+                    'missing_focus' => $support['missing_focus'] ?? [],
+                ]
             );
 
             if (($supporting['status'] ?? null) === 'supported') {
@@ -353,7 +365,7 @@ class TutorSessionService
                     'role' => 'assistant',
                     'message_type' => 'supporting_source_notice',
                     'content' =>
-                        'The main learning material does not fully cover this part, so I will use an additional source your teacher provided to help you learn it. Once you demonstrate understanding, we will continue with the main material.',
+                        'I could not verify enough coverage for this part from the currently retrieved primary material, so I will use an additional source your teacher provided. Once you demonstrate understanding, we will continue with the main material.',
                     'metadata' => [
                         'learning_objective_id' => $current->learning_objective_id,
                         'support_status' => 'supporting_source',
@@ -375,7 +387,7 @@ class TutorSessionService
                 'role' => 'assistant',
                 'message_type' => 'material_gap',
                 'content' =>
-                    'This learning goal is part of the topic, but neither the main material nor the supporting sources provided by your teacher contain enough information for me to teach and check it fairly. I will flag this gap for your teacher.',
+                    'I could not verify enough information for this learning goal from the extracted primary material or the teacher-provided supporting sources to teach and check it fairly. I will flag this for your teacher so the extraction, retrieval, or source coverage can be reviewed.',
                 'metadata' => [
                     'learning_objective_id' => $current->learning_objective_id,
                     'learning_goal' => $goalText,

@@ -9,6 +9,7 @@ use App\Http\Controllers\AuthController;
 use App\Http\Controllers\TeacherAccessController;
 use App\Http\Controllers\ClassInvitationController;
 use App\Http\Controllers\CourseMaterialController;
+use App\Http\Controllers\CourseMaterialDiagnosticsController;
 use App\Http\Controllers\CourseMaterialSupportingSourceController;
 use App\Http\Controllers\CurriculumAnalysisController;
 use App\Http\Controllers\GradeLevelController;
@@ -235,6 +236,10 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     Route::get('/course-materials', [CourseMaterialController::class, 'index']);
     Route::get('/course-materials/{courseMaterial}/view', [CourseMaterialController::class, 'viewOriginal']);
     Route::get('/course-materials/{courseMaterial}/download', [CourseMaterialController::class, 'downloadOriginal']);
+    Route::get('/course-materials/{courseMaterial}/inspection', [CourseMaterialDiagnosticsController::class, 'inspect']);
+    Route::post('/course-materials/{courseMaterial}/test-retrieval', [CourseMaterialDiagnosticsController::class, 'testRetrieval']);
+    Route::get('/course-materials/{courseMaterial}/objective-support/{learningObjective}', [CourseMaterialDiagnosticsController::class, 'objectiveSupport']);
+    Route::get('/course-materials/{courseMaterial}/visuals/{visual}/content', [CourseMaterialDiagnosticsController::class, 'visualContent']);
     Route::post('/course-materials', [CourseMaterialController::class, 'store']);
     Route::post('/course-materials/{courseMaterial}/approve', [CourseMaterialController::class, 'approve']);
     Route::post('/course-materials/{courseMaterial}/supporting-sources', [CourseMaterialSupportingSourceController::class, 'store']);
@@ -408,6 +413,9 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     Route::put('/assessments/{id}/title', [AssessmentController::class, 'updateTitle']);
     Route::put('/assessments/{id}/reorder', [AssessmentController::class, 'reorderQuestions']);
     Route::put('/assessments/{id}/instructions', [AssessmentController::class, 'updateInstructions']);
+    Route::put('/assessments/{id}/settings', [AssessmentController::class, 'updateSettings']);
+    Route::post('/assessments/{id}/archive', [AssessmentController::class, 'archive']);
+    Route::post('/assessments/{id}/restore', [AssessmentController::class, 'restore']);
     Route::post('/assessments/{id}/questions', [AssessmentController::class, 'addQuestions']);
     Route::post('/assessments/{assessment}/assign', [AssessmentController::class, 'assign']);
     Route::post('/assessments/{id}/assign-group', [AssessmentController::class, 'assignGroup']);
@@ -479,7 +487,6 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     |--------------------------------------------------------------------------
     */
 
-    Route::get('/student/my-assessments', [StudentAssessmentController::class, 'assessmentHub']);
     Route::get('/assessments', [StudentAssessmentController::class, 'myAssessments']);
     Route::get('/assessments/{studentAssessment}', [StudentAssessmentController::class, 'show']);
     Route::post('/assessments/{assessment}/start', [StudentAssessmentController::class, 'startAssessment']);
@@ -554,7 +561,6 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     Route::get('/student/practice/attempts/{practiceAttempt}', [StudentPracticeController::class, 'reviewAttempt']);
 
 
-    Route::get('/student/support/summary', [LearningSupportController::class, 'studentSummary']);
     Route::get('/student/support/threads', [LearningSupportController::class, 'studentThreads']);
     Route::post('/student/support/threads/{thread}/messages', [LearningSupportController::class, 'addMessage']);
 

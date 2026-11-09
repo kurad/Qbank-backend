@@ -17,7 +17,8 @@ class TutorSupportingSourceService
 
     public function resolve(
         TutorSession $session,
-        TutorSessionObjective $sessionObjective
+        TutorSessionObjective $sessionObjective,
+        array $primarySupport = []
     ): array {
         $session->loadMissing([
             'topic',
@@ -95,6 +96,23 @@ class TutorSupportingSourceService
             })
             ->implode("\n\n---\n\n");
 
+        $primaryStatus = strtolower(
+            trim((string) ($primarySupport['status'] ?? 'unsupported'))
+        );
+
+        $primaryReason = trim(
+            (string) ($primarySupport['reason'] ?? '')
+        );
+
+        $primaryMissingFocus = implode(
+            '; ',
+            array_values(array_filter(
+                is_array($primarySupport['missing_focus'] ?? null)
+                    ? $primarySupport['missing_focus']
+                    : []
+            ))
+        );
+
         try {
             $result = $this->ai->json([
                 [
@@ -116,6 +134,13 @@ LEARNING GOAL
 Code: {$objective->code}
 Goal: {$objective->objective}
 Description: {$objective->description}
+
+PRIMARY-MATERIAL COVERAGE RESULT
+Status: {$primaryStatus}
+Reason: {$primaryReason}
+Missing focus: {$primaryMissingFocus}
+
+When the primary material is PARTIAL, judge whether these supporting sources fill the VERIFIED MISSING FOCUS. They do not need to repeat content that the primary material already supports.
 
 TEACHER-PROVIDED SUPPORTING SOURCES
 {$context}

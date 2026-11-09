@@ -1856,6 +1856,469 @@ PROMPT;
             $options
         );
     }
+    /**
+     * Ask the AI to choose the most suitable approved Question Bank item from
+     * a small objective-matched candidate set.
+     *
+     * The caller remains responsible for eligibility, objective/topic scope,
+     * previously-used exclusion, and conversion to Tutor checkpoint format.
+     */
+    public function selectQuestionBankQuestion(
+        TutorSession $session,
+        array $plan,
+        array $candidates
+    ): ?int {
+        if (empty($candidates)) {
+            return null;
+        }
+
+        $this->loadTutorContext($session);
+        $currentObjective = $this->currentObjective($session);
+        $objective = $currentObjective?->learningObjective;
+
+        if (!$objective) {
+            return null;
+        }
+
+        $candidateText = collect($candidates)
+            ->take(8)
+            ->map(function ($item) {
+                return sprintf(
+                    "ID %d | type=%s | difficulty=%s | question=%s",
+                    (int) ($item['id'] ?? 0),
+                    (string) ($item['type'] ?? ''),
+                    (string) ($item['difficulty'] ?? ''),
+                    trim((string) ($item['question'] ?? ''))
+                );
+            })
+            ->implode("\n");
+
+        $system = <<<PROMPT
+You are selecting ONE existing teacher-approved Question Bank item for an
+adaptive school AI Tutor understanding check.
+
+CURRENT LEARNING OBJECTIVE
+{$objective->objective}
+{$objective->description}
+
+ASSESSMENT PLAN
+Type preference: {$plan['type']}
+Assessment mode: {$plan['assessment_mode']}
+Response depth: {$plan['response_depth']}
+Strategy: {$plan['strategy']}
+
+CANDIDATES
+{$candidateText}
+
+Choose the single candidate that best:
+1. directly checks the CURRENT learning objective;
+2. fits the requested assessment approach;
+3. requires meaningful understanding rather than trivia;
+4. is unambiguous and age-appropriate.
+
+Do not rewrite the question.
+Do not invent another question.
+If none is appropriate, return null.
+
+Return only JSON:
+{
+  "question_id": 123
+}
+or:
+{
+  "question_id": null
+}
+PROMPT;
+
+        try {
+            $result = $this->ai->json(
+                [
+                    ['role' => 'system', 'content' => $system],
+                    [
+                        'role' => 'user',
+                        'content' => 'Choose the best existing Question Bank item.',
+                    ],
+                ],
+                [
+                    'type' => 'object',
+                    'additionalProperties' => false,
+                    'properties' => [
+                        'question_id' => [
+                            'type' => ['integer', 'null'],
+                        ],
+                    ],
+                    'required' => ['question_id'],
+                ],
+                $this->tutorUsageOptions(
+                    $session,
+                    'Tutor Question Bank Selection',
+                    [
+                        'temperature' => 0,
+                        'max_tokens' => 120,
+                    ]
+                )
+            );
+
+            $selected = $result['question_id'] ?? null;
+
+            if ($selected === null) {
+                return null;
+            }
+
+            $allowedIds = collect($candidates)
+                ->pluck('id')
+                ->map(fn ($id) => (int) $id)
+                ->all();
+
+            return in_array((int) $selected, $allowedIds, true)
+                ? (int) $selected
+                : null;
+        } catch (\Throwable $e) {
+            \Log::warning(
+                'Tutor Question Bank selection failed; falling back to generated checkpoint.',
+                [
+                    'session_id' => $session->id,
+                    'message' => $e->getMessage(),
+                ]
+            );
+
+            return null;
+        }
+    }
+
+    /**
+     * Build optional structured chemistry visuals for a teaching response.
+     *
+     * This is intentionally a second, chemistry-only structured pass. It does
+     * not change the teaching text. The browser renders returned SMILES using
+     * SmilesDrawer. Invalid SMILES fail gracefully on the client.
+     */
+    public function chemistryVisual(
+        TutorSession $session,
+        string $teachingText
+    ): ?array {
+        $this->loadTutorContext($session);
+
+        $subject = trim(
+            (string) ($session->gradeSubject?->subject?->name ?? '')
+        );
+
+        if ($subject === '' || stripos($subject, 'chem') === false) {
+            return null;
+        }
+
+        $currentObjective = $this->currentObjective($session);
+        $objective = $currentObjective?->learningObjective;
+
+        if (!$objective) {
+            return null;
+        }
+
+        $system = <<<PROMPT
+You are the chemistry-visualization helper for a school AI Tutor.
+
+Decide whether the supplied teaching response would become materially clearer
+with a 2D molecular structure or a comparison of molecular structures.
+
+CURRICULUM BOUNDARY
+- Visualize ONLY molecules or structures that are explicitly named, directly
+  discussed, or necessarily represented by the current teaching response and
+  learning objective.
+- Do not introduce new chemistry content.
+- Do not add enrichment compounds merely because they are related.
+- When stereochemistry matters, use stereochemical SMILES that preserve it.
+- Prefer 1 to 3 molecules.
+- Use standard valid SMILES.
+- A visual is optional. If prose is clearer, return show_visual=false.
+
+CURRENT OBJECTIVE
+{$objective->objective}
+{$objective->description}
+
+TEACHING RESPONSE
+{$teachingText}
+
+Return only JSON.
+PROMPT;
+
+        try {
+            $result = $this->ai->json(
+                [
+                    ['role' => 'system', 'content' => $system],
+                    [
+                        'role' => 'user',
+                        'content' =>
+                            'Return an optional structured chemistry visual for this teaching response.',
+                    ],
+                ],
+                [
+                    'type' => 'object',
+                    'additionalProperties' => false,
+                    'properties' => [
+                        'show_visual' => ['type' => 'boolean'],
+                        'title' => ['type' => 'string'],
+                        'layout' => [
+                            'type' => 'string',
+                            'enum' => ['single', 'comparison'],
+                        ],
+                        'molecules' => [
+                            'type' => 'array',
+                            'maxItems' => 3,
+                            'items' => [
+                                'type' => 'object',
+                                'additionalProperties' => false,
+                                'properties' => [
+                                    'name' => ['type' => 'string'],
+                                    'smiles' => ['type' => 'string'],
+                                    'caption' => ['type' => 'string'],
+                                ],
+                                'required' => [
+                                    'name',
+                                    'smiles',
+                                    'caption',
+                                ],
+                            ],
+                        ],
+                    ],
+                    'required' => [
+                        'show_visual',
+                        'title',
+                        'layout',
+                        'molecules',
+                    ],
+                ],
+                $this->tutorUsageOptions(
+                    $session,
+                    'Tutor Chemistry Visual',
+                    [
+                        'temperature' => 0,
+                        'max_tokens' => 500,
+                    ]
+                )
+            );
+
+            if (empty($result['show_visual'])) {
+                return null;
+            }
+
+            $molecules = collect($result['molecules'] ?? [])
+                ->filter(
+                    fn ($item) =>
+                        is_array($item)
+                        && trim((string) ($item['name'] ?? '')) !== ''
+                        && trim((string) ($item['smiles'] ?? '')) !== ''
+                )
+                ->take(3)
+                ->map(fn ($item) => [
+                    'name' => trim((string) $item['name']),
+                    'smiles' => trim((string) $item['smiles']),
+                    'caption' => trim((string) ($item['caption'] ?? '')),
+                ])
+                ->values()
+                ->all();
+
+            if (empty($molecules)) {
+                return null;
+            }
+
+            return [
+                'title' =>
+                    trim((string) ($result['title'] ?? 'Chemical structure')),
+                'layout' =>
+                    count($molecules) > 1 ? 'comparison' : 'single',
+                'molecules' => $molecules,
+            ];
+        } catch (\Throwable $e) {
+            \Log::warning(
+                'Tutor chemistry visual generation failed; continuing with text.',
+                [
+                    'session_id' => $session->id,
+                    'message' => $e->getMessage(),
+                ]
+            );
+
+            return null;
+        }
+    }
+
+    /**
+     * Evaluate a short-answer checkpoint when the learner supplied one or more
+     * images (for example a handwritten solution, labelled diagram, chemical
+     * structure, graph, working, or photographed exercise).
+     */
+    public function evaluateCheckpointAnswerWithAttachments(
+        TutorSession $session,
+        array $checkpoint,
+        string $studentAnswer,
+        array $attachments,
+        ?Collection $chunks = null
+    ): array {
+        if (empty($attachments)) {
+            return $this->evaluateCheckpointAnswer(
+                $session,
+                $checkpoint,
+                $studentAnswer,
+                $chunks
+            );
+        }
+
+        $this->loadTutorContext($session);
+        $currentObjective = $this->currentObjective($session);
+        $objective = $currentObjective?->learningObjective;
+
+        if (!$objective) {
+            return [
+                'classification' => 'unclear',
+                'correct' => false,
+                'understanding_score' => 0,
+                'feedback' => 'There is no active learning objective.',
+                'evidence' => null,
+                'misconception' => null,
+            ];
+        }
+
+        $question = trim((string) ($checkpoint['question'] ?? ''));
+        $expectedAnswer = trim(
+            (string) ($checkpoint['expected_answer'] ?? '')
+        );
+        $studentAnswer = trim($studentAnswer);
+
+        $chunks ??= $this->teachingContext(
+            $session,
+            $question . ' ' . $studentAnswer,
+            6
+        );
+
+        $teacherContext = $this->formatChunks($chunks);
+        $notationPolicy =
+            $this->notationInterpretationPolicy($session)
+            . "\n"
+            . $this->englishEvaluationPolicy($session)
+            . "\n"
+            . $this->sqlEvaluationFairnessPolicy($session);
+
+        $system = <<<PROMPT
+You are evaluating ONE formal school learning checkpoint.
+
+The learner may answer using TEXT, IMAGE(S), or BOTH.
+Inspect the attached image(s) carefully. They may contain:
+- handwriting;
+- calculations or working;
+- a labelled diagram;
+- a graph;
+- a table;
+- a chemical structure;
+- code or database notation;
+- other subject-appropriate written work.
+
+Do not require text when the attached image itself clearly demonstrates the
+requested understanding.
+
+CURRENT LEARNING OBJECTIVE
+Code: {$objective->code}
+Objective: {$objective->objective}
+Description: {$objective->description}
+
+{$notationPolicy}
+
+CHECKPOINT QUESTION
+{$question}
+
+EXPECTED UNDERSTANDING
+{$expectedAnswer}
+
+APPROVED TEACHER CONTEXT
+{$teacherContext}
+
+TEXT SUPPLIED WITH THE IMAGE
+{$studentAnswer}
+
+Evaluate ONLY what the learner actually demonstrates.
+The expected answer is a marking guide, not a phrase-matching requirement.
+Respect the approved teacher material as the curriculum boundary.
+
+Return ONLY JSON:
+{
+  "classification": "correct|partially_correct|incorrect|unclear",
+  "correct": true|false,
+  "understanding_score": 0,
+  "feedback": "Short diagnostic explanation.",
+  "evidence": "Specific evidence visible in the answer/image.",
+  "misconception": "Main misconception or gap, or null."
+}
+PROMPT;
+
+        $raw = $this->ai->multimodalText(
+            [
+                ['role' => 'system', 'content' => $system],
+                [
+                    'role' => 'user',
+                    'content' =>
+                        'Evaluate the learner response and attached image(s).',
+                ],
+            ],
+            $attachments,
+            $this->tutorUsageOptions(
+                $session,
+                'Tutor Checkpoint Image Evaluation',
+                [
+                    'temperature' => 0,
+                    'max_tokens' => 700,
+                ]
+            )
+        );
+
+        $decoded = $this->decodeStructuredJson($raw);
+
+        if (!is_array($decoded)) {
+            throw new \RuntimeException(
+                'The image-answer evaluator did not return valid JSON.'
+            );
+        }
+
+        $classification = strtolower(
+            trim((string) ($decoded['classification'] ?? 'unclear'))
+        );
+
+        if (
+            !in_array(
+                $classification,
+                ['correct', 'partially_correct', 'incorrect', 'unclear'],
+                true
+            )
+        ) {
+            $classification = 'unclear';
+        }
+
+        $score = max(
+            0,
+            min(
+                100,
+                (int) ($decoded['understanding_score'] ?? 0)
+            )
+        );
+
+        return [
+            'classification' => $classification,
+            'correct' =>
+                $classification === 'correct'
+                && $score >= 80,
+            'understanding_score' => $score,
+            'feedback' => trim(
+                (string) ($decoded['feedback'] ?? '')
+            ),
+            'evidence' => trim(
+                (string) ($decoded['evidence'] ?? '')
+            ),
+            'misconception' =>
+                ($decoded['misconception'] ?? null) !== null
+                    ? trim((string) $decoded['misconception'])
+                    : null,
+            'checkpoint_explanation' =>
+                $checkpoint['explanation'] ?? null,
+        ];
+    }
+
     public function evaluateResponse(
         TutorSession $session,
         string $studentMessage,

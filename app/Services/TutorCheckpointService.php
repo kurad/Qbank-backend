@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\Question;
 use App\Models\TutorMessage;
 use App\Models\TutorResponseEvaluation;
 use App\Models\TutorSession;
@@ -73,19 +74,39 @@ class TutorCheckpointService
         // and interaction strategy before the question is generated.
         $plan = $this->ai->planCheckpoint($session);
 
-        // Four focused chunks are normally enough for one checkpoint.
-        // This keeps the generation grounded without overloading the prompt.
-        $knowledge = $this->ai->teachingContext(
+        /*
+         * Mix teacher-approved Question Bank checks with AI-generated checks.
+         *
+         * We alternate where possible so the Tutor does not become either:
+         * - purely generative; or
+         * - a static question-bank player.
+         *
+         * Question Bank candidates must be approved, assessment-eligible,
+         * linked to THIS exact learning objective, supported by the Tutor UI,
+         * and not previously used in this session.
+         */
+        $checkpoint = $this->questionBankCheckpoint(
             $session,
-            $objective->learningObjective?->objective ?? '',
-            4
+            $objective,
+            $plan
         );
 
-        $checkpoint = $this->ai->generateCheckpoint(
-            $session,
-            $plan,
-            $knowledge
-        );
+        if (!$checkpoint) {
+            // Four focused chunks are normally enough for one checkpoint.
+            $knowledge = $this->ai->teachingContext(
+                $session,
+                $objective->learningObjective?->objective ?? '',
+                4
+            );
+
+            $checkpoint = $this->ai->generateCheckpoint(
+                $session,
+                $plan,
+                $knowledge
+            );
+
+            $checkpoint['source'] = 'ai_generated';
+        }
 
         $message = $session->messages()->create([
             'role' => 'assistant',
@@ -277,7 +298,9 @@ class TutorCheckpointService
         TutorSession $session,
         TutorMessage $checkpointMessage,
         mixed $studentAnswer,
-        int $studentId
+        int $studentId,
+        array $aiAttachments = [],
+        array $storedAttachments = []
     ): array {
         $this->ensureActive($session);
         $this->validateCheckpointOwnership($session, $checkpointMessage);
@@ -319,7 +342,8 @@ class TutorCheckpointService
         $evaluation = $this->evaluateCheckpoint(
             $session,
             $checkpoint,
-            $studentAnswer
+            $studentAnswer,
+            $aiAttachments
         );
 
         /*
@@ -388,7 +412,8 @@ class TutorCheckpointService
             $studentAnswer,
             $studentId,
             $evaluation,
-            $recoveryCheckpoint
+            $recoveryCheckpoint,
+            $storedAttachments
         ) {
             $lockedCheckpointMessage = TutorMessage::query()
                 ->whereKey($checkpointMessage->id)
@@ -421,10 +446,22 @@ class TutorCheckpointService
                 : [];
             $checkpointAttemptNumber = count($previousAttempts) + 1;
 
+            $answerText = $this->answerAsText(
+                $checkpoint,
+                $studentAnswer
+            );
+
+            if (
+                trim($answerText) === ''
+                && !empty($storedAttachments)
+            ) {
+                $answerText = 'Submitted an image answer.';
+            }
+
             $studentMessage = $session->messages()->create([
                 'role' => 'user',
                 'message_type' => 'checkpoint_answer',
-                'content' => $this->answerAsText($checkpoint, $studentAnswer),
+                'content' => $answerText,
                 'metadata' => [
                     'checkpoint_answer' => [
                         'checkpoint_message_id' => $lockedCheckpointMessage->id,
@@ -432,6 +469,7 @@ class TutorCheckpointService
                         'answer' => $studentAnswer,
                         'attempt_number' => $checkpointAttemptNumber,
                     ],
+                    'attachments' => $storedAttachments,
                 ],
             ]);
 
@@ -475,6 +513,24 @@ class TutorCheckpointService
                 'misconception' => $evaluation['misconception'] ?? null,
                 'recovery_confirmed' =>
                     !empty($evaluation['recovery_confirmed']),
+                'attachments' => collect($storedAttachments)
+                    ->values()
+                    ->map(
+                        fn ($attachment, $index) => [
+                            'index' => $index,
+                            'original_name' =>
+                                $attachment['original_name']
+                                ?? 'Image answer',
+                            'mime_type' =>
+                                $attachment['mime_type']
+                                ?? 'image/*',
+                            'size' =>
+                                (int) ($attachment['size'] ?? 0),
+                            'url' =>
+                                "/api/tutor/messages/{$studentMessage->id}/attachments/{$index}",
+                        ]
+                    )
+                    ->all(),
                 'submitted_at' => now()->toISOString(),
             ];
 
@@ -485,7 +541,12 @@ class TutorCheckpointService
             $lockedMetadata['checkpoint']['attempt_count'] = $checkpointAttemptNumber;
             $lockedMetadata['checkpoint']['max_attempts'] = self::MAX_CHECKPOINT_ATTEMPTS;
             $lockedMetadata['checkpoint']['retry_allowed'] = $retryAllowed;
-            $lockedMetadata['checkpoint']['last_student_answer'] = $studentAnswer;
+            $lockedMetadata['checkpoint']['last_student_answer'] =
+                $studentAnswer;
+
+            $lockedMetadata['checkpoint']['last_answer_attachments'] =
+                $attemptRecord['attachments'] ?? [];
+
             $lockedMetadata['checkpoint']['result'] = [
                 'classification' => $evaluation['classification'],
                 'correct' => $qualifyingCorrect,
@@ -679,7 +740,8 @@ class TutorCheckpointService
     protected function evaluateCheckpoint(
         TutorSession $session,
         array $checkpoint,
-        mixed $studentAnswer
+        mixed $studentAnswer,
+        array $attachments = []
     ): array {
         return match ($checkpoint['type'] ?? null) {
             'mcq' =>
@@ -710,7 +772,8 @@ class TutorCheckpointService
                 $this->evaluateShortAnswer(
                     $session,
                     $checkpoint,
-                    $studentAnswer
+                    $studentAnswer,
+                    $attachments
                 ),
 
             default =>
@@ -875,13 +938,15 @@ class TutorCheckpointService
     protected function evaluateShortAnswer(
         TutorSession $session,
         array $checkpoint,
-        mixed $answer
+        mixed $answer,
+        array $attachments = []
     ): array {
         $answer = trim((string) $answer);
 
-        if ($answer === '') {
+        if ($answer === '' && empty($attachments)) {
             throw ValidationException::withMessages([
-                'answer' => 'Please enter an answer.',
+                'answer' =>
+                    'Write an answer or attach an image of your work.',
             ]);
         }
 
@@ -956,6 +1021,16 @@ class TutorCheckpointService
          * Keep compatibility with the TutorAIService currently used by
          * the project. This is one AI evaluation call.
          */
+        if (!empty($attachments)) {
+            return $this->ai->evaluateCheckpointAnswerWithAttachments(
+                $session,
+                $checkpoint,
+                $answer,
+                $attachments,
+                $knowledge
+            );
+        }
+
         return $this->ai->evaluateCheckpointAnswer(
             $session,
             $checkpoint,
@@ -1112,6 +1187,318 @@ class TutorCheckpointService
             ->implode("\n\n");
     }
 
+    protected function questionBankCheckpoint(
+        TutorSession $session,
+        TutorSessionObjective $objective,
+        array $plan
+    ): ?array {
+        $previous = $session
+            ->messages()
+            ->where('message_type', 'checkpoint')
+            ->get()
+            ->map(
+                fn ($message) =>
+                    $message->metadata['checkpoint']
+                    ?? null
+            )
+            ->filter(
+                fn ($checkpoint) =>
+                    is_array($checkpoint)
+                    && (int) (
+                        $checkpoint['objective_id']
+                        ?? 0
+                    )
+                    === (int) $objective->learning_objective_id
+            )
+            ->values();
+
+        /*
+         * Alternate sources where possible. First check may come from the
+         * teacher Question Bank; the next one is generated; then bank again.
+         */
+        if ($previous->count() % 2 === 1) {
+            return null;
+        }
+
+        $usedBankIds = $previous
+            ->pluck('bank_question_id')
+            ->filter()
+            ->map(fn ($id) => (int) $id)
+            ->all();
+
+        $supportedTypes = [
+            'mcq',
+            'true_false',
+            'fill_blank',
+            'short_answer',
+            'open_ended',
+        ];
+
+        $questions = Question::query()
+            ->where('topic_id', $session->topic_id)
+            ->where(
+                'learning_objective_id',
+                $objective->learning_objective_id
+            )
+            ->whereNull('parent_question_id')
+            ->where('status', 'approved')
+            ->where('is_assessment_eligible', true)
+            ->whereIn('question_type', $supportedTypes)
+            ->whereNull('question_image')
+            ->whereNull('correct_answer_image')
+            ->where(function ($query) {
+                $query
+                    ->whereNull('stimulus')
+                    ->orWhereJsonLength('stimulus', 0);
+            })
+            ->when(
+                !empty($usedBankIds),
+                fn ($query) =>
+                    $query->whereNotIn('id', $usedBankIds)
+            )
+            ->latest('updated_at')
+            ->limit(12)
+            ->get();
+
+        if ($questions->isEmpty()) {
+            return null;
+        }
+
+        $candidates = $questions
+            ->map(fn (Question $question) => [
+                'id' => $question->id,
+                'type' => $question->question_type,
+                'difficulty' => $question->difficulty_level,
+                'question' => $question->question,
+            ])
+            ->all();
+
+        $selectedId = $this->ai->selectQuestionBankQuestion(
+            $session,
+            $plan,
+            $candidates
+        );
+
+        if (!$selectedId) {
+            return null;
+        }
+
+        $selected = $questions->first(
+            fn (Question $question) =>
+                (int) $question->id
+                === (int) $selectedId
+        );
+
+        return $selected
+            ? $this->checkpointFromQuestion(
+                $selected,
+                $objective,
+                $plan
+            )
+            : null;
+    }
+
+    protected function checkpointFromQuestion(
+        Question $question,
+        TutorSessionObjective $objective,
+        array $plan
+    ): ?array {
+        $type = match (
+            strtolower((string) $question->question_type)
+        ) {
+            'open_ended' => 'short_answer',
+            default =>
+                strtolower((string) $question->question_type),
+        };
+
+        $checkpoint = [
+            'type' => $type,
+            'objective_id' =>
+                $objective->learning_objective_id,
+            'question' =>
+                trim((string) $question->question),
+            'difficulty' =>
+                $question->difficulty_level
+                ?: ($plan['difficulty'] ?? 'understanding'),
+            'assessment_mode' =>
+                $plan['assessment_mode']
+                ?? 'conceptual',
+            'response_depth' =>
+                $plan['response_depth']
+                ?? 'short',
+            'strategy' =>
+                $plan['strategy']
+                ?? 'question_bank',
+            'source' => 'question_bank',
+            'bank_question_id' => $question->id,
+            'explanation' => $question->explanation,
+        ];
+
+        if ($checkpoint['question'] === '') {
+            return null;
+        }
+
+        $answer = $question->correct_answer;
+
+        switch ($type) {
+            case 'mcq':
+                $options = collect(
+                    is_array($question->options)
+                        ? $question->options
+                        : []
+                )
+                    ->values()
+                    ->map(function ($option, $index) {
+                        if (is_array($option)) {
+                            return [
+                                'id' =>
+                                    strtoupper(
+                                        (string) (
+                                            $option['id']
+                                            ?? chr(65 + $index)
+                                        )
+                                    ),
+                                'text' =>
+                                    trim(
+                                        (string) (
+                                            $option['text']
+                                            ?? $option['value']
+                                            ?? ''
+                                        )
+                                    ),
+                            ];
+                        }
+
+                        return [
+                            'id' => chr(65 + $index),
+                            'text' => trim((string) $option),
+                        ];
+                    })
+                    ->filter(
+                        fn ($option) =>
+                            $option['text'] !== ''
+                    )
+                    ->values();
+
+                if ($options->count() < 2) {
+                    return null;
+                }
+
+                $rawCorrect = is_array($answer)
+                    ? collect($answer)->flatten()->first()
+                    : $answer;
+
+                $rawCorrect = trim((string) $rawCorrect);
+
+                $correctOption = $options->first(
+                    function ($option) use ($rawCorrect) {
+                        return
+                            strcasecmp(
+                                (string) $option['id'],
+                                $rawCorrect
+                            ) === 0
+                            || strcasecmp(
+                                (string) $option['text'],
+                                $rawCorrect
+                            ) === 0;
+                    }
+                );
+
+                if (!$correctOption) {
+                    return null;
+                }
+
+                $checkpoint['options'] =
+                    $options->all();
+                $checkpoint['correct_answer'] =
+                    $correctOption['id'];
+                break;
+
+            case 'true_false':
+                $rawCorrect = is_array($answer)
+                    ? collect($answer)->flatten()->first()
+                    : $answer;
+
+                $rawCorrect = strtolower(
+                    trim((string) $rawCorrect)
+                );
+
+                if (!in_array(
+                    $rawCorrect,
+                    ['true', 'false'],
+                    true
+                )) {
+                    return null;
+                }
+
+                $checkpoint['options'] = [
+                    ['id' => 'true', 'text' => 'True'],
+                    ['id' => 'false', 'text' => 'False'],
+                ];
+                $checkpoint['correct_answer'] =
+                    $rawCorrect;
+                break;
+
+            case 'fill_blank':
+                $accepted = collect(
+                    is_array($answer) ? $answer : [$answer]
+                )
+                    ->flatten()
+                    ->map(
+                        fn ($value) =>
+                            trim((string) $value)
+                    )
+                    ->filter()
+                    ->unique()
+                    ->values()
+                    ->all();
+
+                if (empty($accepted)) {
+                    return null;
+                }
+
+                $checkpoint['accepted_answers'] =
+                    $accepted;
+                $checkpoint['expected_answer'] =
+                    implode(' / ', $accepted);
+                break;
+
+            case 'short_answer':
+                $expected = collect(
+                    is_array($answer) ? $answer : [$answer]
+                )
+                    ->flatten()
+                    ->map(
+                        fn ($value) =>
+                            trim((string) $value)
+                    )
+                    ->filter()
+                    ->implode('; ');
+
+                if ($expected === '') {
+                    $expected = trim(
+                        (string) $question->explanation
+                    );
+                }
+
+                if ($expected === '') {
+                    return null;
+                }
+
+                $checkpoint['expected_answer'] =
+                    $expected;
+                $checkpoint['evaluation_criteria'] = [
+                    'Demonstrate the understanding required by the approved Question Bank item.',
+                ];
+                break;
+
+            default:
+                return null;
+        }
+
+        return $checkpoint;
+    }
+
     public function publicCheckpoint(
         TutorMessage $message
     ): array {
@@ -1134,6 +1521,10 @@ class TutorCheckpointService
                 $checkpoint['response_depth'] ?? null,
             'strategy' =>
                 $checkpoint['strategy'] ?? null,
+            'source' =>
+                $checkpoint['source'] ?? 'ai_generated',
+            'bank_question_id' =>
+                $checkpoint['bank_question_id'] ?? null,
             'status' =>
                 $checkpoint['status'] ?? 'pending',
             'created_at' => $message->created_at,
@@ -1142,7 +1533,10 @@ class TutorCheckpointService
             'max_attempts' => (int) ($checkpoint['max_attempts'] ?? self::MAX_CHECKPOINT_ATTEMPTS),
             'retry_allowed' => (bool) ($checkpoint['retry_allowed'] ?? false),
             'retry_feedback' => $checkpoint['retry_feedback'] ?? null,
-            'previous_answer' => $checkpoint['last_student_answer'] ?? null,
+            'previous_answer' =>
+                $checkpoint['last_student_answer'] ?? null,
+            'answer_attachments' =>
+                $checkpoint['last_answer_attachments'] ?? [],
         ];
 
         switch ($checkpoint['type'] ?? null) {

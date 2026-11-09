@@ -477,6 +477,12 @@ class TutorController extends Controller
                     : null,
             ]);
 
+        $chemistryVisual =
+            $this->ai->chemistryVisual(
+                $tutorSession,
+                $answer
+            );
+
         $assistantMessage =
             $tutorSession
             ->messages()
@@ -484,6 +490,12 @@ class TutorController extends Controller
                 'role' => 'assistant',
                 'message_type' => 'text',
                 'content' => $answer,
+                'metadata' => $chemistryVisual
+                    ? [
+                        'chemistry_visual' =>
+                            $chemistryVisual,
+                    ]
+                    : null,
             ]);
 
         $tutorSession->update(['last_activity_at' => now(),]);
@@ -718,6 +730,15 @@ class TutorController extends Controller
 
             ?? null;
 
+        $uploadedImages = $request->file(
+            'attachments',
+            []
+        );
+
+        if (!is_array($uploadedImages)) {
+            $uploadedImages = [$uploadedImages];
+        }
+
         if ($type === 'matching') {
 
             $data = $request->validate([
@@ -738,7 +759,7 @@ class TutorController extends Controller
 
                     'string',
 
-                    'max:20',
+                    'max:200',
 
                 ],
 
@@ -760,19 +781,120 @@ class TutorController extends Controller
                 default => 4000,
             };
 
-            $data = $request->validate([
-
+            $rules = [
                 'answer' => [
-
-                    'required',
-
+                    $type === 'short_answer'
+                        ? 'nullable'
+                        : 'required',
                     'string',
-
                     'max:' . $maxLength,
-
                 ],
+            ];
 
+            if ($type === 'short_answer') {
+                $rules['attachments'] = [
+                    'nullable',
+                    'array',
+                    'max:2',
+                ];
+
+                $rules['attachments.*'] = [
+                    'file',
+                    'max:6144',
+                    'mimetypes:image/jpeg,image/png,image/webp',
+                ];
+            }
+
+            $data = $request->validate($rules);
+        }
+
+        $answerValue =
+            $data['answer']
+            ?? (
+                $type === 'short_answer'
+                    ? ''
+                    : null
+            );
+
+        if (
+            $type === 'short_answer'
+            && trim((string) $answerValue) === ''
+            && count($uploadedImages) === 0
+        ) {
+            throw ValidationException::withMessages([
+                'answer' => [
+                    'Write an answer or attach an image of your work.',
+                ],
             ]);
+        }
+
+        $aiAttachments = [];
+        $storedAttachments = [];
+        $totalBytes = 0;
+
+        if ($type === 'short_answer') {
+            foreach ($uploadedImages as $file) {
+                if (!$file || !$file->isValid()) {
+                    continue;
+                }
+
+                $bytes = (int) $file->getSize();
+                $totalBytes += $bytes;
+
+                abort_if(
+                    $totalBytes > 10 * 1024 * 1024,
+                    422,
+                    'The combined image answers must be 10 MB or less.'
+                );
+
+                $contents = file_get_contents(
+                    $file->getRealPath()
+                );
+
+                abort_if(
+                    $contents === false,
+                    422,
+                    'One of the image answers could not be read.'
+                );
+
+                $mime =
+                    $file->getMimeType()
+                    ?: $file->getClientMimeType();
+
+                $aiAttachments[] = [
+                    'name' =>
+                        $file->getClientOriginalName(),
+                    'mime_type' => $mime,
+                    'data' => base64_encode($contents),
+                ];
+
+                $extension = strtolower(
+                    (string)
+                    $file->getClientOriginalExtension()
+                );
+
+                $filename =
+                    (string) Str::uuid()
+                    . (
+                        $extension !== ''
+                            ? ".{$extension}"
+                            : ''
+                    );
+
+                $path = $file->storeAs(
+                    "tutor-checkpoints/{$request->user()->id}/{$tutorSession->id}",
+                    $filename,
+                    'local'
+                );
+
+                $storedAttachments[] = [
+                    'original_name' =>
+                        $file->getClientOriginalName(),
+                    'mime_type' => $mime,
+                    'size' => $bytes,
+                    'path' => $path,
+                ];
+            }
         }
 
         $result =
@@ -783,9 +905,13 @@ class TutorController extends Controller
 
                 $checkpointMessage,
 
-                $data['answer'],
+                $answerValue,
 
-                $request->user()->id
+                $request->user()->id,
+
+                $aiAttachments,
+
+                $storedAttachments
 
             );
 

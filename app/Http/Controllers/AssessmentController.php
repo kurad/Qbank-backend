@@ -28,7 +28,21 @@ class AssessmentController extends Controller
             ->with([
                 'questions.question',
                 'topics.gradeSubject.subject',
-                'topics.gradeSubject.gradeLevel'
+                'topics.gradeSubject.gradeLevel',
+                'groups:id,group_name,class_code',
+            ])
+            ->withCount([
+                'studentAssessments as assigned_students_count',
+                'studentAssessments as started_attempts_count' => function ($query) {
+                    $query->where(function ($attemptQuery) {
+                        $attemptQuery
+                            ->whereNotNull('started_at')
+                            ->orWhereIn(
+                                'status',
+                                ['in_progress', 'completed', 'graded', 'under_review']
+                            );
+                    });
+                },
             ])
             ->latest()
             ->get();
@@ -1100,6 +1114,178 @@ class AssessmentController extends Controller
     }
 
 
+
+    /**
+     * Update teacher-editable assessment settings from the assessment
+     * management page.
+     *
+     * System-generated personalized formative containers are intentionally
+     * excluded because their lifecycle is controlled by the formative service.
+     */
+    public function updateSettings(Request $request, $id)
+    {
+        $user = Auth::user();
+
+        $assessment = Assessment::query()
+            ->withCount([
+                'studentAssessments as started_attempts_count' => function ($query) {
+                    $query->where(function ($attemptQuery) {
+                        $attemptQuery
+                            ->whereNotNull('started_at')
+                            ->orWhereIn(
+                                'status',
+                                ['in_progress', 'completed', 'graded', 'under_review']
+                            );
+                    });
+                },
+            ])
+            ->findOrFail($id);
+
+        if ((int) $assessment->creator_id !== (int) $user->id) {
+            return response()->json([
+                'message' => 'You are not authorized to update this assessment.',
+            ], 403);
+        }
+
+        if ($assessment->is_system_generated) {
+            return response()->json([
+                'message' => 'System-generated formative assessment settings are managed automatically.',
+            ], 422);
+        }
+
+        if ($assessment->status === 'archived') {
+            return response()->json([
+                'message' => 'Restore this assessment before changing its settings.',
+            ], 422);
+        }
+
+        $data = $request->validate([
+            'type' => [
+                'required',
+                'in:quiz,exam,homework,test,assignment',
+            ],
+            'delivery_mode' => [
+                'required',
+                'in:online,offline',
+            ],
+            'is_timed' => [
+                'required',
+                'boolean',
+            ],
+            'time_limit' => [
+                'nullable',
+                'integer',
+                'min:1',
+                'max:600',
+                'required_if:is_timed,true,1',
+            ],
+            'due_date' => [
+                'nullable',
+                'date',
+            ],
+        ]);
+
+        $started = (int) ($assessment->started_attempts_count ?? 0);
+
+        if ($started > 0) {
+            $lockedChanged =
+                strtolower((string) $assessment->type) !== strtolower((string) $data['type'])
+                || strtolower((string) ($assessment->delivery_mode ?? 'online')) !== strtolower((string) $data['delivery_mode'])
+                || (bool) $assessment->is_timed !== (bool) $data['is_timed']
+                || (
+                    (bool) $data['is_timed']
+                    && (int) ($assessment->time_limit ?? 0) !== (int) ($data['time_limit'] ?? 0)
+                );
+
+            if ($lockedChanged) {
+                return response()->json([
+                    'message' => 'Type, delivery mode, and timing cannot be changed after a student has started this assessment. You can still adjust the due date.',
+                ], 422);
+            }
+        }
+
+        $assessment->type = $data['type'];
+        $assessment->delivery_mode = $data['delivery_mode'];
+        $assessment->is_timed = (bool) $data['is_timed'];
+        $assessment->time_limit = $assessment->is_timed
+            ? (int) $data['time_limit']
+            : null;
+        $assessment->due_date = $data['due_date'] ?? null;
+        $assessment->save();
+
+        return response()->json([
+            'message' => 'Assessment settings updated successfully.',
+            'assessment' => $assessment->fresh(),
+        ]);
+    }
+
+    public function archive(Request $request, $id)
+    {
+        $user = Auth::user();
+        $assessment = Assessment::findOrFail($id);
+
+        if ((int) $assessment->creator_id !== (int) $user->id) {
+            return response()->json([
+                'message' => 'You are not authorized to archive this assessment.',
+            ], 403);
+        }
+
+        if ($assessment->is_system_generated) {
+            return response()->json([
+                'message' => 'System-generated formative assessments cannot be archived manually.',
+            ], 422);
+        }
+
+        if ($assessment->status !== 'published') {
+            return response()->json([
+                'message' => 'Only published assessments can be archived from this page.',
+            ], 422);
+        }
+
+        $assessment->status = 'archived';
+        $assessment->save();
+
+        return response()->json([
+            'message' => 'Assessment archived successfully.',
+            'assessment' => $assessment,
+        ]);
+    }
+
+    public function restore(Request $request, $id)
+    {
+        $user = Auth::user();
+        $assessment = Assessment::findOrFail($id);
+
+        if ((int) $assessment->creator_id !== (int) $user->id) {
+            return response()->json([
+                'message' => 'You are not authorized to restore this assessment.',
+            ], 403);
+        }
+
+        if ($assessment->is_system_generated) {
+            return response()->json([
+                'message' => 'System-generated formative assessments are managed automatically.',
+            ], 422);
+        }
+
+        if ($assessment->status !== 'archived') {
+            return response()->json([
+                'message' => 'This assessment is not archived.',
+            ], 422);
+        }
+
+        /*
+         * Assessments are only archived from the published state in this
+         * management workflow, so restore returns them to published.
+         */
+        $assessment->status = 'published';
+        $assessment->save();
+
+        return response()->json([
+            'message' => 'Assessment restored successfully.',
+            'assessment' => $assessment,
+        ]);
+    }
 
     /**
      * Delete an assessment by ID
