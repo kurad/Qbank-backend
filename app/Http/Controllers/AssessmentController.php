@@ -34,14 +34,11 @@ class AssessmentController extends Controller
             ->withCount([
                 'studentAssessments as assigned_students_count',
                 'studentAssessments as started_attempts_count' => function ($query) {
-                    $query->where(function ($attemptQuery) {
-                        $attemptQuery
-                            ->whereNotNull('started_at')
-                            ->orWhereIn(
-                                'status',
-                                ['in_progress', 'completed', 'graded', 'under_review']
-                            );
-                    });
+                    // student_assessments does not have a started_at column.
+                    // Assigned (pending) records are not started attempts.
+                    $query->whereIn('status', [
+                        'in_progress', 'completed', 'graded', 'under_review',
+                    ]);
                 },
             ])
             ->latest()
@@ -494,7 +491,7 @@ class AssessmentController extends Controller
         $studentAssessment = StudentAssessment::create([
             'student_id' => $student->id,
             'assessment_id' => $practiceAssessment->id,
-            'started_at' => now(),
+            'status' => 'in_progress',
         ]);
 
         return response()->json([
@@ -749,7 +746,7 @@ class AssessmentController extends Controller
         $studentAssessment = StudentAssessment::create([
             'student_id' => $student->id,
             'assessment_id' => $assessment->id,
-            'started_at' => now(),
+            'status' => 'in_progress',
         ]);
 
         return response()->json(['message' => 'Practice started', 'student_assessment' => $studentAssessment]);
@@ -1129,14 +1126,11 @@ class AssessmentController extends Controller
         $assessment = Assessment::query()
             ->withCount([
                 'studentAssessments as started_attempts_count' => function ($query) {
-                    $query->where(function ($attemptQuery) {
-                        $attemptQuery
-                            ->whereNotNull('started_at')
-                            ->orWhereIn(
-                                'status',
-                                ['in_progress', 'completed', 'graded', 'under_review']
-                            );
-                    });
+                    // student_assessments does not have a started_at column.
+                    // Assigned (pending) records are not started attempts.
+                    $query->whereIn('status', [
+                        'in_progress', 'completed', 'graded', 'under_review',
+                    ]);
                 },
             ])
             ->findOrFail($id);
