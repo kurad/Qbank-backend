@@ -8,6 +8,8 @@ use App\Models\LearningSupportThread;
 use App\Models\LearningSupportMessage;
 use App\Models\StudentTopicLearningState;
 use App\Models\Topic;
+use App\Models\TutorSession;
+use App\Models\TutorSessionObjective;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -118,7 +120,13 @@ class LearningSupportController extends Controller
         $teacher = $this->teacher($request);
 
         $periodIds = LearningPeriod::query()
-            ->when($teacher->role !== 'admin', fn ($query) => $query->where('created_by', $teacher->id))
+            ->when(
+                $teacher->role !== 'admin',
+                fn ($query) => $query->where(
+                    'created_by',
+                    $teacher->id
+                )
+            )
             ->pluck('id');
 
         $rows = StudentTopicLearningState::query()
@@ -133,7 +141,402 @@ class LearningSupportController extends Controller
             ->orderByDesc('last_attempt_at')
             ->get();
 
-        return response()->json(['data' => $rows]);
+        if ($rows->isEmpty()) {
+            return response()->json(['data' => []]);
+        }
+
+        /*
+         * Pull the actual Tutor evidence behind each topic-level
+         * needs-review state. This avoids presenting only the topic's
+         * aggregate attempt_count / best_score, which can be misleading
+         * when one objective remains unresolved after earlier success.
+         */
+        $sessions = TutorSession::query()
+            ->whereIn(
+                'student_id',
+                $rows->pluck('student_id')->unique()
+            )
+            ->whereIn(
+                'learning_period_id',
+                $rows->pluck('learning_period_id')->unique()
+            )
+            ->whereIn(
+                'topic_id',
+                $rows->pluck('topic_id')->unique()
+            )
+            ->with([
+                'objectives' => function ($query) {
+                    $query
+                        ->with([
+                            'learningObjective:id,topic_id,code,objective,description,order',
+                            'responseEvaluations' => function ($query) {
+                                $query
+                                    ->orderBy('id')
+                                    ->select([
+                                        'id',
+                                        'tutor_session_id',
+                                        'tutor_session_objective_id',
+                                        'student_id',
+                                        'student_response',
+                                        'classification',
+                                        'correct',
+                                        'understanding_score',
+                                        'feedback',
+                                        'evidence',
+                                        'misconception',
+                                        'created_at',
+                                    ]);
+                            },
+                        ])
+                        ->orderBy('objective_order');
+                },
+            ])
+            ->orderByDesc('last_activity_at')
+            ->orderByDesc('id')
+            ->get();
+
+        $sessionGroups = $sessions->groupBy(
+            fn ($session) =>
+                $session->student_id
+                . ':'
+                . $session->learning_period_id
+                . ':'
+                . $session->topic_id
+        );
+
+        $data = $rows->map(function ($state) use ($sessionGroups) {
+            $key =
+                $state->student_id
+                . ':'
+                . $state->learning_period_id
+                . ':'
+                . $state->topic_id;
+
+            $topicSessions = collect(
+                $sessionGroups->get($key, collect())
+            );
+
+            $diagnostic = $this->buildStruggleDiagnostic(
+                $topicSessions,
+                $state
+            );
+
+            $state->setAttribute(
+                'struggle_diagnostic',
+                $diagnostic
+            );
+
+            return $state;
+        });
+
+        return response()->json(['data' => $data]);
+    }
+
+    protected function buildStruggleDiagnostic(
+        $sessions,
+        StudentTopicLearningState $state
+    ): array {
+        $objectives = collect($sessions)
+            ->flatMap(fn ($session) => $session->objectives)
+            ->groupBy('learning_objective_id')
+            ->map(function ($rows) {
+                $orderedObjectives = $rows
+                    ->sortBy('id')
+                    ->values();
+
+                $latestObjective = $orderedObjectives->last();
+
+                $evaluations = $orderedObjectives
+                    ->flatMap(
+                        fn ($objective) =>
+                            $objective->responseEvaluations
+                    )
+                    ->sortBy('id')
+                    ->values();
+
+                $recentEvaluations = $evaluations
+                    ->take(-5)
+                    ->values();
+
+                $recentScores = $recentEvaluations
+                    ->pluck('understanding_score')
+                    ->filter(
+                        fn ($value) =>
+                            $value !== null
+                    );
+
+                $misconceptions = $recentEvaluations
+                    ->pluck('misconception')
+                    ->filter(
+                        fn ($value) =>
+                            trim((string) $value) !== ''
+                    )
+                    ->map(
+                        fn ($value) =>
+                            trim((string) $value)
+                    )
+                    ->unique()
+                    ->values();
+
+                $latestFeedback = $recentEvaluations
+                    ->pluck('feedback')
+                    ->filter(
+                        fn ($value) =>
+                            trim((string) $value) !== ''
+                    )
+                    ->last();
+
+                $latestEvidence = $recentEvaluations
+                    ->pluck('evidence')
+                    ->filter(
+                        fn ($value) =>
+                            trim((string) $value) !== ''
+                    )
+                    ->last();
+
+                $latestMisconception = $misconceptions->last();
+
+                $recentChecks = $recentEvaluations
+                    ->take(-3)
+                    ->map(function ($evaluation) {
+                        return [
+                            'id' => $evaluation->id,
+                            'classification' =>
+                                $evaluation->classification,
+                            'correct' =>
+                                (bool) $evaluation->correct,
+                            'understanding_score' =>
+                                (int) (
+                                    $evaluation
+                                        ->understanding_score
+                                    ?? 0
+                                ),
+                            'student_response' =>
+                                $evaluation->student_response,
+                            'feedback' =>
+                                $evaluation->feedback,
+                            'evidence' =>
+                                $evaluation->evidence,
+                            'misconception' =>
+                                $evaluation->misconception,
+                            'created_at' =>
+                                optional(
+                                    $evaluation->created_at
+                                )?->toIso8601String(),
+                        ];
+                    })
+                    ->values();
+
+                $objectiveStatus = strtolower(
+                    (string) (
+                        $latestObjective?->status
+                        ?? 'not_started'
+                    )
+                );
+
+                return [
+                    'learning_objective_id' =>
+                        $latestObjective
+                            ?->learning_objective_id,
+                    'objective' =>
+                        $latestObjective
+                            ?->learningObjective
+                            ?->objective
+                        ?? 'Learning objective',
+                    'objective_code' =>
+                        $latestObjective
+                            ?->learningObjective
+                            ?->code,
+                    'description' =>
+                        $latestObjective
+                            ?->learningObjective
+                            ?->description,
+                    'status' =>
+                        $objectiveStatus,
+                    'needs_review' =>
+                        $objectiveStatus ===
+                        'needs_review',
+                    'attempts' =>
+                        max(
+                            (int) (
+                                $latestObjective
+                                    ?->attempts
+                                ?? 0
+                            ),
+                            $evaluations->count()
+                        ),
+                    'correct_attempts' =>
+                        (int) (
+                            $latestObjective
+                                ?->correct_attempts
+                            ?? 0
+                        ),
+                    'evaluation_count' =>
+                        $evaluations->count(),
+                    'recent_average_score' =>
+                        $recentScores->isNotEmpty()
+                            ? (int) round(
+                                $recentScores->avg()
+                            )
+                            : null,
+                    'latest_score' =>
+                        $recentScores->isNotEmpty()
+                            ? (int) $recentScores->last()
+                            : null,
+                    'latest_classification' =>
+                        $recentEvaluations
+                            ->last()
+                            ?->classification,
+                    'latest_misconception' =>
+                        $latestMisconception,
+                    'misconceptions' =>
+                        $misconceptions
+                            ->take(-3)
+                            ->values()
+                            ->all(),
+                    'latest_feedback' =>
+                        $latestFeedback,
+                    'latest_evidence' =>
+                        $latestEvidence,
+                    'recent_checks' =>
+                        $recentChecks->all(),
+                ];
+            })
+            ->values();
+
+        $needsReviewObjectives = $objectives
+            ->where('needs_review', true)
+            ->values();
+
+        /*
+         * In rare older data, the topic state may be needs_review while
+         * objective rows were not updated correctly. Fall back to the
+         * most recently attempted objective so the teacher still sees
+         * useful evidence instead of a blank diagnostic.
+         */
+        $focusObjectives =
+            $needsReviewObjectives->isNotEmpty()
+                ? $needsReviewObjectives
+                : $objectives
+                    ->filter(
+                        fn ($objective) =>
+                            ($objective['evaluation_count'] ?? 0)
+                            > 0
+                    )
+                    ->sortByDesc('evaluation_count')
+                    ->take(2)
+                    ->values();
+
+        $allEvaluations = $objectives
+            ->flatMap(
+                fn ($objective) =>
+                    $objective['recent_checks'] ?? []
+            );
+
+        $unsuccessfulChecks = $allEvaluations
+            ->filter(function ($evaluation) {
+                return !(
+                    ($evaluation['correct'] ?? false)
+                    && (
+                        (int) (
+                            $evaluation[
+                                'understanding_score'
+                            ]
+                            ?? 0
+                        )
+                        >= 80
+                    )
+                );
+            })
+            ->count();
+
+        $partialChecks = $allEvaluations
+            ->filter(
+                fn ($evaluation) =>
+                    strtolower(
+                        (string) (
+                            $evaluation[
+                                'classification'
+                            ]
+                            ?? ''
+                        )
+                    )
+                    === 'partially_correct'
+            )
+            ->count();
+
+        $latestMisconception = $focusObjectives
+            ->pluck('latest_misconception')
+            ->filter(
+                fn ($value) =>
+                    trim((string) $value) !== ''
+            )
+            ->first();
+
+        $latestEvidence = $focusObjectives
+            ->pluck('latest_evidence')
+            ->filter(
+                fn ($value) =>
+                    trim((string) $value) !== ''
+            )
+            ->first();
+
+        $latestFeedback = $focusObjectives
+            ->pluck('latest_feedback')
+            ->filter(
+                fn ($value) =>
+                    trim((string) $value) !== ''
+            )
+            ->first();
+
+        $headline = match (true) {
+            $focusObjectives->count() > 1 =>
+                $focusObjectives->count()
+                . ' learning objectives still need review',
+            $focusObjectives->count() === 1 =>
+                '1 learning objective still needs review',
+            default =>
+                'This topic was moved on without full mastery',
+        };
+
+        $teacherFocus = $latestMisconception
+            ? 'Address this gap first: '
+                . $latestMisconception
+            : (
+                $latestFeedback
+                    ? $latestFeedback
+                    : 'Review the unresolved objective, ask the learner to explain it in their own words, then use a short targeted retry.'
+            );
+
+        return [
+            'headline' => $headline,
+            'move_on_reason' =>
+                $state->move_on_reason,
+            'move_on_at' =>
+                optional(
+                    $state->move_on_at
+                )?->toIso8601String(),
+            'session_count' =>
+                collect($sessions)->count(),
+            'objective_count' =>
+                $objectives->count(),
+            'needs_review_objective_count' =>
+                $needsReviewObjectives->count(),
+            'recent_unsuccessful_checks' =>
+                $unsuccessfulChecks,
+            'recent_partial_checks' =>
+                $partialChecks,
+            'latest_misconception' =>
+                $latestMisconception,
+            'what_student_demonstrated' =>
+                $latestEvidence,
+            'latest_tutor_feedback' =>
+                $latestFeedback,
+            'teacher_focus' =>
+                $teacherFocus,
+            'focus_objectives' =>
+                $focusObjectives->all(),
+        ];
     }
 
     public function teacherThreads(Request $request)
