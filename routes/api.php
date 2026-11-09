@@ -554,6 +554,7 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     Route::get('/student/practice/attempts/{practiceAttempt}', [StudentPracticeController::class, 'reviewAttempt']);
 
 
+    Route::get('/student/support/summary', [LearningSupportController::class, 'studentSummary']);
     Route::get('/student/support/threads', [LearningSupportController::class, 'studentThreads']);
     Route::post('/student/support/threads/{thread}/messages', [LearningSupportController::class, 'addMessage']);
 

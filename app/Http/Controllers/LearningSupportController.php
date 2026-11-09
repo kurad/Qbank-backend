@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\LearningCheckIn;
 use App\Models\LearningPeriod;
 use App\Models\LearningSupportThread;
+use App\Models\LearningSupportMessage;
 use App\Models\StudentTopicLearningState;
 use App\Models\Topic;
 use App\Models\User;
@@ -13,10 +14,88 @@ use Illuminate\Support\Facades\DB;
 
 class LearningSupportController extends Controller
 {
+    public function studentSummary(Request $request)
+    {
+        $user = $request->user();
+
+        abort_unless(
+            $user && $user->role === 'student',
+            403
+        );
+
+        $unreadQuery = LearningSupportMessage::query()
+            ->whereNull('read_at')
+            ->where('sender_id', '!=', $user->id)
+            ->whereHas('thread', function ($query) use ($user) {
+                $query->where('student_id', $user->id);
+            });
+
+        $unreadCount = (clone $unreadQuery)->count();
+
+        $latest = $unreadQuery
+            ->with([
+                'sender:id,name,role',
+                'thread:id,student_id,teacher_id,learning_period_id,topic_id,type,status,subject,last_message_at',
+                'thread.teacher:id,name',
+                'thread.learningPeriod:id,title',
+                'thread.topic:id,topic_name',
+            ])
+            ->orderByDesc('created_at')
+            ->limit(5)
+            ->get()
+            ->map(function (LearningSupportMessage $message) {
+                $thread = $message->thread;
+
+                return [
+                    'id' => $message->id,
+                    'thread_id' => $message->thread_id,
+                    'message' => $message->message,
+                    'created_at' => optional($message->created_at)?->toIso8601String(),
+                    'teacher' => [
+                        'id' => $message->sender?->id,
+                        'name' =>
+                            $message->sender?->name
+                            ?? $thread?->teacher?->name
+                            ?? 'Teacher',
+                    ],
+                    'thread' => [
+                        'type' => $thread?->type,
+                        'status' => $thread?->status,
+                        'subject' => $thread?->subject,
+                        'learning_period_id' => $thread?->learning_period_id,
+                        'learning_period' => $thread?->learningPeriod?->title,
+                        'topic_id' => $thread?->topic_id,
+                        'topic' => $thread?->topic?->topic_name,
+                    ],
+                ];
+            })
+            ->values();
+
+        return response()->json([
+            'data' => [
+                'unread_count' => $unreadCount,
+                'latest_unread' => $latest,
+            ],
+        ]);
+    }
+
     public function studentThreads(Request $request)
     {
         $user = $request->user();
         abort_unless($user && $user->role === 'student', 403);
+
+        /*
+         * Opening Teacher Support is the student's explicit read action.
+         * Mark only teacher-to-student messages as read. Student replies do
+         * not participate in the student's unread badge.
+         */
+        LearningSupportMessage::query()
+            ->whereNull('read_at')
+            ->where('sender_id', '!=', $user->id)
+            ->whereHas('thread', function ($query) use ($user) {
+                $query->where('student_id', $user->id);
+            })
+            ->update(['read_at' => now()]);
 
         $threads = LearningSupportThread::query()
             ->where('student_id', $user->id)
