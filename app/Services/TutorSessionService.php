@@ -44,7 +44,50 @@ class TutorSessionService
          * objective 1. Review sessions for `needs_review` topics remain
          * allowed until we introduce a dedicated review-session type.
          */
-        $sessionMode = ($data['session_mode'] ?? 'learning') === 'review' ? 'review' : 'learning';
+        $requestedMode = strtolower(
+            (string) ($data['session_mode'] ?? 'learning')
+        );
+
+        $sessionMode = in_array(
+            $requestedMode,
+            ['learning', 'review', 'remediation'],
+            true
+        )
+            ? $requestedMode
+            : 'learning';
+
+        $targetObjectiveId = $sessionMode === 'remediation'
+            ? (int) ($data['learning_objective_id'] ?? 0)
+            : 0;
+
+        if ($sessionMode === 'remediation') {
+            if ($targetObjectiveId <= 0) {
+                throw ValidationException::withMessages([
+                    'learning_objective_id' =>
+                        'A teacher-directed review requires a learning objective.',
+                ]);
+            }
+
+            $targetObjective = $objectives->first(
+                fn ($objective) =>
+                    (int) $objective->id === $targetObjectiveId
+            );
+
+            if (!$targetObjective) {
+                throw ValidationException::withMessages([
+                    'learning_objective_id' =>
+                        'The selected learning objective does not belong to this topic.',
+                ]);
+            }
+
+            /*
+             * A remediation session deliberately contains only the teacher-
+             * targeted objective. This prevents the Tutor from restarting the
+             * whole topic and makes the new mastery evidence attributable to
+             * exactly the unresolved learning goal.
+             */
+            $objectives = collect([$targetObjective]);
+        }
 
         $topicState = StudentTopicLearningState::query()
             ->where('student_id', $student->id)
@@ -104,6 +147,13 @@ class TutorSessionService
             ->where('topic_id', $resolved['topic']->id)
             ->where('status', 'active')
             ->where('session_mode', $sessionMode)
+            ->when(
+                $sessionMode === 'remediation',
+                fn ($query) => $query->where(
+                    'learning_objective_id',
+                    $targetObjectiveId
+                )
+            )
             ->latest('last_activity_at')
             ->first();
 
@@ -111,7 +161,13 @@ class TutorSessionService
             return $this->freshSession($existing);
         }
 
-        $session = DB::transaction(function () use ($student, $resolved, $objectives, $sessionMode) {
+        $session = DB::transaction(function () use (
+            $student,
+            $resolved,
+            $objectives,
+            $sessionMode,
+            $targetObjectiveId
+        ) {
             $now = now();
 
             $session = TutorSession::create([
@@ -122,7 +178,10 @@ class TutorSessionService
                 'subject_id' => $resolved['gradeSubject']->subject_id,
                 'unit_id' => $resolved['unit']->id,
                 'topic_id' => $resolved['topic']->id,
-                'learning_objective_id' => null,
+                'learning_objective_id' =>
+                    $sessionMode === 'remediation'
+                        ? $targetObjectiveId
+                        : null,
                 'title' => $resolved['topic']->topic_name,
                 'status' => 'active',
                 'session_mode' => $sessionMode,
@@ -150,7 +209,7 @@ class TutorSessionService
             return $session;
         });
 
-        if ($sessionMode !== 'review') {
+        if ($sessionMode === 'learning') {
             $this->topicLearning->markStarted($student, $session);
         }
 
@@ -175,7 +234,7 @@ class TutorSessionService
                 'last_activity_at' => now(),
             ]);
 
-            if ($sessionMode !== 'review') {
+            if ($sessionMode === 'learning') {
                 $this->topicLearning->markNeedsReview(
                     $student,
                     $session,
@@ -653,6 +712,107 @@ class TutorSessionService
         }
 
         $wasCovered = false;
+
+        if (
+            ($session->session_mode ?? 'learning') === 'remediation'
+            && $session->learning_period_id
+            && $session->topic_id
+            && $session->learning_objective_id
+        ) {
+            $existingState = StudentTopicLearningState::query()
+                ->where('student_id', $student->id)
+                ->where('learning_period_id', $session->learning_period_id)
+                ->where('topic_id', $session->topic_id)
+                ->first();
+
+            $wasCovered =
+                $existingState?->progression_status === 'covered';
+
+            /*
+             * The original learning sessions remain immutable evidence.
+             * Instead of rewriting their needs_review objective rows, compare
+             * those unresolved objective IDs with successfully completed
+             * teacher-directed remediation sessions.
+             */
+            $originalNeedsReviewIds = TutorSessionObjective::query()
+                ->where('status', 'needs_review')
+                ->whereHas('session', function ($query) use ($student, $session) {
+                    $query
+                        ->where('student_id', $student->id)
+                        ->where(
+                            'learning_period_id',
+                            $session->learning_period_id
+                        )
+                        ->where('topic_id', $session->topic_id)
+                        ->where(function ($modeQuery) {
+                            $modeQuery
+                                ->whereNull('session_mode')
+                                ->orWhere('session_mode', 'learning');
+                        });
+                })
+                ->pluck('learning_objective_id')
+                ->filter()
+                ->unique()
+                ->values();
+
+            $successfulRemediationIds = TutorSession::query()
+                ->where('student_id', $student->id)
+                ->where(
+                    'learning_period_id',
+                    $session->learning_period_id
+                )
+                ->where('topic_id', $session->topic_id)
+                ->where('session_mode', 'remediation')
+                ->where('status', 'completed')
+                ->whereIn(
+                    'learning_objective_id',
+                    $originalNeedsReviewIds
+                )
+                ->whereHas('objectives', function ($query) {
+                    $query->whereIn(
+                        'status',
+                        ['completed', 'mastered']
+                    );
+                })
+                ->pluck('learning_objective_id')
+                ->filter()
+                ->unique()
+                ->values();
+
+            $remainingReviewIds = $originalNeedsReviewIds
+                ->diff($successfulRemediationIds)
+                ->values();
+
+            $hasMaterialGap = TutorSessionObjective::query()
+                ->where('status', 'material_gap')
+                ->whereHas('session', function ($query) use ($student, $session) {
+                    $query
+                        ->where('student_id', $student->id)
+                        ->where(
+                            'learning_period_id',
+                            $session->learning_period_id
+                        )
+                        ->where('topic_id', $session->topic_id)
+                        ->where(function ($modeQuery) {
+                            $modeQuery
+                                ->whereNull('session_mode')
+                                ->orWhere('session_mode', 'learning');
+                        });
+                })
+                ->exists();
+
+            if (
+                $remainingReviewIds->isEmpty()
+                && !$hasMaterialGap
+            ) {
+                $this->topicLearning->markMastered(
+                    $student,
+                    $session
+                );
+            }
+
+            return $this->freshSession($session);
+        }
 
         if ($session->learning_period_id && $session->topic_id) {
             $existingState = \App\Models\StudentTopicLearningState::query()

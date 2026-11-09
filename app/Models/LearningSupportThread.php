@@ -8,7 +8,7 @@ class LearningSupportThread extends Model
 {
     protected $fillable = [
         'student_id', 'teacher_id', 'learning_period_id', 'topic_id',
-        'type', 'status', 'subject', 'last_message_at',
+        'learning_objective_id', 'type', 'status', 'subject', 'last_message_at',
     ];
 
     protected $casts = ['last_message_at' => 'datetime'];
@@ -17,6 +17,7 @@ class LearningSupportThread extends Model
     public function teacher() { return $this->belongsTo(User::class, 'teacher_id'); }
     public function learningPeriod() { return $this->belongsTo(LearningPeriod::class); }
     public function topic() { return $this->belongsTo(Topic::class); }
+    public function learningObjective() { return $this->belongsTo(LearningObjective::class); }
     public function messages() { return $this->hasMany(LearningSupportMessage::class, 'thread_id'); }
     public function checkIns() { return $this->hasMany(LearningCheckIn::class, 'thread_id'); }
 }

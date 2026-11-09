@@ -300,7 +300,7 @@ class TutorController extends Controller
 
                 'nullable',
 
-                'in:learning,review',
+                'in:learning,review,remediation',
 
             ],
 
@@ -311,6 +311,16 @@ class TutorController extends Controller
                 'integer',
 
                 'exists:topics,id',
+
+            ],
+
+            'learning_objective_id' => [
+
+                'nullable',
+
+                'integer',
+
+                'exists:learning_objectives,id',
 
             ],
 

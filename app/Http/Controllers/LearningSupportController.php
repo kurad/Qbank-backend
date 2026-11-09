@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\LearningCheckIn;
 use App\Models\LearningPeriod;
 use App\Models\LearningSupportThread;
+use App\Models\LearningObjective;
 use App\Models\LearningSupportMessage;
 use App\Models\StudentTopicLearningState;
 use App\Models\Topic;
@@ -37,10 +38,11 @@ class LearningSupportController extends Controller
         $latest = $unreadQuery
             ->with([
                 'sender:id,name,role',
-                'thread:id,student_id,teacher_id,learning_period_id,topic_id,type,status,subject,last_message_at',
+                'thread:id,student_id,teacher_id,learning_period_id,topic_id,learning_objective_id,type,status,subject,last_message_at',
                 'thread.teacher:id,name',
-                'thread.learningPeriod:id,title',
+                'thread.learningPeriod:id,title,group_id',
                 'thread.topic:id,topic_name',
+                'thread.learningObjective:id,topic_id,code,objective,description',
             ])
             ->orderByDesc('created_at')
             ->limit(5)
@@ -68,6 +70,16 @@ class LearningSupportController extends Controller
                         'learning_period' => $thread?->learningPeriod?->title,
                         'topic_id' => $thread?->topic_id,
                         'topic' => $thread?->topic?->topic_name,
+                        'group_id' => $thread?->learningPeriod?->group_id,
+                        'learning_objective_id' => $thread?->learning_objective_id,
+                        'learning_objective' => $thread?->learningObjective
+                            ? [
+                                'id' => $thread->learningObjective->id,
+                                'code' => $thread->learningObjective->code,
+                                'objective' => $thread->learningObjective->objective,
+                                'description' => $thread->learningObjective->description,
+                            ]
+                            : null,
                     ],
                 ];
             })
@@ -103,8 +115,9 @@ class LearningSupportController extends Controller
             ->where('student_id', $user->id)
             ->with([
                 'teacher:id,name,email',
-                'learningPeriod:id,title',
+                'learningPeriod:id,title,group_id',
                 'topic:id,topic_name',
+                'learningObjective:id,topic_id,code,objective,description',
                 'messages.sender:id,name,role',
                 'checkIns',
             ])
@@ -546,8 +559,9 @@ class LearningSupportController extends Controller
             ->where('teacher_id', $teacher->id)
             ->with([
                 'student:id,name,email',
-                'learningPeriod:id,title',
+                'learningPeriod:id,title,group_id',
                 'topic:id,topic_name',
+                'learningObjective:id,topic_id,code,objective,description',
                 'messages.sender:id,name,role',
                 'checkIns',
             ]);
@@ -572,6 +586,11 @@ class LearningSupportController extends Controller
             'student_id' => ['required', 'integer', 'exists:users,id'],
             'learning_period_id' => ['nullable', 'integer', 'exists:learning_periods,id'],
             'topic_id' => ['nullable', 'integer', 'exists:topics,id'],
+            'learning_objective_id' => [
+                'nullable',
+                'integer',
+                'exists:learning_objectives,id',
+            ],
             'type' => ['required', 'in:feedback,check_in,message'],
             'subject' => ['nullable', 'string', 'max:255'],
             'message' => ['required', 'string', 'max:5000'],
@@ -593,12 +612,33 @@ class LearningSupportController extends Controller
             );
         }
 
+        if (!empty($data['learning_objective_id'])) {
+            abort_unless(
+                !empty($data['topic_id']),
+                422,
+                'A review objective requires a topic.'
+            );
+
+            $objective = LearningObjective::query()
+                ->where('id', $data['learning_objective_id'])
+                ->where('topic_id', $data['topic_id'])
+                ->first();
+
+            abort_unless(
+                $objective,
+                422,
+                'The selected learning objective does not belong to this topic.'
+            );
+        }
+
         $thread = DB::transaction(function () use ($teacher, $data) {
             $thread = LearningSupportThread::create([
                 'student_id' => $data['student_id'],
                 'teacher_id' => $teacher->id,
                 'learning_period_id' => $data['learning_period_id'] ?? null,
                 'topic_id' => $data['topic_id'] ?? null,
+                'learning_objective_id' =>
+                    $data['learning_objective_id'] ?? null,
                 'type' => $data['type'],
                 'status' => 'open',
                 'subject' => $data['subject'] ?? null,
@@ -622,7 +662,7 @@ class LearningSupportController extends Controller
 
         return response()->json([
             'message' => 'Learning support thread created.',
-            'data' => $thread->load(['student:id,name,email', 'learningPeriod:id,title', 'topic:id,topic_name', 'messages.sender:id,name,role', 'checkIns']),
+            'data' => $thread->load(['student:id,name,email', 'learningPeriod:id,title,group_id', 'topic:id,topic_name', 'learningObjective:id,topic_id,code,objective,description', 'messages.sender:id,name,role', 'checkIns']),
         ], 201);
     }
 
