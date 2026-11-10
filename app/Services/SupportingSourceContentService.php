@@ -90,8 +90,9 @@ class SupportingSourceContentService
             $title = $this->cleanText($match[1]);
         }
 
-        $body = preg_replace('/<(script|style|noscript|svg|canvas|iframe)\b[^>]*>.*?<\/\1>/is', ' ', $body);
-        $text = $this->cleanText(strip_tags((string) $body));
+        $text = str_contains($contentType, 'text/plain')
+            ? $this->cleanText($body)
+            : $this->extractTeachingText($body);
 
         if (mb_strlen($text) < 120) {
             throw ValidationException::withMessages([
@@ -170,23 +171,35 @@ class SupportingSourceContentService
             return array_values($output);
         });
 
+        // Rank focused tutorial pages above menus, quizzes, and keyword indexes.
+        // Long, specific objective terms are much more valuable than generic
+        // words such as "select" or "query".
         $scored = [];
         foreach ($links as $link) {
-            $haystack = mb_strtolower($link['label'].' '.basename(parse_url($link['url'], PHP_URL_PATH) ?: ''));
+            $path = mb_strtolower(basename(parse_url($link['url'], PHP_URL_PATH) ?: ''));
+            $label = mb_strtolower((string) ($link['label'] ?? ''));
+            $haystack = str_replace(['_', '-', '.'], ' ', $path).' '.$label;
             $score = 0;
             foreach ($normalizedTerms as $term) {
-                if (mb_strpos($haystack, $term) !== false) $score += mb_strlen($term) >= 5 ? 5 : 2;
+                if (mb_strlen($term) < 4 || !preg_match('/(?<![\pL\pN])'.preg_quote($term, '/').'(?![\pL\pN])/u', $haystack)) continue;
+                $score += mb_strlen($term) >= 7 ? 14 : 6;
+                if (str_contains($path, $term)) $score += 7;
             }
+            if ($score === 0) continue;
+            if (preg_match('/(?:challenge|exercise|quiz|exam|test)/i', $path.' '.$label)) $score -= 35;
+            if (preg_match('/(?:sql_ref_|reference|keywords)/i', $path.' '.$label)) $score -= 18;
+            if (preg_match('/^sql_(?!ref_|challenges_)/i', $path)) $score += 8;
             if ($score > 0) $scored[] = ['score' => $score, 'link' => $link];
         }
-        usort($scored, fn ($a, $b) => $b['score'] <=> $a['score']);
+        usort($scored, fn ($a, $b) => ($b['score'] <=> $a['score'])
+            ?: strcmp($a['link']['url'], $b['link']['url']));
         $lessons = [];
         // Keep total outbound fetches bounded even when some pages fail.
         foreach (array_slice($scored, 0, $limit) as $row) {
             $link = $row['link'];
             try {
                 $data = Cache::remember(
-                    'tutor:approved-lesson:v1:'.hash('sha256', $link['url']),
+                    'tutor:approved-lesson:v2:'.hash('sha256', $link['url']),
                     now()->addDays(7),
                     fn () => $this->inspect($link['url'])
                 );
@@ -237,6 +250,90 @@ class SupportingSourceContentService
         if (!str_starts_with($path, $scope)) return null;
         if (!preg_match('~\.(?:html?|php|asp|aspx)$~i', $path)) return null;
         return 'https://'.$host.$path;
+    }
+
+    /**
+     * Extract the instructional article, not the global navigation.
+     * The DOM approach is generic (main/article/role=main, then common
+     * content containers); the regex fallback is for PHP without ext-dom.
+     * Code samples and headings are preserved with line boundaries.
+     */
+    protected function extractTeachingText(string $html): string
+    {
+        if (class_exists(\DOMDocument::class) && class_exists(\DOMXPath::class)) {
+            $document = new \DOMDocument();
+            $previous = libxml_use_internal_errors(true);
+            try {
+                $document->loadHTML('<?xml encoding="UTF-8">'.$html, LIBXML_NONET | LIBXML_NOERROR | LIBXML_NOWARNING);
+                $xpath = new \DOMXPath($document);
+                foreach ($xpath->query('//script|//style|//noscript|//svg|//canvas|//iframe|//nav|//footer|//aside|//form|//header|//*[@role="navigation"]|//*[contains(concat(" ", normalize-space(@class), " "), " sidebar ")]|//*[contains(concat(" ", normalize-space(@class), " "), " advertisement ")]') as $node) {
+                    $node->parentNode?->removeChild($node);
+                }
+                $candidates = $xpath->query('//main|//article|//*[@role="main"]|//*[@id="main"]|//*[@id="content"]|//*[contains(concat(" ",normalize-space(@class)," ")," main-content ")]|//*[contains(concat(" ",normalize-space(@class)," ")," article-content ")]');
+                $best = null;
+                $bestScore = -1;
+                foreach ($candidates as $candidate) {
+                    $length = mb_strlen(trim($candidate->textContent));
+                    if ($length < 140) continue;
+                    $examples = $xpath->query('.//pre|.//code', $candidate)->length;
+                    $paragraphs = $xpath->query('.//p', $candidate)->length;
+                    $headings = $xpath->query('.//h1|.//h2|.//h3', $candidate)->length;
+                    $score = min($length, 30000) / 50 + min($examples, 20) * 60 + min($paragraphs, 30) * 12 + min($headings, 15) * 20;
+                    if ($score > $bestScore) { $best = $candidate; $bestScore = $score; }
+                }
+                $node = $best ?: $document->documentElement;
+                $text = $this->nodeTeachingText($node);
+                if (mb_strlen($text) >= 120) return $text;
+            } catch (\Throwable $e) {
+                \Log::debug('Supporting-source DOM extraction fallback.', ['message' => $e->getMessage()]);
+            } finally {
+                libxml_clear_errors();
+                libxml_use_internal_errors($previous);
+            }
+        }
+
+        // Fallback for PHP installations without ext-dom: select a main-like
+        // container when possible; otherwise remove common page chrome.
+        if (preg_match('~<main\b[^>]*>(.*?)</main>~is', $html, $m)
+            || preg_match('~<article\b[^>]*>(.*?)</article>~is', $html, $m)) {
+            $html = $m[1];
+        } else {
+            // Do not parse nested divs using a single non-greedy regex.
+            // Strip known navigation blocks, then retain the remaining body.
+            $html = preg_replace('~<(nav|header|footer|aside)\b[^>]*>.*?</\1>~is', ' ', $html);
+        }
+        $html = preg_replace('~<(script|style|noscript|svg|canvas|iframe|form)\b[^>]*>.*?</\1>~is', ' ', $html);
+        $html = preg_replace('~</(?:h[1-6]|p|pre|li|tr|div|section|article)>~i', "\n", $html);
+        return $this->cleanTeachingText(strip_tags((string) $html));
+    }
+
+    protected function nodeTeachingText(\DOMNode $node): string
+    {
+        // textContent loses boundaries between code, headings and prose.
+        $result = '';
+        $walk = function (\DOMNode $current) use (&$walk, &$result): void {
+            if ($current instanceof \DOMText) {
+                $result .= $current->nodeValue;
+                return;
+            }
+            $tag = strtolower($current->nodeName);
+            if (in_array($tag, ['br', 'hr'], true)) { $result .= "\n"; return; }
+            $block = in_array($tag, ['h1','h2','h3','h4','h5','h6','p','pre','code','li','tr','section','article','div'], true);
+            if ($block) $result .= "\n";
+            foreach ($current->childNodes as $child) $walk($child);
+            if ($block) $result .= "\n";
+        };
+        $walk($node);
+        return $this->cleanTeachingText($result);
+    }
+
+    protected function cleanTeachingText(string $text): string
+    {
+        $text = html_entity_decode($text, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        $text = preg_replace('/[ \t]+/u', ' ', $text);
+        $text = preg_replace('/ *\n */u', "\n", $text);
+        $text = preg_replace('/\n{3,}/u', "\n\n", $text);
+        return trim((string) $text);
     }
 
     public function refresh(CourseMaterialSupportingSource $source): CourseMaterialSupportingSource

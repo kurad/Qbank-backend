@@ -84,19 +84,19 @@ class TutorSupportingSourceService
 
         $ranked = $sources
             ->map(function ($source) use ($terms, $focusTerms) {
-                $source->tutor_support_excerpt =
-                    $this->relevantExcerpt(
-                        (string) $source->cached_content,
-                        $terms,
-                        $focusTerms
-                    );
-
+                // Put focused teaching lessons BEFORE landing-page context.
+                // Previously a long navigation-heavy root excerpt could
+                // consume the context budget and exclude the SQL examples.
+                $parts = [];
                 foreach (($source->tutor_lesson_evidence ?? []) as $lesson) {
-                    $source->tutor_support_excerpt .= "\n\nLESSON: ".$lesson['title']
-                        ."\nURL: ".$lesson['url']."\n"
-                        .$this->relevantExcerpt($lesson['content'], $terms, $focusTerms);
+                    $excerpt = $this->relevantExcerpt((string) $lesson['content'], $terms, $focusTerms);
+                    if ($excerpt !== '') {
+                        $parts[] = "LESSON: ".$lesson['title']."\nURL: ".$lesson['url']."\n".mb_substr($excerpt, 0, 6500);
+                    }
                 }
-                $source->tutor_support_excerpt = mb_substr($source->tutor_support_excerpt, 0, 18000);
+                $rootExcerpt = $this->relevantExcerpt((string) $source->cached_content, $terms, $focusTerms);
+                $parts[] = "APPROVED ROOT SOURCE\n".mb_substr($rootExcerpt, 0, $parts ? 1500 : 7000);
+                $source->tutor_support_excerpt = mb_substr(implode("\n\n---\n\n", $parts), 0, 18000);
 
                 $source->tutor_support_score =
                     $this->scoreText(
@@ -304,13 +304,8 @@ PROMPT,
             ->map(function ($source) use ($sessionObjective) {
                 $terms = $this->objectiveTerms($sessionObjective);
 
-                $source->tutor_support_excerpt =
-                    $this->relevantExcerpt(
-                        (string) $source->cached_content,
-                        $terms
-                    );
-                // Reuse lesson cache on subsequent teaching turns so the AI
-                // sees the verified lesson, not merely the landing-page menu.
+                // Reuse the verified lesson first in subsequent tutor turns.
+                $parts = [];
                 try {
                     $verified = Cache::get($this->objectiveLessonCacheKey(
                         $source->id, $sessionObjective->learning_objective_id
@@ -319,14 +314,18 @@ PROMPT,
                         ? $verified
                         : $this->content->relatedLessons($source, $terms->all(), 3);
                     foreach ($lessons as $lesson) {
-                        $source->tutor_support_excerpt .= "\n\nLESSON: ".$lesson['title']
-                            ."\nURL: ".$lesson['url']."\n"
-                            .$this->relevantExcerpt($lesson['content'], $terms);
+                        $excerpt = $this->relevantExcerpt((string) $lesson['content'], $terms);
+                        if ($excerpt !== '') {
+                            $parts[] = "LESSON: ".$lesson['title']."\nURL: ".$lesson['url']."\n".mb_substr($excerpt, 0, 6500);
+                        }
                     }
                 } catch (\Throwable $e) {
                     \Log::warning('Supporting lesson reuse failed.', ['source_id' => $source->id, 'message' => $e->getMessage()]);
                 }
-                $source->tutor_support_excerpt = mb_substr($source->tutor_support_excerpt, 0, 18000);
+                $parts[] = "APPROVED ROOT SOURCE\n".mb_substr(
+                    $this->relevantExcerpt((string) $source->cached_content, $terms), 0, $parts ? 1500 : 7000
+                );
+                $source->tutor_support_excerpt = mb_substr(implode("\n\n---\n\n", $parts), 0, 18000);
                 return $source;
             })
             ->filter(fn ($source) =>
