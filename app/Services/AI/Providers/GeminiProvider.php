@@ -72,7 +72,7 @@ class GeminiProvider
                 $generationConfig['responseMimeType'] = $options['response_mime_type'];
             }
             if (isset($options['response_schema']) && is_array($options['response_schema'])) {
-                $generationConfig['responseSchema'] = $options['response_schema'];
+                $generationConfig['responseSchema'] = $this->normalizeResponseSchema($options['response_schema']);
             }
             if (!empty($generationConfig)) {
                 $payload['generationConfig'] = $generationConfig;
@@ -299,6 +299,34 @@ class GeminiProvider
             }
             throw $e;
         }
+    }
+
+    /** Gemini's responseSchema accepts a subset of JSON Schema. */
+    protected function normalizeResponseSchema(array $schema): array
+    {
+        $allowed = [
+            'type', 'format', 'description', 'nullable', 'enum', 'items',
+            'properties', 'required', 'minItems', 'maxItems',
+            'minimum', 'maximum', 'minLength', 'maxLength', 'propertyOrdering',
+        ];
+        $walk = function (array $node) use (&$walk, $allowed): array {
+            $result = [];
+            foreach ($node as $key => $value) {
+                if (!in_array($key, $allowed, true)) continue;
+                if ($key === 'properties' && is_array($value)) {
+                    $result[$key] = [];
+                    foreach ($value as $name => $property) {
+                        if (is_array($property)) $result[$key][$name] = $walk($property);
+                    }
+                } elseif ($key === 'items' && is_array($value)) {
+                    $result[$key] = $walk($value);
+                } else {
+                    $result[$key] = $value;
+                }
+            }
+            return $result;
+        };
+        return $walk($schema);
     }
 
     public function json(array $messages, array $schema, array $options = []): array

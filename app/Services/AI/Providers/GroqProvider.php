@@ -150,28 +150,16 @@ class GroqProvider
 
     protected function sanitizeOptions(array $options): array
     {
-        unset(
-            $options['model'],
-            $options['thinking_level'],
-            $options['thinking_budget'],
-            $options['response_mime_type'],
-            $options['response_schema'],
-            $options['_usage_operation'],
-            $options['_usage_feature'],
-            $options['_usage_user_id'],
-            $options['_usage_school_id'],
-            $options['_usage_role'],
-            $options['_usage_tutor_session_id'],
-            $options['_usage_group_id'],
-            $options['_usage_learning_period_id'],
-            $options['_usage_subject_id'],
-            $options['_usage_unit_id'],
-            $options['_usage_topic_id'],
-            $options['_usage_learning_objective_id'],
-            $options['_usage_is_fallback'],
-            $options['_usage_primary_provider']
-        );
-        return $options;
+        // Never send RevisionHub's internal metadata (including _usage_context)
+        // to Groq's OpenAI-compatible chat/completions endpoint.
+        // Explicit allowlisting also avoids accidentally leaking future internal flags.
+        $allowed = [
+            'temperature', 'max_tokens', 'top_p', 'stop',
+            'frequency_penalty', 'presence_penalty', 'seed',
+            'response_format', 'stream', 'n', 'user',
+        ];
+
+        return array_intersect_key($options, array_flip($allowed));
     }
 
     protected function sanitizeUsageContextValue(mixed $value): mixed

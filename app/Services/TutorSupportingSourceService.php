@@ -210,16 +210,15 @@ PROMPT,
                 ],
             ], [
                 'temperature' => 0,
-                'max_tokens' => 450,
+                'max_tokens' => 2400,
+                'thinking_level' => 'low',
                 '_usage_feature' => 'Tutor Supporting Source Check',
-                '_usage_context' => [
-                    'student_id' => $session->student_id,
-                    'subject_id' => $session->subject_id,
-                    'unit_id' => $session->unit_id,
-                    'topic_id' => $session->topic_id,
-                    'learning_period_id' => $session->learning_period_id,
-                    'tutor_session_id' => $session->id,
-                ],
+                '_usage_user_id' => $session->student_id,
+                '_usage_subject_id' => $session->subject_id,
+                '_usage_unit_id' => $session->unit_id,
+                '_usage_topic_id' => $session->topic_id,
+                '_usage_learning_period_id' => $session->learning_period_id,
+                '_usage_tutor_session_id' => $session->id,
             ]);
         } catch (\Throwable $e) {
             \Log::warning('Tutor supporting-source evaluation failed.', [
