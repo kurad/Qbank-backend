@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\CourseMaterialSupportingSource;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Validation\ValidationException;
 
 class SupportingSourceContentService
@@ -112,6 +113,123 @@ class SupportingSourceContentService
             'content_type' => $contentType ?: null,
             'validated_at' => now(),
         ];
+    }
+
+
+    /**
+     * Discover a small number of lesson pages within an explicitly approved
+     * source's host and path. Never crawl an entire domain or follow redirects.
+     * Successful extraction is cached per page; no new DB records are created.
+     */
+    public function relatedLessons(
+        CourseMaterialSupportingSource $source,
+        array $terms,
+        int $limit = 3
+    ): array {
+        $limit = min(3, max(0, $limit));
+        if ($limit === 0 || $source->status !== 'ready') return [];
+
+        $root = parse_url((string) $source->url);
+        if (!is_array($root) || strtolower($root['scheme'] ?? '') !== 'https'
+            || empty($root['host']) || !empty($root['user']) || !empty($root['pass'])
+            || isset($root['port'])) return [];
+
+        $host = strtolower($root['host']);
+        $this->assertPublicHost($host);
+        $rootPath = $root['path'] ?? '/';
+        // A teacher-approved /sql/ reference authorizes that subsection, not
+        // unrelated pages on the same site.
+        $scope = str_ends_with($rootPath, '/') ? $rootPath
+            : (str_contains(basename($rootPath), '.') ? dirname($rootPath).'/' : rtrim($rootPath, '/').'/');
+        if ($scope === '//') $scope = '/';
+
+        $normalizedTerms = array_values(array_unique(array_filter(array_map(
+            fn ($v) => mb_strtolower(trim((string) $v)), $terms
+        ), fn ($v) => mb_strlen($v) >= 3)));
+        if (!$normalizedTerms) return [];
+
+        $linkCacheKey = 'tutor:approved-links:v1:'.hash('sha256', $source->url);
+        $links = Cache::remember($linkCacheKey, now()->addHours(12), function () use ($source, $host, $scope) {
+            $response = Http::withHeaders([
+                'User-Agent' => 'RevisionHub-SupportingSource/1.0',
+                'Accept' => 'text/html',
+            ])->connectTimeout(3)->timeout(8)->withOptions(['allow_redirects' => false])->get($source->url);
+            if (!$response->successful() || !str_contains(strtolower((string) $response->header('Content-Type')), 'text/html')) return [];
+            $html = substr((string) $response->body(), 0, 400000);
+            preg_match_all('~<a\b[^>]*href\s*=\s*["\']([^"\']+)["\'][^>]*>(.*?)</a>~is', $html, $matches, PREG_SET_ORDER);
+            $output = [];
+            foreach (array_slice($matches, 0, 600) as $match) {
+                $href = html_entity_decode(trim($match[1]), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+                $label = trim(preg_replace('/\s+/u', ' ', strip_tags($match[2])));
+                if (!$href || str_starts_with($href, '#') || preg_match('~^(?:javascript:|mailto:|data:)~i', $href)) continue;
+                $target = $this->approvedLink($href, $source->url, $host, $scope);
+                if (!$target || $target === $source->url) continue;
+                $output[$target] = ['url' => $target, 'label' => $label];
+                if (count($output) >= 300) break;
+            }
+            return array_values($output);
+        });
+
+        $scored = [];
+        foreach ($links as $link) {
+            $haystack = mb_strtolower($link['label'].' '.basename(parse_url($link['url'], PHP_URL_PATH) ?: ''));
+            $score = 0;
+            foreach ($normalizedTerms as $term) {
+                if (mb_strpos($haystack, $term) !== false) $score += mb_strlen($term) >= 5 ? 5 : 2;
+            }
+            if ($score > 0) $scored[] = ['score' => $score, 'link' => $link];
+        }
+        usort($scored, fn ($a, $b) => $b['score'] <=> $a['score']);
+        $lessons = [];
+        // Keep total outbound fetches bounded even when some pages fail.
+        foreach (array_slice($scored, 0, $limit) as $row) {
+            $link = $row['link'];
+            try {
+                $data = Cache::remember(
+                    'tutor:approved-lesson:v1:'.hash('sha256', $link['url']),
+                    now()->addDays(7),
+                    fn () => $this->inspect($link['url'])
+                );
+                $lessons[] = [
+                    'url' => $link['url'],
+                    'title' => $data['cached_title'] ?: $link['label'],
+                    'content' => mb_substr((string) $data['cached_content'], 0, 40000),
+                ];
+            } catch (\Throwable $e) {
+                \Log::warning('Approved supporting lesson could not be fetched.', [
+                    'source_id' => $source->id, 'url' => $link['url'],
+                    'message' => $e->getMessage(),
+                ]);
+            }
+        }
+        return $lessons;
+    }
+
+    /** Normalize a link without escaping the teacher-approved directory. */
+    protected function approvedLink(string $href, string $base, string $host, string $scope): ?string
+    {
+        if (str_contains($href, '\\') || str_starts_with($href, '//')) return null;
+        $baseParts = parse_url($base);
+        $parts = parse_url($href);
+        if ($parts === false || isset($parts['user']) || isset($parts['pass']) || isset($parts['port'])) return null;
+        if (!empty($parts['scheme']) && strtolower($parts['scheme']) !== 'https') return null;
+        if (isset($parts['host']) && strtolower($parts['host']) !== $host) return null;
+        $path = $parts['path'] ?? '';
+        if ($path === '') return null;
+        if (!str_starts_with($path, '/')) {
+            $parent = dirname($baseParts['path'] ?? '/');
+            $path = rtrim($parent, '/').'/'.$path;
+        }
+        $segments = [];
+        foreach (explode('/', $path) as $segment) {
+            $segment = rawurldecode($segment);
+            if ($segment === '..') array_pop($segments);
+            elseif ($segment !== '' && $segment !== '.') $segments[] = $segment;
+        }
+        $path = '/'.implode('/', $segments);
+        if (!str_starts_with($path, $scope)) return null;
+        if (!preg_match('~\.(?:html?|php|asp|aspx)$~i', $path)) return null;
+        return 'https://'.$host.$path;
     }
 
     public function refresh(CourseMaterialSupportingSource $source): CourseMaterialSupportingSource

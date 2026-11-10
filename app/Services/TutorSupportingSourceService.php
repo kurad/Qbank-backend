@@ -8,17 +8,20 @@ use App\Models\TutorSession;
 use App\Models\TutorSessionObjective;
 use App\Services\AI\AIGateway;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Cache;
 
 class TutorSupportingSourceService
 {
     public function __construct(
-        protected AIGateway $ai
+        protected AIGateway $ai,
+        protected SupportingSourceContentService $content
     ) {}
 
     public function resolve(
         TutorSession $session,
         TutorSessionObjective $sessionObjective,
-        array $primarySupport = []
+        array $primarySupport = [],
+        bool $tryLessonPages = false
     ): array {
         $session->loadMissing([
             'topic',
@@ -55,6 +58,30 @@ class TutorSupportingSourceService
         // not just generic words in the complete learning objective.
         $focusTerms = $this->missingFocusTerms($primarySupport);
 
+        // A first pass uses only existing cached material. After a documented
+        // unsupported decision, a second pass may include up to three lesson
+        // pages per approved site, discovered within its approved subsection.
+        $lessonEvidenceCount = 0;
+        if ($tryLessonPages) {
+            foreach ($sources as $source) {
+                $lessons = $this->content->relatedLessons(
+                    $source,
+                    $focusTerms->concat($terms)->unique()->take(20)->all(),
+                    3
+                );
+                $source->tutor_lesson_evidence = $lessons;
+                $lessonEvidenceCount += count($lessons);
+            }
+            if ($lessonEvidenceCount === 0) {
+                return [
+                    'status' => 'unsupported',
+                    'reason' => 'The approved website provided no accessible relevant instructional lesson pages.',
+                    'source_ids' => [],
+                    'sources' => collect(),
+                ];
+            }
+        }
+
         $ranked = $sources
             ->map(function ($source) use ($terms, $focusTerms) {
                 $source->tutor_support_excerpt =
@@ -63,6 +90,13 @@ class TutorSupportingSourceService
                         $terms,
                         $focusTerms
                     );
+
+                foreach (($source->tutor_lesson_evidence ?? []) as $lesson) {
+                    $source->tutor_support_excerpt .= "\n\nLESSON: ".$lesson['title']
+                        ."\nURL: ".$lesson['url']."\n"
+                        .$this->relevantExcerpt($lesson['content'], $terms, $focusTerms);
+                }
+                $source->tutor_support_excerpt = mb_substr($source->tutor_support_excerpt, 0, 18000);
 
                 $source->tutor_support_score =
                     $this->scoreText(
@@ -194,12 +228,9 @@ PROMPT,
                 'message' => $e->getMessage(),
             ]);
 
-            return [
-                'status' => 'unsupported',
-                'reason' => 'Supporting sources could not be verified at this time.',
-                'source_ids' => [],
-                'sources' => collect(),
-            ];
+            // Never classify an unavailable AI evaluation as a permanent
+            // teaching-material gap. Caller may retry without changing status.
+            throw new \RuntimeException('Supporting-source verification is temporarily unavailable.', 0, $e);
         }
 
         \Log::info('Tutor supporting-source coverage decision.', [
@@ -213,6 +244,9 @@ PROMPT,
         ]);
 
         if (($result['status'] ?? null) !== 'supported') {
+            if (!$tryLessonPages) {
+                return $this->resolve($session, $sessionObjective, $primarySupport, true);
+            }
             return [
                 'status' => 'unsupported',
                 'reason' => trim((string) ($result['reason'] ?? 'The supporting sources were not sufficient.')),
@@ -230,6 +264,18 @@ PROMPT,
         $selected = $numbers->isNotEmpty()
             ? $numbers->map(fn ($number) => $ranked->get($number - 1))->filter()->values()
             : $ranked->take(2)->values();
+
+        if ($tryLessonPages) {
+            foreach ($selected as $source) {
+                if (!empty($source->tutor_lesson_evidence)) {
+                    Cache::put(
+                        $this->objectiveLessonCacheKey($source->id, $objective->id),
+                        $source->tutor_lesson_evidence,
+                        now()->addDays(7)
+                    );
+                }
+            }
+        }
 
         return [
             'status' => 'supported',
@@ -264,13 +310,35 @@ PROMPT,
                         (string) $source->cached_content,
                         $terms
                     );
-
+                // Reuse lesson cache on subsequent teaching turns so the AI
+                // sees the verified lesson, not merely the landing-page menu.
+                try {
+                    $verified = Cache::get($this->objectiveLessonCacheKey(
+                        $source->id, $sessionObjective->learning_objective_id
+                    ));
+                    $lessons = is_array($verified) && $verified
+                        ? $verified
+                        : $this->content->relatedLessons($source, $terms->all(), 3);
+                    foreach ($lessons as $lesson) {
+                        $source->tutor_support_excerpt .= "\n\nLESSON: ".$lesson['title']
+                            ."\nURL: ".$lesson['url']."\n"
+                            .$this->relevantExcerpt($lesson['content'], $terms);
+                    }
+                } catch (\Throwable $e) {
+                    \Log::warning('Supporting lesson reuse failed.', ['source_id' => $source->id, 'message' => $e->getMessage()]);
+                }
+                $source->tutor_support_excerpt = mb_substr($source->tutor_support_excerpt, 0, 18000);
                 return $source;
             })
             ->filter(fn ($source) =>
                 trim((string) $source->tutor_support_excerpt) !== ''
             )
             ->values();
+    }
+
+    protected function objectiveLessonCacheKey(int $sourceId, int $objectiveId): string
+    {
+        return 'tutor:verified-lessons:v1:'.$sourceId.':'.$objectiveId;
     }
 
     protected function candidateSources(TutorSession $session): Collection
