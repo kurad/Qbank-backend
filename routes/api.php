@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\AdminDashboardController;
 use App\Http\Controllers\AIUsageController;
+use App\Http\Controllers\AIGatewaySettingsController;
 use App\Http\Controllers\AssessmentBuilderController;
 use App\Http\Controllers\AssessmentController;
 use App\Http\Controllers\AssessmentSectionController;
@@ -9,7 +10,6 @@ use App\Http\Controllers\AuthController;
 use App\Http\Controllers\TeacherAccessController;
 use App\Http\Controllers\ClassInvitationController;
 use App\Http\Controllers\CourseMaterialController;
-use App\Http\Controllers\CourseMaterialDiagnosticsController;
 use App\Http\Controllers\CourseMaterialSupportingSourceController;
 use App\Http\Controllers\CurriculumAnalysisController;
 use App\Http\Controllers\GradeLevelController;
@@ -134,6 +134,9 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     Route::get('/session-info', [AuthController::class, 'sessionInfo']);
     Route::get('/admin/dashboard-summary', [AdminDashboardController::class, 'summary']);
     Route::get('/admin/ai-usage', [AIUsageController::class, 'index']);
+    Route::get('/admin/ai-gateway', [AIGatewaySettingsController::class, 'show']);
+    Route::put('/admin/ai-gateway', [AIGatewaySettingsController::class, 'save'])->middleware('throttle:20,1');
+    Route::delete('/admin/ai-gateway', [AIGatewaySettingsController::class, 'reset'])->middleware('throttle:20,1');
 
     // Teacher access management / invitation acceptance
     Route::post('/teacher-invitations/{token}/accept', [TeacherAccessController::class, 'acceptExisting']);
@@ -236,10 +239,6 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     Route::get('/course-materials', [CourseMaterialController::class, 'index']);
     Route::get('/course-materials/{courseMaterial}/view', [CourseMaterialController::class, 'viewOriginal']);
     Route::get('/course-materials/{courseMaterial}/download', [CourseMaterialController::class, 'downloadOriginal']);
-    Route::get('/course-materials/{courseMaterial}/inspection', [CourseMaterialDiagnosticsController::class, 'inspect']);
-    Route::post('/course-materials/{courseMaterial}/test-retrieval', [CourseMaterialDiagnosticsController::class, 'testRetrieval']);
-    Route::get('/course-materials/{courseMaterial}/objective-support/{learningObjective}', [CourseMaterialDiagnosticsController::class, 'objectiveSupport']);
-    Route::get('/course-materials/{courseMaterial}/visuals/{visual}/content', [CourseMaterialDiagnosticsController::class, 'visualContent']);
     Route::post('/course-materials', [CourseMaterialController::class, 'store']);
     Route::post('/course-materials/{courseMaterial}/approve', [CourseMaterialController::class, 'approve']);
     Route::post('/course-materials/{courseMaterial}/supporting-sources', [CourseMaterialSupportingSourceController::class, 'store']);

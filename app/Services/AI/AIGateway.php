@@ -14,7 +14,8 @@ class AIGateway
     public function __construct(
         protected OpenAIProvider $openai,
         protected GeminiProvider $gemini,
-        protected GroqProvider $groq
+        protected GroqProvider $groq,
+        protected AIGatewayRouting $routing
     ) {
     }
 
@@ -47,17 +48,11 @@ class AIGateway
             return $this->text($messages, $options);
         }
 
-        $configured = $this->providerOrder();
+        $configured = $this->providerOrder($options);
         $candidates = array_values(array_filter(
             $configured,
             fn (string $provider) => in_array($provider, ['openai', 'gemini'], true)
         ));
-
-        // Ensure Gemini is available as a capability fallback even when it was
-        // accidentally omitted from AI_FALLBACK_PROVIDERS.
-        if (!in_array('gemini', $candidates, true)) {
-            $candidates[] = 'gemini';
-        }
 
         $errors = [];
         $attemptedProvider = null;
@@ -93,6 +88,7 @@ class AIGateway
                         ? $options
                         : $this->fallbackUsageOptions($options, $attemptedProvider);
 
+                    $attemptedProvider ??= 'gemini';
                     return $this->gemini->multimodalText(
                         $messages,
                         $attachments,
@@ -120,7 +116,7 @@ class AIGateway
 
     public function json(array $messages, array $schema = [], array $options = []): array
     {
-        $providers = $this->providerOrder();
+        $providers = $this->providerOrder($options);
         $primary = $providers[0] ?? null;
         $errors = [];
 
@@ -153,7 +149,7 @@ class AIGateway
 
     protected function execute(string $method, array $messages, array $options = []): mixed
     {
-        $providers = $this->providerOrder();
+        $providers = $this->providerOrder($options);
         $primary = $providers[0] ?? null;
         $errors = [];
 
@@ -182,21 +178,9 @@ class AIGateway
         throw new RuntimeException('All configured AI providers and fallbacks failed.');
     }
 
-    protected function providerOrder(): array
+    protected function providerOrder(array $options = []): array
     {
-        $primary = strtolower(trim((string) config('services.ai.provider', 'openai')));
-        $fallbacks = config('services.ai.fallback_providers', ['gemini', 'groq']);
-
-        if (is_string($fallbacks)) {
-            $fallbacks = explode(',', $fallbacks);
-        }
-
-        $providers = array_merge([$primary], is_array($fallbacks) ? $fallbacks : []);
-
-        return array_values(array_unique(array_filter(array_map(
-            fn ($provider) => strtolower(trim((string) $provider)),
-            $providers
-        ), fn ($provider) => in_array($provider, ['openai', 'gemini', 'groq'], true))));
+        return $this->routing->order($options['_usage_feature'] ?? null);
     }
 
     protected function resolveProvider(string $providerKey): object

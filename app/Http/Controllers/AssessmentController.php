@@ -385,6 +385,14 @@ class AssessmentController extends Controller
             $normalizedQuestions[] = $item;
         }
 
+        // Management controls need authoritative counts, not the frontend list's cached values.
+        if ((int) $assessment->creator_id === (int) Auth::id()) {
+            $assessment->assigned_students_count = $assessment->studentAssessments()->count();
+            $assessment->started_attempts_count = $assessment->studentAssessments()
+                ->whereIn('status', ['in_progress', 'completed', 'graded', 'under_review'])
+                ->count();
+        }
+
         // Replace the questions relation in the returned assessment with normalized structure
         $assessment->questions = collect($normalizedQuestions);
 
@@ -591,6 +599,21 @@ class AssessmentController extends Controller
         ]);
     }
 
+    /**
+     * Protect delivered assessment papers and learners' existing answers.
+     * Only the creator can edit, and only before an attempt has started.
+     */
+    private function ensureQuestionEditingAllowed(Assessment $assessment): void
+    {
+        abort_unless((int) $assessment->creator_id === (int) Auth::id(), 403,
+            'Only the assessment creator can edit questions.');
+        abort_if($assessment->is_system_generated || $assessment->status === 'archived', 422,
+            'System-generated or archived assessments cannot be edited.');
+        abort_if($assessment->studentAssessments()->whereIn('status',
+            ['in_progress', 'completed', 'graded', 'under_review'])->exists(), 422,
+            'Students have already started this assessment. Questions cannot be changed.');
+    }
+
     // Add questions to an assessment
     public function addQuestions(Request $request)
     {
@@ -601,6 +624,7 @@ class AssessmentController extends Controller
         ]);
 
         $assessment = Assessment::findOrFail($validated['assessment_id']);
+        $this->ensureQuestionEditingAllowed($assessment);
         $now = now();
         $userId = auth()->id();
 
@@ -668,6 +692,8 @@ class AssessmentController extends Controller
 
     public function removeQuestion($assessmentId, $questionId)
     {
+        $assessment = Assessment::findOrFail($assessmentId);
+        $this->ensureQuestionEditingAllowed($assessment);
         AssessmentQuestion::where('assessment_id', $assessmentId)
             ->where('question_id', $questionId)
             ->delete();
@@ -723,6 +749,13 @@ class AssessmentController extends Controller
         ]);
 
         $assessment = Assessment::findOrFail($assessmentId);
+        abort_unless((int) $assessment->creator_id === (int) Auth::id(), 403,
+            'Only the assessment creator can assign this assessment.');
+        abort_unless($assessment->status === 'published', 422,
+            'Only published assessments can be assigned.');
+        $group = \App\Models\Group::findOrFail($validated['group_id']);
+        abort_unless((int) $group->created_by === (int) Auth::id(), 403,
+            'You can only assign an assessment to a class you manage.');
 
         // Attach group to the assessment
         // Using syncWithoutDetaching in case you want to keep other groups attached
@@ -996,6 +1029,7 @@ class AssessmentController extends Controller
             'questions.*.position' => 'required|integer|min:1',
         ]);
         $assessment = Assessment::findOrFail($id);
+        $this->ensureQuestionEditingAllowed($assessment);
         $user = Auth::user();
 
         // Verify the user is the creator of the assessment
@@ -1241,7 +1275,7 @@ class AssessmentController extends Controller
 
         return response()->json([
             'message' => 'Assessment archived successfully.',
-            'assessment' => $assessment,
+            'assessment' => $assessment->fresh(),
         ]);
     }
 
@@ -1277,7 +1311,7 @@ class AssessmentController extends Controller
 
         return response()->json([
             'message' => 'Assessment restored successfully.',
-            'assessment' => $assessment,
+            'assessment' => $assessment->fresh(),
         ]);
     }
 

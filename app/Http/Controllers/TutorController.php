@@ -1234,11 +1234,84 @@ class TutorController extends Controller
                 $tutorSession
             );
 
-        abort_unless(
-            $currentObjective,
-            422,
-            'There is no supported learning goal available to introduce.'
-        );
+        if (!$currentObjective) {
+            /*
+             * An objective can be resolved while the next one turns out to be
+             * unsupported by the approved material. prepareCurrentObjectiveForLearning()
+             * records such gaps and may legitimately exhaust the remaining goals.
+             * Complete the session instead of leaving the learner on a dead-end 422.
+             */
+            $remaining = $tutorSession->objectives()
+                ->whereNotIn('status', [
+                    'completed', 'mastered', 'needs_review', 'material_gap',
+                ])->exists();
+
+            abort_if(
+                $remaining || !$tutorSession->objectives()->exists(),
+                422,
+                'The next learning goal could not be prepared. Please ask your teacher to review the learning material.'
+            );
+
+            $hasEvidence = $tutorSession->objectives()
+                    ->where('attempts', '>', 0)->exists()
+                || $tutorSession->messages()->where('role', 'user')->exists();
+
+            abort_unless(
+                $hasEvidence,
+                422,
+                'This learning session has no student activity to complete.'
+            );
+
+            $hasReview = $tutorSession->objectives()
+                ->whereIn('status', ['needs_review', 'material_gap'])
+                ->exists();
+
+            $tutorSession->update([
+                'status' => 'completed',
+                'ended_at' => $tutorSession->ended_at ?? now(),
+                'last_activity_at' => now(),
+            ]);
+
+            $session = $this->sessionsService->synchronizeCompletedTopicState(
+                $request->user(),
+                $tutorSession->fresh()
+            );
+
+            $answer = $hasReview
+                ? 'You have finished the available learning material. Some learning goals need your teacher’s review before this topic can be marked mastered.'
+                : 'You have finished all the learning goals for this topic. Well done!';
+
+            // Preserve the final guidance in the student's chat history too.
+            $completionMessage = $tutorSession->messages()->create([
+                'role' => 'assistant',
+                'message_type' => 'topic_completion',
+                'content' => $answer,
+                'metadata' => [
+                    'needs_review' => $hasReview,
+                ],
+            ]);
+
+            return response()->json([
+                'data' => [
+                    'session_id' => $tutorSession->id,
+                    'answer' => $answer,
+                    'assistant_message' => $this->publicMessage($completionMessage),
+                    'progress' => [
+                        'objective_completed' => false,
+                        'objective_resolved' => true,
+                        'session_completed' => true,
+                        'learning_state' => $hasReview
+                            ? 'completed_with_review'
+                            : 'completed',
+                        'checkpoint_ready' => false,
+                        'current_objective' => null,
+                        'next_objective' => null,
+                    ],
+                    'pending_checkpoint' => null,
+                    'session' => $session,
+                ],
+            ]);
+        }
 
         /*
          * Generate a proper teaching introduction for the newly activated
