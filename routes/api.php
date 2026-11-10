@@ -242,6 +242,9 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     Route::get('/course-materials/{courseMaterial}/download', [CourseMaterialController::class, 'downloadOriginal']);
     Route::post('/course-materials', [CourseMaterialController::class, 'store']);
     Route::post('/course-materials/{courseMaterial}/approve', [CourseMaterialController::class, 'approve']);
+    Route::get('/course-materials/{courseMaterial}/supplement', [\App\Http\Controllers\CourseMaterialSupplementController::class, 'show']);
+    Route::put('/course-materials/{courseMaterial}/supplement', [\App\Http\Controllers\CourseMaterialSupplementController::class, 'save']);
+    Route::post('/course-materials/{courseMaterial}/approve-supplement', [\App\Http\Controllers\CourseMaterialSupplementController::class, 'approve']);
     Route::post('/course-materials/{courseMaterial}/supporting-sources', [CourseMaterialSupportingSourceController::class, 'store']);
     Route::post('/course-material-supporting-sources/{supportingSource}/refresh', [CourseMaterialSupportingSourceController::class, 'refresh']);
     Route::delete('/course-material-supporting-sources/{supportingSource}', [CourseMaterialSupportingSourceController::class, 'destroy']);

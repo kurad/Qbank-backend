@@ -334,6 +334,25 @@ PROMPT,
                 return $source;
             });
 
+        // Negative IDs below -1000000 represent verified, teacher-mapped PDF supplements.
+        $pdfSources = CourseMaterial::query()->where('purpose', 'supplement')
+            ->where('status', 'approved')->where('unit_id', $sessionObjective->session?->unit_id)
+            ->whereHas('supportedObjectives', fn ($q) => $q->whereKey($sessionObjective->learning_objective_id))
+            ->whereHas('knowledgeChunks', fn ($q) => $q->where('status', 'ready'))
+            ->get()->map(function ($material) use ($sessionObjective) {
+                $source = new CourseMaterialSupportingSource();
+                $source->id = -1000000 - (int) $material->id;
+                $source->tutor_objective_id = $sessionObjective->learning_objective_id;
+                $source->title = 'Approved PDF: '.$material->title;
+                $source->cached_title = $source->title;
+                $source->url = '';
+                $source->status = 'ready';
+                $source->cached_content = $material->knowledgeChunks()->where('status', 'ready')
+                    ->orderBy('chunk_index')->limit(30)->pluck('content')->implode("\n\n");
+                $source->tutor_support_excerpt = mb_substr($source->cached_content, 0, 18000);
+                return $source;
+            });
+
         $webSources = CourseMaterialSupportingSource::query()
             ->whereIn('id', $ids->filter(fn ($id) => $id > 0)->all())
             ->where('status', 'ready')
@@ -369,7 +388,7 @@ PROMPT,
                 trim((string) $source->tutor_support_excerpt) !== ''
             )
             ->values();
-        return $webSources->concat($teacherNotes)->values();
+        return $webSources->concat($teacherNotes)->concat($pdfSources)->values();
     }
 
     protected function objectiveLessonCacheKey(int $sourceId, int $objectiveId): string
@@ -419,7 +438,28 @@ PROMPT,
                 $source->cached_content = $note->content;
                 return $source;
             });
-        return $web->concat($notes)->values();
+        $pdfs = CourseMaterial::query()->where('purpose', 'supplement')
+            ->where('status', 'approved')->where('unit_id', $session->unit_id)
+            ->whereHas('supportedObjectives', fn ($q) => $q->whereIn('learning_objectives.id',
+                $session->objectives->pluck('learning_objective_id')->all()))
+            ->whereHas('knowledgeChunks', fn ($q) => $q->where('status', 'ready'))
+            ->get()->flatMap(function ($material) use ($session) {
+                $matched = $material->supportedObjectives()->whereIn('learning_objectives.id',
+                    $session->objectives->pluck('learning_objective_id')->all())->pluck('learning_objectives.id');
+                return $matched->map(function ($objectiveId) use ($material) {
+                    $source = new CourseMaterialSupportingSource();
+                    $source->id = -1000000 - (int) $material->id;
+                    $source->tutor_objective_id = (int) $objectiveId;
+                    $source->title = 'Approved PDF: '.$material->title;
+                    $source->cached_title = $source->title;
+                    $source->url = '';
+                    $source->status = 'ready';
+                    $source->cached_content = $material->knowledgeChunks()->where('status', 'ready')
+                        ->orderBy('chunk_index')->limit(30)->pluck('content')->implode("\n\n");
+                    return $source;
+                });
+            });
+        return $web->concat($notes)->concat($pdfs)->values();
     }
 
     protected function objectiveTerms(

@@ -173,18 +173,24 @@ PROMPT;
                 )),
             ];
         } catch (\Throwable $e) {
-            /* Fail closed on provider outage: never claim material support without verification. */
+            /*
+             * Fail open when the support-classification AI call itself is
+             * unavailable. Existing Tutor curriculum-boundary prompts still
+             * prevent unsupported enrichment, while a temporary provider
+             * outage does not block the learner's session.
+             */
             \Log::warning('Tutor material support check failed; continuing with existing curriculum guardrails.', [
                 'session_id' => $session->id,
                 'learning_objective_id' => $objective->id,
                 'message' => $e->getMessage(),
             ]);
 
-            throw new \RuntimeException(
-                'The material support check is temporarily unavailable. Please retry.',
-                0,
-                $e
-            );
+            return [
+                'status' => 'supported',
+                'reason' => 'Material support check was temporarily unavailable.',
+                'supported_focus' => [],
+                'missing_focus' => [],
+            ];
         }
     }
 
@@ -3382,7 +3388,7 @@ PROMPT;
             ->where('subject_id', $session->subject_id)
             ->whereHas('courseMaterial', function ($q) {
                 $q->where('status', 'approved')
-                    ->where('processing_status', 'completed');
+                    ->whereIn('processing_status', ['ready', 'completed']);
             })
             ->with([
                 'courseMaterial:id,title,subject_id,unit_id,topic_id,scope',

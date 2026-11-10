@@ -723,6 +723,9 @@ class CourseMaterialController extends Controller
     ) {
         $this->ownsMaterial($courseMaterial);
 
+        abort_if($courseMaterial->purpose === 'supplement', 422,
+            'Use the supplementary-material approval workflow to preserve existing curriculum.');
+
         /*
         |--------------------------------------------------------------------------
         | Validate PDF

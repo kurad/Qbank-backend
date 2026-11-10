@@ -26,6 +26,7 @@ class CourseMaterial extends Model
         'extraction_error',
         'status',
         'scope',
+        'purpose',
         'version',
         'approved_by',
         'approved_at',
@@ -91,6 +92,12 @@ class CourseMaterial extends Model
     {
         return $this->hasMany(CourseMaterialSupportingSource::class);
     }
+    public function supportedObjectives()
+    {
+        return $this->belongsToMany(\App\Models\LearningObjective::class, 'course_material_objective_supports')
+            ->withPivot('mapped_by')->withTimestamps();
+    }
+
     public function pages()
     {
         return $this->hasMany(CourseMaterialPage::class)

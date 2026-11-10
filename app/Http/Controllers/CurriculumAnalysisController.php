@@ -351,6 +351,10 @@ class CurriculumAnalysisController extends Controller
 
         $this->authorizeAnalysis($curriculumAnalysis);
 
+        // Supplements never publish AI-generated curriculum structures.
+        abort_if($curriculumAnalysis->courseMaterial?->purpose === 'supplement', 422,
+            'This material supports existing objectives. Use Approve Supplement instead.');
+
         /*
          * Already approved.
          *
