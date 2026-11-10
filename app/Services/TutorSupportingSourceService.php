@@ -51,19 +51,24 @@ class TutorSupportingSourceService
         }
 
         $terms = $this->objectiveTerms($sessionObjective);
+        // Focus retrieval on what the primary coverage check says is missing,
+        // not just generic words in the complete learning objective.
+        $focusTerms = $this->missingFocusTerms($primarySupport);
 
         $ranked = $sources
-            ->map(function ($source) use ($terms) {
+            ->map(function ($source) use ($terms, $focusTerms) {
                 $source->tutor_support_excerpt =
                     $this->relevantExcerpt(
                         (string) $source->cached_content,
-                        $terms
+                        $terms,
+                        $focusTerms
                     );
 
                 $source->tutor_support_score =
                     $this->scoreText(
                         $source->tutor_support_excerpt,
-                        $terms
+                        $terms,
+                        $focusTerms
                     );
 
                 return $source;
@@ -189,13 +194,23 @@ PROMPT,
                 'message' => $e->getMessage(),
             ]);
 
-            // An AI outage must not become a permanent material gap.
-            throw new \RuntimeException(
-                'Supporting source verification is temporarily unavailable. Please retry.',
-                0,
-                $e
-            );
+            return [
+                'status' => 'unsupported',
+                'reason' => 'Supporting sources could not be verified at this time.',
+                'source_ids' => [],
+                'sources' => collect(),
+            ];
         }
+
+        \Log::info('Tutor supporting-source coverage decision.', [
+            'session_id' => $session->id,
+            'objective_id' => $objective->id,
+            'candidate_source_ids' => $sources->pluck('id')->all(),
+            'ranked_source_ids' => $ranked->pluck('id')->all(),
+            'excerpt_lengths' => $ranked->map(fn ($source) => mb_strlen((string) $source->tutor_support_excerpt))->all(),
+            'status' => $result['status'] ?? 'invalid',
+            'reason' => mb_substr((string) ($result['reason'] ?? ''), 0, 700),
+        ]);
 
         if (($result['status'] ?? null) !== 'supported') {
             return [
@@ -317,58 +332,121 @@ PROMPT,
             ->values();
     }
 
+    /**
+     * Add specific missing concepts to the retrieval query. When a primary
+     * support result was persisted earlier it may have no missing_focus array,
+     * so the assessor's reason is also used. These terms only select passages;
+     * they do not determine whether the source actually supports the goal.
+     */
+    protected function missingFocusTerms(array $primarySupport): Collection
+    {
+        $focus = $primarySupport['missing_focus'] ?? [];
+        $text = implode(' ', is_array($focus) ? $focus : [(string) $focus]);
+        $text .= ' ' . (string) ($primarySupport['reason'] ?? '');
+
+        $ignore = [
+            'material','materials','source','sources','content','cover',
+            'covered','coverage','provide','provides','providing','does',
+            'doesnt','enough','sufficient','insufficient','explain',
+            'explains','explanation','example','examples','clear','full',
+            'goal','objective','syntax','using','used','teaching','teach',
+            'assessed','assess','fairly','requires','include','includes',
+            'including','with','from','into','have','has','and','the','that',
+            'this','not','but','how','for','are','which','without','also',
+            'selection','selecting','students','asks','task','tasks',
+        ];
+
+        return collect(preg_split('/[^\pL\pN]+/u', mb_strtolower($text), -1, PREG_SPLIT_NO_EMPTY) ?: [])
+            ->filter(fn ($term) => mb_strlen((string) $term) >= 3 && !in_array($term, $ignore, true))
+            ->unique()->take(24)->values();
+    }
+
+    /**
+     * Rank overlapping context windows by objective terms and missing focus.
+     * Previously only the FIRST occurrence of each term was used, causing
+     * menus and unrelated introductory text to displace relevant lessons.
+     */
     protected function relevantExcerpt(
         string $content,
-        Collection $terms
+        Collection $terms,
+        ?Collection $focusTerms = null
     ): string {
-        $content = trim(preg_replace('/\s+/u', ' ', $content));
-
+        $content = trim((string) preg_replace('/\s+/u', ' ', $content));
         if ($content === '') {
             return '';
         }
 
-        $lower = mb_strtolower($content);
-        $positions = [];
-
-        foreach ($terms as $term) {
-            $offset = mb_strpos($lower, $term);
-
-            if ($offset !== false) {
-                $positions[] = (int) $offset;
-            }
-        }
-
-        if (!$positions) {
+        $length = mb_strlen($content);
+        $focusTerms = $focusTerms ?? collect();
+        $anchors = $focusTerms->concat($terms)->unique()->filter()->values();
+        if ($anchors->isEmpty()) {
             return mb_substr($content, 0, 6000);
         }
 
-        sort($positions);
-
-        $segments = [];
-
-        foreach (array_slice($positions, 0, 6) as $position) {
-            $start = max(0, $position - 700);
-            $segments[] = mb_substr($content, $start, 1800);
+        $lower = mb_strtolower($content);
+        $windows = [];
+        // Scan multiple occurrences, not just the first match. Bound the work
+        // to prevent pathological input from a long externally hosted page.
+        foreach ($anchors as $term) {
+            $offset = 0;
+            $seen = 0;
+            while ($seen < 25 && ($position = mb_strpos($lower, (string) $term, $offset)) !== false) {
+                $start = max(0, (int) $position - 500);
+                $start = (int) (floor($start / 300) * 300);
+                $windows[$start] = true;
+                $offset = $position + max(1, mb_strlen((string) $term));
+                $seen++;
+            }
         }
 
-        $excerpt = implode("\n...\n", array_unique($segments));
+        if (!$windows) {
+            return mb_substr($content, 0, 6000);
+        }
 
-        return mb_substr($excerpt, 0, 9000);
+        $scored = [];
+        foreach (array_keys($windows) as $start) {
+            $section = mb_substr($content, $start, 1600);
+            $scored[] = [
+                'start' => $start,
+                'text' => $section,
+                'score' => $this->scoreText($section, $terms, $focusTerms),
+            ];
+        }
+
+        usort($scored, fn ($a, $b) => ($b['score'] <=> $a['score']) ?: ($a['start'] <=> $b['start']));
+        $selected = [];
+        foreach ($scored as $entry) {
+            // Suppress mostly-overlapping windows to preserve evidence from
+            // more than one part of the approved source.
+            $overlap = false;
+            foreach ($selected as $old) {
+                if (abs($entry['start'] - $old['start']) < 900) {
+                    $overlap = true;
+                    break;
+                }
+            }
+            if ($overlap) continue;
+            $selected[] = $entry;
+            if (count($selected) >= 5) break;
+        }
+
+        usort($selected, fn ($a, $b) => $a['start'] <=> $b['start']);
+        return mb_substr(implode("\n...\n", array_column($selected, 'text')), 0, 9000);
     }
 
     protected function scoreText(
         string $text,
-        Collection $terms
+        Collection $terms,
+        ?Collection $focusTerms = null
     ): int {
         $lower = mb_strtolower($text);
         $score = 0;
-
         foreach ($terms as $term) {
-            if (str_contains($lower, $term)) {
-                $score += 4;
-            }
+            if (mb_strpos($lower, (string) $term) !== false) $score += 2;
         }
-
+        foreach (($focusTerms ?? collect()) as $term) {
+            if (mb_strpos($lower, (string) $term) !== false) $score += 8;
+        }
         return $score;
     }
 }
