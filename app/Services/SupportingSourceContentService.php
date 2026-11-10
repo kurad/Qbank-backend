@@ -148,7 +148,7 @@ class SupportingSourceContentService
         ), fn ($v) => mb_strlen($v) >= 3)));
         if (!$normalizedTerms) return [];
 
-        $linkCacheKey = 'tutor:approved-links:v1:'.hash('sha256', $source->url);
+        $linkCacheKey = 'tutor:approved-links:v2:'.hash('sha256', $source->url);
         $links = Cache::remember($linkCacheKey, now()->addHours(12), function () use ($source, $host, $scope) {
             $response = Http::withHeaders([
                 'User-Agent' => 'RevisionHub-SupportingSource/1.0',
@@ -217,7 +217,14 @@ class SupportingSourceContentService
         $path = $parts['path'] ?? '';
         if ($path === '') return null;
         if (!str_starts_with($path, '/')) {
-            $parent = dirname($baseParts['path'] ?? '/');
+            // Directory URLs such as https://www.w3schools.com/sql/ resolve
+            // relative href="sql_distinct.asp" within /sql/, not at /.
+            // dirname('/sql/') incorrectly returns '/', excluding every
+            // valid lesson from the approved /sql/ subtree.
+            $basePath = (string) ($baseParts['path'] ?? '/');
+            $parent = str_ends_with($basePath, '/')
+                ? $basePath
+                : rtrim(dirname($basePath), '/').'/';
             $path = rtrim($parent, '/').'/'.$path;
         }
         $segments = [];
