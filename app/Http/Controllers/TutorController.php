@@ -1254,7 +1254,7 @@ class TutorController extends Controller
                 // All currently teachable objectives have been addressed. The
                 // topic is NOT finished; preserve the session for future source
                 // updates. The student may work on a different topic meanwhile.
-                $answer = 'You have finished the learning goals currently supported by your teacher’s material. The remaining goals are awaiting additional content. Your progress is saved; you may study another topic and return here later.';
+                $answer = 'You have finished the parts of this lesson that are ready. Your progress is saved. Your teacher is preparing the remaining part, and you can return to it later.';
                 $last = $tutorSession->messages()->latest('id')->first();
                 $message = $last && $last->message_type === 'material_gap_waiting'
                     ? $last

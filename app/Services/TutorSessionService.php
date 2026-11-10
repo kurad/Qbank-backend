@@ -230,7 +230,7 @@ class TutorSessionService
             $session->messages()->create([
                 'role' => 'assistant',
                 'message_type' => 'material_gap',
-                'content' => 'Some learning goals need more verified material. Your progress is saved; ask your teacher to review the sources before trying again.',
+                'content' => 'This lesson needs a little more preparation from your teacher before we can continue. Your progress is saved, and you can return when the lesson is ready.',
             ]);
         }
 
@@ -382,17 +382,9 @@ class TutorSessionService
 
                 $current->save();
 
-                $session->messages()->create([
-                    'role' => 'assistant',
-                    'message_type' => 'supporting_source_notice',
-                    'content' =>
-                        'I could not verify enough coverage for this part from the currently retrieved primary material, so I will use an additional source your teacher provided. Once you demonstrate understanding, we will continue with the main material.',
-                    'metadata' => [
-                        'learning_objective_id' => $current->learning_objective_id,
-                        'support_status' => 'supporting_source',
-                        'supporting_source_ids' => $current->supporting_source_ids,
-                    ],
-                ]);
+                // Source selection is orchestration, not a lesson turn. Keep
+                // the audited source IDs/reason on the objective and allow
+                // the next teacher-style response to teach immediately.
 
                 return $current->fresh()->load('learningObjective');
             }
@@ -401,21 +393,9 @@ class TutorSessionService
             $current->completed_at = null;
             $current->save();
 
-            $goalText = $current->learningObjective?->objective
-                ?: 'this learning goal';
-
-            $session->messages()->create([
-                'role' => 'assistant',
-                'message_type' => 'material_gap',
-                'content' =>
-                    'I could not verify enough information for this learning goal from the extracted primary material or the teacher-provided supporting sources to teach and check it fairly. I will flag this for your teacher so the extraction, retrieval, or source coverage can be reviewed.',
-                'metadata' => [
-                    'learning_objective_id' => $current->learning_objective_id,
-                    'learning_goal' => $goalText,
-                    'support_status' => 'unsupported',
-                    'support_reason' => $current->support_reason,
-                ],
-            ]);
+            // Do not emit an assistant bubble for each uncovered goal.
+            // The status and support_reason remain available for teachers;
+            // supported objectives continue without distracting the learner.
 
             $session = $session->fresh()->load('objectives.learningObjective');
             $next = $this->nextObjective($session, $current);
