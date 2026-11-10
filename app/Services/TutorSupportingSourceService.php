@@ -9,6 +9,7 @@ use App\Models\TutorSessionObjective;
 use App\Services\AI\AIGateway;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 
 class TutorSupportingSourceService
 {
@@ -42,7 +43,9 @@ class TutorSupportingSourceService
             ];
         }
 
-        $sources = $this->candidateSources($session);
+        $sources = $this->candidateSources($session)->filter(fn ($source) =>
+            (int) $source->id > 0 || (int) ($source->tutor_objective_id ?? 0) === (int) $objective->id
+        )->values();
 
         if ($sources->isEmpty()) {
             return [
@@ -64,15 +67,32 @@ class TutorSupportingSourceService
         $lessonEvidenceCount = 0;
         if ($tryLessonPages) {
             foreach ($sources as $source) {
+                if ((int) $source->id < 0) continue; // Teacher-authored note, not a website.
+                $searchTerms = $focusTerms->concat($terms)->unique();
+                // Expand concept vocabulary, not a domain-specific URL list.
+                // Sorting / descending wording may be taught under ORDER BY.
+                $focusText = mb_strtolower(implode(' ', $searchTerms->all()).' '.($primarySupport['reason'] ?? ''));
+                if (preg_match('/sort|order|descend|ascend/u', $focusText)) {
+                    $searchTerms = $searchTerms->concat(['order', 'orderby', 'desc', 'asc']);
+                }
+                if (preg_match('/duplicate|unique|distinct/u', $focusText)) {
+                    $searchTerms = $searchTerms->concat(['distinct']);
+                }
+                if (preg_match('/wildcard|pattern|like/u', $focusText)) {
+                    $searchTerms = $searchTerms->concat(['like', 'wildcards']);
+                }
+                if (preg_match('/between|range/u', $focusText)) {
+                    $searchTerms = $searchTerms->concat(['between']);
+                }
                 $lessons = $this->content->relatedLessons(
                     $source,
-                    $focusTerms->concat($terms)->unique()->take(20)->all(),
-                    3
+                    $searchTerms->unique()->take(30)->all(),
+                    4
                 );
                 $source->tutor_lesson_evidence = $lessons;
                 $lessonEvidenceCount += count($lessons);
             }
-            if ($lessonEvidenceCount === 0) {
+            if ($lessonEvidenceCount === 0 && !$sources->contains(fn ($source) => (int) $source->id < 0)) {
                 return [
                     'status' => 'unsupported',
                     'reason' => 'The approved website provided no accessible relevant instructional lesson pages.',
@@ -91,7 +111,7 @@ class TutorSupportingSourceService
                 foreach (($source->tutor_lesson_evidence ?? []) as $lesson) {
                     $excerpt = $this->relevantExcerpt((string) $lesson['content'], $terms, $focusTerms);
                     if ($excerpt !== '') {
-                        $parts[] = "LESSON: ".$lesson['title']."\nURL: ".$lesson['url']."\n".mb_substr($excerpt, 0, 6500);
+                        $parts[] = "LESSON: ".$lesson['title']."\nURL: ".$lesson['url']."\n".mb_substr($excerpt, 0, 4200);
                     }
                 }
                 $rootExcerpt = $this->relevantExcerpt((string) $source->cached_content, $terms, $focusTerms);
@@ -266,7 +286,7 @@ PROMPT,
 
         if ($tryLessonPages) {
             foreach ($selected as $source) {
-                if (!empty($source->tutor_lesson_evidence)) {
+                if ((int) $source->id > 0 && !empty($source->tutor_lesson_evidence)) {
                     Cache::put(
                         $this->objectiveLessonCacheKey($source->id, $objective->id),
                         $source->tutor_lesson_evidence,
@@ -297,8 +317,25 @@ PROMPT,
             return collect();
         }
 
-        return CourseMaterialSupportingSource::query()
-            ->whereIn('id', $ids->all())
+        $teacherNotes = DB::table('objective_support_notes')
+            ->whereIn('id', $ids->filter(fn ($id) => $id < 0)->map(fn ($id) => -$id)->all())
+            ->where('learning_objective_id', $sessionObjective->learning_objective_id)
+            ->where('grade_subject_id', $sessionObjective->session?->grade_subject_id)
+            ->get()->map(function ($note) {
+                $source = new CourseMaterialSupportingSource();
+                $source->id = -$note->id;
+                $source->tutor_objective_id = $note->learning_objective_id;
+                $source->title = 'Teacher instructional addendum';
+                $source->cached_title = $source->title;
+                $source->url = '';
+                $source->status = 'ready';
+                $source->cached_content = $note->content;
+                $source->tutor_support_excerpt = $note->content;
+                return $source;
+            });
+
+        $webSources = CourseMaterialSupportingSource::query()
+            ->whereIn('id', $ids->filter(fn ($id) => $id > 0)->all())
             ->where('status', 'ready')
             ->get()
             ->map(function ($source) use ($sessionObjective) {
@@ -332,6 +369,7 @@ PROMPT,
                 trim((string) $source->tutor_support_excerpt) !== ''
             )
             ->values();
+        return $webSources->concat($teacherNotes)->values();
     }
 
     protected function objectiveLessonCacheKey(int $sourceId, int $objectiveId): string
@@ -359,11 +397,29 @@ PROMPT,
             return collect();
         }
 
-        return CourseMaterialSupportingSource::query()
+        $web = CourseMaterialSupportingSource::query()
             ->whereIn('course_material_id', $materials)
             ->where('status', 'ready')
             ->whereNotNull('cached_content')
             ->get();
+
+        // A teacher's approved instructional note is an additional source.
+        // It is scoped by the same grade-subject and objective, never global.
+        $notes = DB::table('objective_support_notes')
+            ->where('grade_subject_id', $session->grade_subject_id)
+            ->whereIn('learning_objective_id', $session->objectives->pluck('learning_objective_id')->all())
+            ->get()->map(function ($note) {
+                $source = new CourseMaterialSupportingSource();
+                $source->id = -$note->id;
+                $source->tutor_objective_id = $note->learning_objective_id;
+                $source->title = 'Teacher instructional addendum';
+                $source->cached_title = $source->title;
+                $source->url = '';
+                $source->status = 'ready';
+                $source->cached_content = $note->content;
+                return $source;
+            });
+        return $web->concat($notes)->values();
     }
 
     protected function objectiveTerms(

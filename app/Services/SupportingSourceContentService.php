@@ -127,7 +127,7 @@ class SupportingSourceContentService
         array $terms,
         int $limit = 3
     ): array {
-        $limit = min(3, max(0, $limit));
+        $limit = min(4, max(0, $limit));
         if ($limit === 0 || $source->status !== 'ready') return [];
 
         $root = parse_url((string) $source->url);
@@ -193,9 +193,37 @@ class SupportingSourceContentService
         }
         usort($scored, fn ($a, $b) => ($b['score'] <=> $a['score'])
             ?: strcmp($a['link']['url'], $b['link']['url']));
+        // Diversify the bounded selection across distinct subject concepts.
+        // A compound objective must not consume every slot on one subtopic.
+        $chosen = [];
+        $covered = [];
+        while (count($chosen) < $limit && $scored) {
+            $bestKey = null;
+            $bestValue = -INF;
+            foreach ($scored as $key => $row) {
+                $label = mb_strtolower($row['link']['label'].' '.basename(parse_url($row['link']['url'], PHP_URL_PATH)));
+                $normalized = str_replace(['_', '-'], ' ', $label);
+                $hits = array_values(array_filter($normalizedTerms, fn ($term) =>
+                    mb_strlen($term) >= 4 && str_contains($normalized, $term)
+                ));
+                $new = count(array_diff($hits, $covered));
+                $value = $row['score'] + 35 * $new;
+                if ($value > $bestValue) { $bestValue = $value; $bestKey = $key; }
+            }
+            if ($bestKey === null) break;
+            $selected = $scored[$bestKey];
+            $chosen[] = $selected;
+            $label = mb_strtolower($selected['link']['label'].' '.basename(parse_url($selected['link']['url'], PHP_URL_PATH)));
+            $normalized = str_replace(['_', '-'], ' ', $label);
+            foreach ($normalizedTerms as $term) {
+                if (mb_strlen($term) >= 4 && str_contains($normalized, $term)) $covered[] = $term;
+            }
+            $covered = array_unique($covered);
+            unset($scored[$bestKey]);
+        }
         $lessons = [];
         // Keep total outbound fetches bounded even when some pages fail.
-        foreach (array_slice($scored, 0, $limit) as $row) {
+        foreach ($chosen as $row) {
             $link = $row['link'];
             try {
                 $data = Cache::remember(

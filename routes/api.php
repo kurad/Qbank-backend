@@ -33,6 +33,7 @@ use App\Http\Controllers\StudentResultsController;
 use App\Http\Controllers\SubjectController;
 use App\Http\Controllers\TeacherGradebookController;
 use App\Http\Controllers\TeacherProgressController;
+use App\Http\Controllers\TeacherMaterialGapController;
 use App\Http\Controllers\TeacherTutorHistoryController;
 use App\Http\Controllers\TopicController;
 use App\Http\Controllers\TutorController;
@@ -581,6 +582,10 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
         Route::get('/', [TeacherLearningActivityController::class, 'index']);
         Route::get('/students/{student}', [TeacherLearningActivityController::class, 'student']);
     });
+
+    Route::get('/teacher/material-gaps', [TeacherMaterialGapController::class, 'index']);
+    Route::put('/teacher/material-gaps/{objective}/note', [TeacherMaterialGapController::class, 'saveNote']);
+    Route::post('/teacher/material-gaps/{objective}/retry', [TeacherMaterialGapController::class, 'retry']);
 
     Route::prefix('teacher/progress')->group(function () {
 

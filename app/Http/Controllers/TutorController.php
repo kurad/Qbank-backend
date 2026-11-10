@@ -593,22 +593,17 @@ class TutorController extends Controller
 
         $this->ensureActiveSession($tutorSession);
 
-        $currentObjective =
-
-            $this->sessionsService->prepareCurrentObjectiveForLearning(
-
-                $tutorSession
-
-            );
-
+        // A checkpoint must never trigger material discovery or skip goals.
+        // Only the objective introduction flow prepares and verifies sources.
+        $currentObjective = $this->sessionsService->currentObjective(
+            $tutorSession->fresh()->load('objectives.learningObjective')
+        );
         abort_unless(
-
-            $currentObjective,
-
-            422,
-
-            'There is no active learning objective in this session.'
-
+            $currentObjective
+                && $currentObjective->status === 'in_progress'
+                && in_array((string) $currentObjective->support_status, ['supported', 'supporting_source'], true),
+            409,
+            'The next learning objective has not been introduced yet. Please continue to the next objective before checking understanding.'
         );
 
         $difficulty = $this->difficulty->profile(
@@ -1255,11 +1250,35 @@ class TutorController extends Controller
 
             // Gaps are NOT completed objectives. Do not close or mark this
             // topic covered even if every other objective is complete.
-            abort_if(
-                $this->sessionsService->hasMaterialGaps($tutorSession),
-                409,
-                'The remaining learning goals need verified teacher material. Your completed objectives are saved. Please ask your teacher to review the sources, then try Continue again.'
-            );
+            if ($this->sessionsService->hasMaterialGaps($tutorSession)) {
+                // All currently teachable objectives have been addressed. The
+                // topic is NOT finished; preserve the session for future source
+                // updates. The student may work on a different topic meanwhile.
+                $answer = 'You have finished the learning goals currently supported by your teacher’s material. The remaining goals are awaiting additional content. Your progress is saved; you may study another topic and return here later.';
+                $last = $tutorSession->messages()->latest('id')->first();
+                $message = $last && $last->message_type === 'material_gap_waiting'
+                    ? $last
+                    : $tutorSession->messages()->create([
+                        'role' => 'assistant',
+                        'message_type' => 'material_gap_waiting',
+                        'content' => $answer,
+                    ]);
+                return response()->json(['data' => [
+                    'session_id' => $tutorSession->id,
+                    'answer' => $answer,
+                    'assistant_message' => $this->publicMessage($message),
+                    'progress' => [
+                        'objective_completed' => false,
+                        'session_completed' => false,
+                        'learning_state' => 'awaiting_teacher_material',
+                        'checkpoint_ready' => false,
+                        'current_objective' => null,
+                        'next_objective' => null,
+                    ],
+                    'pending_checkpoint' => null,
+                    'session' => $this->sessionsService->freshSession($tutorSession),
+                ]]);
+            }
 
             $hasEvidence = $tutorSession->objectives()
                     ->where('attempts', '>', 0)->exists()

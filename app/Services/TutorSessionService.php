@@ -249,6 +249,13 @@ class TutorSessionService
     {
         $session->loadMissing('objectives.learningObjective');
 
+        // A newly resolved material gap must not interrupt an objective that
+        // the student is already learning. Finish that objective first.
+        $active = $session->objectives
+            ->sortBy('objective_order')
+            ->first(fn ($objective) => strtolower((string) $objective->status) === 'in_progress');
+        if ($active) return $active;
+
         return $session->objectives
             ->sortBy('objective_order')
             ->first(fn ($objective) => !in_array(
@@ -391,7 +398,7 @@ class TutorSessionService
             }
 
             $current->status = 'material_gap';
-            $current->completed_at = now();
+            $current->completed_at = null;
             $current->save();
 
             $goalText = $current->learningObjective?->objective
