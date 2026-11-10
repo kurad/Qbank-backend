@@ -189,12 +189,12 @@ PROMPT,
                 'message' => $e->getMessage(),
             ]);
 
-            return [
-                'status' => 'unsupported',
-                'reason' => 'Supporting sources could not be verified at this time.',
-                'source_ids' => [],
-                'sources' => collect(),
-            ];
+            // An AI outage must not become a permanent material gap.
+            throw new \RuntimeException(
+                'Supporting source verification is temporarily unavailable. Please retry.',
+                0,
+                $e
+            );
         }
 
         if (($result['status'] ?? null) !== 'supported') {

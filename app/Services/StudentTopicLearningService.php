@@ -136,6 +136,13 @@ class StudentTopicLearningService
              * StudentTopicLearningState row at `in_progress`, so do not skip
              * reconciliation merely because a state row already exists.
              */
+            // Historical bad deployments marked 1/3 sessions completed when
+            // the remaining objectives were material gaps. Never promote them.
+            if ($session->objectives->isEmpty() || $session->objectives->contains(
+                fn ($objective) => !in_array($objective->status, ['completed', 'mastered', 'needs_review'], true)
+            )) {
+                continue;
+            }
             $hasReview = $session->objectives->contains(
                 fn ($objective) => $objective->status === 'needs_review'
             );

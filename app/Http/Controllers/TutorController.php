@@ -1231,7 +1231,8 @@ class TutorController extends Controller
 
         $currentObjective =
             $this->sessionsService->prepareCurrentObjectiveForLearning(
-                $tutorSession
+                $tutorSession,
+                true // Explicit Continue action retries remaining material gaps.
             );
 
         if (!$currentObjective) {
@@ -1250,6 +1251,14 @@ class TutorController extends Controller
                 $remaining || !$tutorSession->objectives()->exists(),
                 422,
                 'The next learning goal could not be prepared. Please ask your teacher to review the learning material.'
+            );
+
+            // Gaps are NOT completed objectives. Do not close or mark this
+            // topic covered even if every other objective is complete.
+            abort_if(
+                $this->sessionsService->hasMaterialGaps($tutorSession),
+                409,
+                'The remaining learning goals need verified teacher material. Your completed objectives are saved. Please ask your teacher to review the sources, then try Continue again.'
             );
 
             $hasEvidence = $tutorSession->objectives()

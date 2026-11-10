@@ -224,28 +224,25 @@ class TutorSessionService
                 'content' => $opening,
             ]);
         } else {
-            /*
-             * Every remaining goal was a material gap. Finish the Tutor
-             * session without marking the topic mastered.
-             */
-            $session->update([
-                'status' => 'completed',
-                'ended_at' => now(),
-                'last_activity_at' => now(),
+            // Keep the session open. No supported learning goal is not evidence
+            // that the learner completed the topic. A teacher can add sources
+            // and the learner can retry without losing this session.
+            $session->messages()->create([
+                'role' => 'assistant',
+                'message_type' => 'material_gap',
+                'content' => 'Some learning goals need more verified material. Your progress is saved; ask your teacher to review the sources before trying again.',
             ]);
-
-            if ($sessionMode === 'learning') {
-                $this->topicLearning->markNeedsReview(
-                    $student,
-                    $session,
-                    'The approved material does not yet provide enough information to teach one or more learning goals.'
-                );
-            }
         }
 
         $session->update(['last_activity_at' => now()]);
 
         return $this->freshSession($session);
+    }
+
+    /** A material gap is NOT completed learning and must never imply mastery. */
+    public function hasMaterialGaps(TutorSession $session): bool
+    {
+        return $session->objectives()->where('status', 'material_gap')->exists();
     }
 
     public function currentObjective(TutorSession $session): ?TutorSessionObjective
@@ -284,7 +281,8 @@ class TutorSessionService
      * coverage issue, not evidence that the learner struggled.
      */
     public function prepareCurrentObjectiveForLearning(
-        TutorSession $session
+        TutorSession $session,
+        bool $retryMaterialGaps = false
     ): ?TutorSessionObjective {
         $session = $session->fresh()->load('objectives.learningObjective');
 
@@ -293,6 +291,22 @@ class TutorSessionService
         for ($pass = 0; $pass < $maxPasses; $pass++) {
             $current = $this->currentObjective($session);
 
+            if (!$current && $retryMaterialGaps) {
+                // Explicit retry after the teacher updated sources. Only one
+                // previously unteachable goal is rechecked per request.
+                $gap = $session->objectives->sortBy('objective_order')
+                    ->first(fn ($item) => $item->status === 'material_gap');
+                if ($gap) {
+                    $gap->status = 'not_started';
+                    $gap->completed_at = null;
+                    $gap->support_status = 'unknown';
+                    $gap->support_reason = null;
+                    $gap->save();
+                    $session = $session->fresh()->load('objectives.learningObjective');
+                    $current = $this->currentObjective($session);
+                    $retryMaterialGaps = false;
+                }
+            }
             if (!$current) {
                 return null;
             }
@@ -317,7 +331,7 @@ class TutorSessionService
                 $supportStatus = strtolower((string) $current->support_status);
             }
 
-            if ($supportStatus === 'supported') {
+            if (in_array($supportStatus, ['supported', 'supporting_source'], true)) {
                 if ($current->status === 'not_started') {
                     $current->status = 'in_progress';
                     $current->started_at = $current->started_at ?? now();
@@ -426,7 +440,7 @@ class TutorSessionService
                     'objective' => null,
                     'next_objective' => null,
                     'objective_completed' => false,
-                    'session_completed' => true,
+                    'session_completed' => !$this->hasMaterialGaps($session),
                     'attempt_number' => 0,
                     'correct_attempts' => 0,
                     'teaching_action' => 'session_complete',
@@ -527,11 +541,11 @@ class TutorSessionService
                             'objective_completed' => false,
                             'objective_resolved' => true,
                             'objective_status' => 'needs_review',
-                            'session_completed' => true,
+                            'session_completed' => !$this->hasMaterialGaps($session),
                             'attempt_number' => (int) $current->attempts,
                             'correct_attempts' => (int) $current->correct_attempts,
-                            'teaching_action' => 'complete_topic_with_review',
-                            'learning_state' => 'completed_with_review',
+                            'teaching_action' => $this->hasMaterialGaps($session) ? 'await_source_review' : 'complete_topic_with_review',
+                            'learning_state' => $this->hasMaterialGaps($session) ? 'awaiting_material' : 'completed_with_review',
                             'checkpoint_ready' => false,
                             'teacher_attention' => true,
                             'teacher_attention_reason' => $difficulty['teacher_attention_reason']
@@ -609,11 +623,11 @@ class TutorSessionService
                     'objective_completed' => true,
                     'objective_resolved' => true,
                     'objective_status' => 'completed',
-                    'session_completed' => true,
+                    'session_completed' => !$this->hasMaterialGaps($session),
                     'attempt_number' => (int) $current->attempts,
                     'correct_attempts' => (int) $current->correct_attempts,
-                    'teaching_action' => 'complete_topic',
-                    'learning_state' => 'completed',
+                    'teaching_action' => $this->hasMaterialGaps($session) ? 'await_source_review' : 'complete_topic',
+                    'learning_state' => $this->hasMaterialGaps($session) ? 'awaiting_material' : 'completed',
                     'checkpoint_ready' => false,
                     'teacher_attention' => false,
                     'struggle_level' => 0,
@@ -693,6 +707,7 @@ class TutorSessionService
                 422,
                 'This Tutor session cannot be marked completed until all learning objectives are mastered.'
             );
+            abort_if($this->hasMaterialGaps($session), 422, 'Some learning goals are awaiting verified source coverage. The topic cannot be marked completed yet.');
         }
 
         $session->update([
@@ -720,6 +735,10 @@ class TutorSessionService
         abort_unless((int) $session->student_id === (int) $student->id, 403);
 
         if ($session->status !== 'completed') {
+            return $this->freshSession($session);
+        }
+        // Never synchronize a prematurely completed gap session as mastered.
+        if ($this->hasMaterialGaps($session)) {
             return $this->freshSession($session);
         }
 
