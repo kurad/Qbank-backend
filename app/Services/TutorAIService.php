@@ -8,7 +8,8 @@ class TutorAIService
 {
     public function __construct(
         protected AIGateway $ai,
-        protected TutorKnowledgeService $knowledge
+        protected TutorKnowledgeService $knowledge,
+        protected TutorTeachingDecisionService $teachingDecisions
     ) {}
 
     /**
@@ -1464,59 +1465,71 @@ PROMPT;
             ->learningObjective;
 
         /*
-         * Pedagogical phase for ordinary conversation.
-         *
-         * The opening/objective_intro is intentionally diagnostic and brief.
-         * After the learner responds, the Tutor must teach in depth before
-         * guided practice and before the first formal understanding check.
+         * Choose a teaching move using learner needs and formal evidence.
+         * Chat turn count supplies context, never a mastery verdict.
          */
-        $objectiveBoundary = $currentObjective->started_at ?: $session->created_at;
-        $learnerTeachingTurns = $session->messages()
-            ->where('role', 'user')
-            ->where('message_type', 'text')
-            ->where('created_at', '>=', $objectiveBoundary)
-            ->count();
-
-        $instructionPhase = match (true) {
-            $learnerTeachingTurns <= 1 => 'CORE_TEACHING',
-            $learnerTeachingTurns === 2 => 'GUIDED_PRACTICE',
-            default => 'CONSOLIDATE_AND_PREPARE_FOR_CHECK',
-        };
+        $teachingDecision = $this->teachingDecisions->plan(
+            $session,
+            $currentObjective,
+            $studentMessage,
+            $turnFocus
+        );
+        $instructionPhase = $teachingDecision['phase'];
+        $instructionReason = $teachingDecision['reason'];
+        $instructionMisconception = $teachingDecision['misconception'] !== ''
+            ? $teachingDecision['misconception']
+            : 'No specific misconception recorded.';
 
         $instructionPhaseGuidance = match ($instructionPhase) {
             'CORE_TEACHING' => <<<'PHASE'
-The learner has completed the opening/diagnostic interaction.
-Now TEACH the objective properly. Do not stay narrow or merely respond with
-one sentence plus another question.
-
-Give a coherent, age-appropriate explanation grounded in the approved material.
-Where the material supports it, include:
-- the central idea and why it matters;
-- essential terminology, rules, syntax, steps, or relationships;
-- at least one clear worked or concrete example;
-- an important contrast, common error, or misconception;
-- a brief connection back to what the learner said in the diagnostic.
-
-Keep sections digestible rather than writing one huge paragraph. Depth is more
-important than brevity here, but remain focused on this objective. End with ONE
-small guided practice or noticing task that lets the learner use what was just
-taught. Do not start the formal checkpoint yet.
+Teach the objective properly, grounded in approved material: explain its
+purpose, main ideas, relevant syntax or steps, and a clear worked example.
+Connect to the learner's prior reply. After teaching, invite one small
+non-graded guided step. Do not start the formal checkpoint.
+PHASE,
+            'WORKED_EXAMPLE' => <<<'PHASE'
+Show a new, concrete worked example grounded in approved material. Explain
+why each step works; if helpful, contrast a common mistake. Let the learner
+try ONE similar step rather than repeating a long lecture.
+PHASE,
+            'SCAFFOLD_AND_RETEACH' => <<<'PHASE'
+The learner needs a smaller step or different explanation. Identify the
+specific sticking point and re-explain it using simpler language, an analogy,
+a table, or a worked micro-example supported by the material. Ask only ONE
+small guided question. Do not repeat the original question, assume mastery,
+or pressure the learner to take a checkpoint.
+PHASE,
+            'TARGETED_RETEACH' => <<<'PHASE'
+Use the latest formal feedback to target the unresolved misconception,
+not the entire objective. Explain the missing idea with a distinct example
+or representation, then invite one non-graded practice step. Do not reveal
+answers to any pending formal checkpoint.
 PHASE,
             'GUIDED_PRACTICE' => <<<'PHASE'
-The core teaching has already begun. Move into GUIDED PRACTICE.
-Use the learner's response to correct any gap, model another useful example or
-worked step when needed, then let the learner do one meaningful part themselves.
-Do not simply repeat the previous explanation with different wording or numbers.
-Help the learner connect ideas and apply them. Do not generate the formal
-checkpoint inside chat.
+Give meaningful guided practice on the next supported subskill. Respond to
+what the learner actually wrote, correct the relevant gap, and model a step
+when necessary. Do not endlessly re-ask the same question with changed numbers.
+Do not assert that the learner is ready for formal assessment solely because
+several chat turns have occurred.
 PHASE,
-            default => <<<'PHASE'
-The learner has had the diagnostic, teaching, and guided practice opportunities.
-Consolidate the objective: address any remaining misconception, connect the key
-ideas, and give a concise final practice/summary if useful. Do not invent a
-formal checkpoint. If the learner appears ready, say naturally that they can
-check their understanding using the interface when it becomes available.
+            'NEXT_SUBSKILL' => <<<'PHASE'
+Move forward to the next not-yet-covered subskill WITHIN the active learning
+objective if material supports it. Do not restart already-demonstrated basics.
+A request to move on cannot complete the objective or skip the application's
+formal mastery requirements.
 PHASE,
+            'REFOCUS' => <<<'PHASE'
+Briefly acknowledge the learner's message without scolding. Return to the
+current objective, picking up at the next useful teaching step rather than
+restarting the lesson or asking a generic question.
+PHASE,
+            'CONSOLIDATE' => <<<'PHASE'
+Connect the key ideas and address any remaining gaps with one application or
+brief recap. Encourage use of the normal understanding check when it is
+available; do not create a formal checkpoint in chat, claim mastery, or
+advance the objective yourself.
+PHASE,
+            default => 'Continue grounded, responsive teaching without declaring mastery.',
         };
 
         $recentFormalEvidence = $currentObjective
@@ -1657,6 +1670,8 @@ ANTI-REPETITION RULES
 CURRENT INSTRUCTIONAL PHASE
 ============================================================
 Phase: {$instructionPhase}
+Decision basis: {$instructionReason}
+Most recent misconception (if any): {$instructionMisconception}
 
 {$instructionPhaseGuidance}
 
