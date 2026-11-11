@@ -64,7 +64,7 @@ class StudentAssessmentController extends Controller
             [
                 'answer' => $validated['answer'],
                 'is_correct' => null, // auto-grader sets later
-                'points_earned' => 0,
+                'points_earned' => null,
                 'submitted_at' => now(),
             ]
         );
@@ -84,13 +84,13 @@ class StudentAssessmentController extends Controller
             403
         );
         $needsReview = $assessment->studentAnswers()
-            ->whereNull('is_correct')
+            ->whereNull('points_earned')
             ->exists();
 
         $assessment->update([
             'status' => $needsReview ? 'under_review' : 'graded',
             'completed_at' => now(),
-            'score' => $assessment->studentAnswers()->sum('points_earned'),
+            'score' => $needsReview ? null : $assessment->studentAnswers()->sum('points_earned'),
         ]);
         return response()->json([
             'status' => $assessment->status,
@@ -127,9 +127,11 @@ class StudentAssessmentController extends Controller
             $sa->assessment->creator_id !== auth()->id(),
             403
         );
+        $answers = $sa->studentAnswers;
+        $pending = $answers->contains(fn ($a) => $a->points_earned === null);
         $sa->update([
-            'score' => $sa->answers->sum('points_earned'),
-            'status' => 'graded'
+            'score' => $pending ? null : $answers->sum('points_earned'),
+            'status' => $pending ? 'under_review' : 'graded'
         ]);
 
         return response()->json([
@@ -189,7 +191,7 @@ class StudentAssessmentController extends Controller
                 'status' => $item->status ?? 'pending',
                 'assigned_at' => optional($item->assigned_at)?->toIso8601String(),
                 'completed_at' => optional($item->completed_at)?->toIso8601String(),
-                'score' => $item->score,
+                'score' => $item->status === 'under_review' ? null : $item->score,
                 'max_score' => $item->max_score,
 
                 'teacher' => $assessment?->creator?->name,

@@ -40,7 +40,7 @@ class StudentResultsController extends Controller
                 'assessment.groups:id,group_name',
             ])
             ->where('student_id', Auth::id())
-            ->whereIn('status', ['completed', 'graded'])
+            ->whereIn('status', ['completed', 'graded', 'under_review'])
             ->orderByDesc('completed_at')
             ->orderByDesc('id');
 
@@ -94,13 +94,13 @@ class StudentResultsController extends Controller
 
             $percentage = null;
 
-            if ((float) $item->max_score > 0) {
+            if ($item->status !== 'under_review' && $item->score !== null && (float) $item->max_score > 0) {
                 $percentage = round(
                     ((float) $item->score / (float) $item->max_score) * 100,
                     1
                 );
             } elseif (
-                $item->score !== null &&
+                $item->status !== 'under_review' && $item->score !== null &&
                 (float) $item->score >= 0 &&
                 (float) $item->score <= 100
             ) {
@@ -116,7 +116,7 @@ class StudentResultsController extends Controller
                 'subject' => $subject,
                 'class_name' => $className,
                 'learning_period' => $assessment?->learningPeriod?->title,
-                'score' => $item->score,
+                'score' => $item->status === 'under_review' ? null : $item->score,
                 'max_score' => $item->max_score,
                 'percentage' => $percentage,
                 'status' => $item->status,
@@ -138,7 +138,7 @@ class StudentResultsController extends Controller
                 'assessment.topics.gradeSubject.subject:id,name',
             ])
             ->where('student_id', Auth::id())
-            ->whereIn('status', ['completed', 'graded'])
+            ->whereIn('status', ['completed', 'graded', 'under_review'])
             ->get();
 
         $availableSubjects = $filterSource

@@ -387,19 +387,19 @@ class TeacherGradebookService
                     ? (float) $attempt->max_score
                     : (float) $column['max_score'];
 
-                $percentage = $maxScore > 0
+                $percentage = $maxScore > 0 && !in_array($attempt->status, ['under_review'], true) && $attempt->score !== null
                     ? round(((float) $attempt->score / $maxScore) * 100, 1)
                     : null;
 
                 $assessmentScores[$column['key']] = [
                     'status' => $attempt->status,
-                    'score' => round((float) $attempt->score, 2),
+                    'score' => $attempt->score === null ? null : round((float) $attempt->score, 2),
                     'max_score' => round($maxScore, 2),
                     'percentage' => $percentage,
                     'completed_at' => optional($attempt->completed_at)->toDateTimeString(),
                 ];
 
-                if ($percentage !== null && in_array($attempt->status, ['graded', 'completed', 'under_review'], true)) {
+                if ($percentage !== null && in_array($attempt->status, ['graded', 'completed'], true)) {
                     $assessmentPercentages->push($percentage);
                 }
             }
@@ -567,8 +567,8 @@ class TeacherGradebookService
                             'correct_answer' => $question?->correct_answer,
                             'explanation' => $question?->explanation,
                             'answer' => $answer->answer,
-                            'system_points' => (float) ($firstReview?->previous_points ?? $answer->points_earned ?? 0),
-                            'points_earned' => (float) ($answer->points_earned ?? 0),
+                            'system_points' => $firstReview ? ($firstReview->previous_is_correct === null ? null : (float) $firstReview->previous_points) : ($answer->points_earned === null ? null : (float) $answer->points_earned),
+                            'points_earned' => $answer->points_earned === null ? null : (float) $answer->points_earned,
                             'marks' => (float) ($question?->marks ?? 0),
                             'is_correct' => $answer->is_correct,
                             'reviewed_at' => optional($answer->reviewed_at)->toDateTimeString(),
@@ -614,7 +614,7 @@ class TeacherGradebookService
             'summary' => [
                 'assessment_average' => $this->average($assessmentPercentages),
                 'assessments_completed' => $attempts
-                    ->filter(fn ($row) => in_array($row['status'], ['graded', 'completed', 'under_review'], true))
+                    ->filter(fn ($row) => in_array($row['status'], ['graded', 'completed'], true))
                     ->count(),
                 'check_average' => $this->average($checks->pluck('score')),
                 'checks_completed' => $checks->count(),
@@ -746,17 +746,16 @@ class TeacherGradebookService
 
         $attempt = $answer->studentAssessment()->with('assessment.assessmentQuestions.question')->firstOrFail();
 
-        $remaining = $attempt->studentAnswers()
-            ->whereNull('reviewed_at')
-            ->whereHas('question', fn ($q) => $q->where('question_type', 'open_ended'))
-            ->count();
+        // The final score is not released until every pending question is marked,
+        // including short answers assessed in the formative review workspace.
+        $remaining = $attempt->studentAnswers()->whereNull('points_earned')->count();
 
         $score = (float) $attempt->studentAnswers()->sum('points_earned');
         $maxScore = (float) $attempt->assessment->assessmentQuestions
             ->sum(fn ($aq) => (float) ($aq->question?->marks ?? 0));
 
         $attempt->update([
-            'score' => $score,
+            'score' => $remaining === 0 ? $score : null,
             'max_score' => $maxScore,
             'status' => $remaining === 0 ? 'graded' : 'under_review',
         ]);
@@ -767,7 +766,7 @@ class TeacherGradebookService
             'reviewed_at' => optional($answer->reviewed_at)->toDateTimeString(),
             'student_assessment_id' => $attempt->id,
             'assessment_status' => $attempt->status,
-            'assessment_score' => (float) $attempt->score,
+            'assessment_score' => $attempt->score === null ? null : (float) $attempt->score,
             'assessment_max_score' => (float) $attempt->max_score,
             'remaining_manual_answers' => $remaining,
         ];
@@ -843,8 +842,8 @@ class TeacherGradebookService
                             'explanation' => $question?->explanation,
                             'marks' => (float) ($question?->marks ?? 0),
                             'student_answer' => $answer->answer,
-                            'system_points' => (float) ($firstReview?->previous_points ?? $answer->points_earned ?? 0),
-                            'current_points' => (float) ($answer->points_earned ?? 0),
+                            'system_points' => $firstReview ? ($firstReview->previous_is_correct === null ? null : (float) $firstReview->previous_points) : ($answer->points_earned === null ? null : (float) $answer->points_earned),
+                            'current_points' => $answer->points_earned === null ? null : (float) $answer->points_earned,
                             'system_is_correct' => $firstReview
                                 ? $firstReview->previous_is_correct
                                 : $answer->is_correct,
@@ -878,10 +877,11 @@ class TeacherGradebookService
                     'learning_period' => $attempt->assessment?->learningPeriod?->title,
                     'classes' => $attempt->assessment?->groups?->pluck('group_name')->values()->all() ?? [],
                     'status' => $attempt->status,
-                    'score' => (float) ($attempt->score ?? 0),
+                    'score' => $attempt->score === null ? null : (float) $attempt->score,
                     'max_score' => (float) ($attempt->max_score ?? 0),
                     'completed_at' => optional($attempt->completed_at)->toDateTimeString(),
                     'answers' => $answers->all(),
+                    'pending_review_count' => $answers->filter(fn ($item) => $item['current_points'] === null)->count(),
                     'reviewed_answers' => $answers->where('review_count', '>', 0)->count(),
                     'answer_count' => $answers->count(),
                 ];
@@ -928,6 +928,8 @@ class TeacherGradebookService
         );
 
         $previousPoints = (float) ($answer->points_earned ?? 0);
+        // The audit table retains a numerical previous mark for legacy compatibility;
+        // null means pending and is also captured by previous_is_correct = null.
         $previousCorrect = $answer->is_correct;
         $newCorrect = $maxMarks > 0 && $points >= $maxMarks;
 
@@ -964,10 +966,11 @@ class TeacherGradebookService
             $score = (float) $answers->sum(fn ($item) => (float) ($item->points_earned ?? 0));
             $maxScore = (float) $answers->sum(fn ($item) => (float) ($item->question?->marks ?? 0));
 
+            $pending = $answers->contains(fn ($item) => $item->points_earned === null);
             $attempt->update([
-                'score' => round($score, 2),
+                'score' => $pending ? null : round($score, 2),
                 'max_score' => round($maxScore, 2),
-                'status' => 'graded',
+                'status' => $pending ? 'under_review' : 'graded',
             ]);
         });
 
@@ -980,7 +983,7 @@ class TeacherGradebookService
             'reviewed_at' => optional($answer->reviewed_at)->toDateTimeString(),
             'student_assessment_id' => $attempt->id,
             'assessment_status' => $attempt->status,
-            'assessment_score' => (float) $attempt->score,
+            'assessment_score' => $attempt->score === null ? null : (float) $attempt->score,
             'assessment_max_score' => (float) $attempt->max_score,
         ];
     }

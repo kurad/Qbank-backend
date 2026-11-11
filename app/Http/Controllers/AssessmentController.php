@@ -797,7 +797,7 @@ class AssessmentController extends Controller
 
         // Completed assessments remain reviewable after a teacher re-marks
         // them and the status moves to `graded`.
-        if (!in_array($studentAssessment->status, ['completed', 'graded'], true)) {
+        if (!in_array($studentAssessment->status, ['completed', 'graded', 'under_review'], true)) {
             return response()->json(['message' => 'Assessment not completed yet'], 400);
         }
 
@@ -897,11 +897,13 @@ class AssessmentController extends Controller
             'assessment_title' => $assessment->title,
             'assessment_type' => $assessment->type,
             'total_questions' => $assessment->question_count,
-            'score' => $studentAssessment->score,
+            'score' => $studentAssessment->status === 'under_review' ? null : $studentAssessment->score,
+            'review_status' => $studentAssessment->status,
+            'final_result_pending' => $studentAssessment->status === 'under_review',
             'max_score' => $studentAssessment->max_score,
-            'percentage' => $studentAssessment->max_score > 0
+            'percentage' => $studentAssessment->status !== 'under_review' && $studentAssessment->max_score > 0
                 ? ($studentAssessment->score / $studentAssessment->max_score) * 100
-                : 0,
+                : null,
             'completed_at' => $studentAssessment->completed_at,
             'time_taken' => ($completedAt && $startedAt)
                 ? $completedAt->diffInMinutes($startedAt)
@@ -965,12 +967,13 @@ class AssessmentController extends Controller
                 'student_answer' => $answer->answer ?? $answer->answer_text ?? null,
                 'correct_answer' => $question->correct_answer,
                 'correct_answer_resolved' => $resolvedCorrectAnswer,
-                'is_correct' => (bool) ($answer->is_correct ?? false),
+                'is_correct' => $answer->is_correct,
                 'is_math' => (bool) ($question->is_math ?? false),
                 'is_chemistry' => (bool) ($question->is_chemistry ?? false),
                 'multiple_answers' => (bool) ($question->multiple_answers ?? false),
                 // Prefer stored answer points, fallback to alternative fields or zero
-                'points_earned' => $answer->points_earned ?? $answer->points ?? 0,
+                'points_earned' => $answer->points_earned === null ? null : $answer->points_earned,
+                'pending_review' => $answer->points_earned === null,
                 // Use per-answer max if set, otherwise fall back to question marks or legacy max_points
                 'max_points' => $answer->max_points ?? $question->marks ?? $question->max_points ?? 0,
                 'explanation' => $question->explanation,

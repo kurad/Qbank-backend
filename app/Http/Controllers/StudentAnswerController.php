@@ -244,12 +244,13 @@ class StudentAnswerController extends Controller
         );
 
         // 4) Prevent resubmission for teacher-assigned assessments
-        if (!$isPractice && $studentAssessment->status === 'completed') {
+        if (!$isPractice && in_array($studentAssessment->status, ['completed', 'graded', 'under_review'], true)) {
             return response()->json(['error' => 'Assessment already submitted'], 409);
         }
 
         $totalScore = 0.0;
         $maxScore = 0.0;
+        $pendingReviewCount = 0;
 
         // 5) Process answers
         foreach ($request->answers as $ans) {
@@ -366,10 +367,13 @@ class StudentAnswerController extends Controller
 
                             if ($correctText !== '' && $studentText !== '') {
                                 $isCorrect = (mb_strtolower($studentText) === mb_strtolower($correctText));
-                                $pointsEarned = $isCorrect ? $marks : 0.0;
+                                // A mismatch is not a verified incorrect answer:
+                                // teachers can recognize valid alternative wording.
+                                $pointsEarned = $isCorrect ? $marks : null;
+                                if (!$isCorrect) $isCorrect = null;
                             } else {
-                                $isCorrect = false;
-                                $pointsEarned = 0.0;
+                                $isCorrect = null;
+                                $pointsEarned = null;
                             }
                         }
 
@@ -405,21 +409,22 @@ class StudentAnswerController extends Controller
 
                         // Open-ended responses are intentionally not auto-marked.
                         // They remain available for teacher review/manual grading.
-                        $isCorrect = false;
-                        $pointsEarned = 0.0;
+                        $isCorrect = $isPractice ? false : null;
+                        $pointsEarned = $isPractice ? 0.0 : null;
                         $answerToStore = $studentText;
                         break;
                     }
 
                 default: {
                         $answerToStore = $parseMaybeJson($studentRaw);
-                        $isCorrect = false;
-                        $pointsEarned = 0.0;
+                        $isCorrect = $isPractice ? false : null;
+                        $pointsEarned = $isPractice ? 0.0 : null;
                         break;
                     }
             }
 
-            $totalScore += (float)$pointsEarned;
+            if (!$isPractice && $pointsEarned === null) $pendingReviewCount++;
+            $totalScore += (float) ($pointsEarned ?? 0);
 
             StudentAnswer::updateOrCreate(
                 [
@@ -429,7 +434,7 @@ class StudentAnswerController extends Controller
                 [
                     'answer' => $answerToStore,
                     'is_correct' => $isCorrect,
-                    'points_earned' => round((float)$pointsEarned, 2),
+                    'points_earned' => $pointsEarned === null ? null : round((float)$pointsEarned, 2),
                     'confidence_score' => $confidenceScoreToSave,
                     'submitted_at' => now(),
                 ]
@@ -450,17 +455,20 @@ class StudentAnswerController extends Controller
 
         // 6) Finalize assessment
         $studentAssessment->update([
-            'score' => round($totalScore, 2),
+            'score' => $pendingReviewCount > 0 && !$isPractice ? null : round($totalScore, 2),
             'max_score' => round($maxScore, 2),
-            'status' => 'completed',
+            'status' => $isPractice ? 'completed' : ($pendingReviewCount > 0 ? 'under_review' : 'graded'),
             'completed_at' => now(),
         ]);
 
         return response()->json([
-            'message' => 'Answers submitted successfully',
-            'score' => round($totalScore, 2),
+            'message' => $pendingReviewCount > 0
+                ? 'Assessment submitted. Your final result will be available after teacher review.'
+                : 'Answers submitted successfully',
+            'score' => $pendingReviewCount > 0 ? null : round($totalScore, 2),
             'max_score' => round($maxScore, 2),
-            'status' => 'completed',
+            'pending_review_count' => $pendingReviewCount,
+            'status' => $isPractice ? 'completed' : ($pendingReviewCount > 0 ? 'under_review' : 'graded'),
             'completed_at' => $studentAssessment->completed_at,
             'student_assessment_id' => $studentAssessment->id,
         ]);
