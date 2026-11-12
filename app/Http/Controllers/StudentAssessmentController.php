@@ -154,11 +154,22 @@ class StudentAssessmentController extends Controller
                 $query->where('type', '!=', 'practice');
             })
             ->with([
-                'assessment:id,title,type,creator_id,grade_subject_id,created_at',
+                // The assessments table has no grade_subject_id. Resolve curriculum
+                // metadata via the relationships already used by StudentResultsController.
+                'assessment:id,title,type,purpose,creator_id,learning_period_id,created_at',
                 'assessment.creator:id,name',
-                'assessment.gradeSubject:id,subject_id,grade_level_id',
-                'assessment.gradeSubject.subject:id,name',
-                'assessment.gradeSubject.gradeLevel:id,grade_name',
+                'assessment.learningPeriod:id,title,group_id,grade_subject_id',
+                'assessment.learningPeriod.gradeSubject:id,subject_id,grade_level_id',
+                'assessment.learningPeriod.gradeSubject.subject:id,name',
+                'assessment.learningPeriod.gradeSubject.gradeLevel:id,grade_name',
+                'assessment.units:id,name,grade_subject_id',
+                'assessment.units.gradeSubject:id,subject_id,grade_level_id',
+                'assessment.units.gradeSubject.subject:id,name',
+                'assessment.units.gradeSubject.gradeLevel:id,grade_name',
+                'assessment.topics:id,topic_name,grade_subject_id,unit_id',
+                'assessment.topics.gradeSubject:id,subject_id,grade_level_id',
+                'assessment.topics.gradeSubject.subject:id,name',
+                'assessment.topics.gradeSubject.gradeLevel:id,grade_name',
                 'assessment.groups:id,group_name,class_code',
             ])
             ->orderByDesc('assigned_at')
@@ -182,6 +193,9 @@ class StudentAssessmentController extends Controller
         $data = $items->map(function ($item) use ($formativeAttempts) {
             $assessment = $item->assessment;
             $attempt = $formativeAttempts->get($item->id);
+            $gradeSubject = $assessment?->learningPeriod?->gradeSubject
+                ?: $assessment?->units?->first()?->gradeSubject
+                ?: $assessment?->topics?->first()?->gradeSubject;
 
             return [
                 'student_assessment_id' => $item->id,
@@ -196,8 +210,8 @@ class StudentAssessmentController extends Controller
 
                 'teacher' => $assessment?->creator?->name,
 
-                'subject' => $assessment?->gradeSubject?->subject?->name,
-                'grade' => $assessment?->gradeSubject?->gradeLevel?->grade_name,
+                'subject' => $gradeSubject?->subject?->name,
+                'grade' => $gradeSubject?->gradeLevel?->grade_name,
 
                 'groups' => $assessment?->groups
                     ?->map(fn ($group) => [
