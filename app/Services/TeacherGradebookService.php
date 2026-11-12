@@ -954,7 +954,7 @@ class TeacherGradebookService
         });
     }
 
-    /** Explicit teacher approval publishes results after all responses have been confirmed. */
+    /** Publish assigned results once all genuinely ungraded responses have marks. */
     public function publishAssignedResults(User $teacher, StudentAssessment $attempt): array
     {
         $this->ensureTeacherOrAdmin($teacher);
@@ -970,8 +970,8 @@ class TeacherGradebookService
 
             $answers = $attempt->studentAnswers()->get();
             abort_if($answers->isEmpty(), 422, 'No submitted answers to publish.');
-            $unreviewed = $answers->filter(fn ($answer) => $answer->reviewed_at === null || $answer->points_earned === null)->count();
-            abort_if($unreviewed > 0, 422, "Review all questions before publishing. {$unreviewed} remain.");
+            $ungraded = $answers->filter(fn ($answer) => $answer->points_earned === null)->count();
+            abort_if($ungraded > 0, 422, "Grade the {$ungraded} unmarked response(s) before publishing. Automatically graded answers do not require confirmation.");
             $score = round((float) $answers->sum('points_earned'), 2);
             $attempt->update(['score' => $score, 'status' => 'graded']);
             return ['student_assessment_id' => $attempt->id, 'assessment_status' => 'graded', 'assessment_score' => $score, 'assessment_max_score' => (float) $attempt->max_score];
