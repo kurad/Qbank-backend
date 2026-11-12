@@ -461,6 +461,10 @@ class StudentAnswerController extends Controller
             'completed_at' => now(),
         ]);
 
+        // Completed attempts must no longer expose editable drafts.
+        DB::table('student_assessment_drafts')
+            ->where('student_assessment_id', $studentAssessment->id)->delete();
+
         return response()->json([
             'message' => $pendingReviewCount > 0
                 ? 'Assessment submitted. Your final result will be available after teacher review.'

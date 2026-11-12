@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 use App\Models\StudentAnswer;
 use App\Models\StudentAssessment;
 use App\Models\LearnerFormativeAttempt;
+use Illuminate\Support\Facades\DB;
 use App\Services\LearningPeriodFormativeService;
 
 class StudentAssessmentController extends Controller
@@ -52,6 +53,68 @@ class StudentAssessmentController extends Controller
             'student_assessment' => $studentAssessment,
         ]);
     }
+    /**
+     * Drafts are not marked or submitted answers. They belong to exactly one
+     * authenticated student attempt, and cannot be changed after submission.
+     */
+    public function getDraft($assessmentId)
+    {
+        $attempt = StudentAssessment::where('student_id', auth()->id())
+            ->where('assessment_id', $assessmentId)->firstOrFail();
+        abort_unless($attempt->status === 'in_progress', 409, 'Assessment is no longer in progress.');
+
+        $draft = DB::table('student_assessment_drafts')
+            ->where('student_assessment_id', $attempt->id)->first();
+        return response()->json([
+            'answers' => $draft ? json_decode($draft->answers, true) : new \stdClass(),
+            'page_index' => $draft ? (int) $draft->page_index : 0,
+            'saved_at' => $draft->updated_at ?? null,
+        ]);
+    }
+
+    public function saveDraft(Request $request, $assessmentId)
+    {
+        $validated = $request->validate([
+            'answers' => 'required|array',
+            'page_index' => 'required|integer|min:0',
+        ]);
+
+        $attempt = StudentAssessment::where('student_id', auth()->id())
+            ->where('assessment_id', $assessmentId)->firstOrFail();
+        abort_unless($attempt->status === 'in_progress', 409, 'Assessment is no longer in progress.');
+        abort_if(count($validated['answers']) > 500, 422, 'Too many draft answers.');
+
+        // Accept only question IDs actually belonging to this assessment.
+        // The question payload is otherwise kept as-is, including text, arrays
+        // for multiple choice and matching, and empty values for cleared answers.
+        $assessment = $attempt->assessment;
+        $assessmentQuestionIds = $assessment->questions()->with('question.subQuestions')->get()
+            ->flatMap(function ($aq) {
+                $question = $aq->question;
+                if (!$question) return [];
+                return collect([$question->id])->concat($question->subQuestions->pluck('id'));
+            })->map(fn ($id) => (string) $id)->unique()->all();
+        $allowed = array_fill_keys($assessmentQuestionIds, true);
+        foreach ($validated['answers'] as $questionId => $answer) {
+            abort_unless(ctype_digit((string) $questionId) && isset($allowed[(string) $questionId]),
+                422, 'Draft includes a question not in this assessment.');
+            abort_unless(is_string($answer) || is_array($answer) || $answer === null
+                || is_numeric($answer) || is_bool($answer), 422, 'Invalid answer format.');
+        }
+        $timestamp = now();
+        DB::table('student_assessment_drafts')->updateOrInsert(
+            ['student_assessment_id' => $attempt->id],
+            [
+                'answers' => json_encode($validated['answers'], JSON_UNESCAPED_UNICODE),
+                'page_index' => $validated['page_index'],
+                'updated_at' => $timestamp,
+                // updateOrInsert sets this on both paths; acceptable for draft history.
+                'created_at' => $timestamp,
+            ]
+        );
+        return response()->json(['saved' => true, 'saved_at' => $timestamp->toIso8601String()]);
+    }
+
     public function saveAnswer(Request $request)
     {
         $validated = $request->validate([

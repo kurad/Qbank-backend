@@ -55,7 +55,6 @@ use App\Http\Controllers\StudentPracticeController;
 use App\Http\Controllers\TeacherLearningActivityController;
 use App\Http\Controllers\StudentFormativeAssessmentController;
 use App\Http\Controllers\StudentLearnerFormativeController;
-
 Route::get('/email/verify/{id}/{hash}', function (Request $request, $id, $hash) {
     $user = User::findOrFail($id);
 
@@ -425,7 +424,7 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     Route::post('/assessments/{id}/assign-group', [AssessmentController::class, 'assignGroup']);
     Route::delete('/assessments/{id}', [AssessmentController::class, 'destroy']);
     Route::delete('/assessments/{assessment}/questions/{question}', [AssessmentController::class, 'removeQuestion']);
-    Route::get('/student/my-assessments', [StudentAssessmentController::class, 'assessmentHub']);
+
 
     /*
     |--------------------------------------------------------------------------
@@ -491,9 +490,12 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     |--------------------------------------------------------------------------
     */
 
+    Route::get('/student/my-assessments', [StudentAssessmentController::class, 'assessmentHub']);
     Route::get('/assessments', [StudentAssessmentController::class, 'myAssessments']);
     Route::get('/assessments/{studentAssessment}', [StudentAssessmentController::class, 'show']);
     Route::post('/assessments/{assessment}/start', [StudentAssessmentController::class, 'startAssessment']);
+    Route::get('/assessments/{assessment}/draft', [StudentAssessmentController::class, 'getDraft']);
+    Route::put('/assessments/{assessment}/draft', [StudentAssessmentController::class, 'saveDraft']);
     Route::post('/answers', [StudentAssessmentController::class, 'saveAnswer']);
     Route::post('/assessments/{studentAssessment}/submit', [StudentAssessmentController::class, 'submit']);
     Route::post('/assessments/{studentAssessment}/finalize', [StudentAssessmentController::class, 'finalize']);
@@ -550,7 +552,7 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     Route::post('/curriculum-analyses/{curriculumAnalysis}/approve', [CurriculumAnalysisController::class, 'approve']);
     Route::post('/course-materials/{courseMaterial}/extract', [CourseMaterialController::class, 'extract']);
     Route::post('/course-materials/{courseMaterial}/analyze-content', [CourseMaterialController::class, 'analyzeContent']);
-    Route::post('/course-materials/{courseMaterial}/reanalyze', [CourseMaterialController::class, 'reanalyze']);
+    Route::post('/course-materials/{courseMaterial}/reanalyze',[CourseMaterialController::class, 'reanalyze']);
     Route::get('/course-materials/processing-status', [CourseMaterialController::class, 'processingStatuses']);
     Route::get('/course-materials/{courseMaterial}/processing-status', [CourseMaterialController::class, 'processingStatus']);
 
