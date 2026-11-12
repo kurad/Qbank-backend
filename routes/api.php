@@ -554,6 +554,8 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     Route::get('/curriculum-analyses/{curriculumAnalysis}/coverage', [ObjectiveCoverageController::class, 'index']);
     Route::post('/curriculum-analyses/{curriculumAnalysis}/coverage/check-all', [ObjectiveCoverageController::class, 'checkAll']);
     Route::post('/curriculum-analyses/{curriculumAnalysis}/coverage/{learningObjective}/recheck', [ObjectiveCoverageController::class, 'recheck']);
+    Route::get('/curriculum-analyses/{curriculumAnalysis}/coverage/{learningObjective}/content', [ObjectiveCoverageController::class, 'content']);
+    Route::put('/curriculum-analyses/{curriculumAnalysis}/coverage/{learningObjective}/content', [ObjectiveCoverageController::class, 'saveContent']);
     Route::post('/course-materials/{courseMaterial}/extract', [CourseMaterialController::class, 'extract']);
     Route::post('/course-materials/{courseMaterial}/analyze-content', [CourseMaterialController::class, 'analyzeContent']);
     Route::post('/course-materials/{courseMaterial}/reanalyze',[CourseMaterialController::class, 'reanalyze']);

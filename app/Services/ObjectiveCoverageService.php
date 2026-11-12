@@ -60,6 +60,14 @@ class ObjectiveCoverageService
                 $evidence[] = 'Approved supporting source #'.$source->id.":\n".mb_substr($source->cached_content, 0, 4500);
             }
         }
+        // Teacher-authored, explicitly approved supplements are objective-scoped.
+        // Include them in the coverage evidence and therefore in the content freshness hash.
+        $note = DB::table('objective_support_notes')
+            ->where('learning_objective_id', $objective->id)
+            ->whereNotNull('approved_at')->first();
+        if ($note && trim((string) $note->content) !== '') {
+            array_unshift($evidence, 'Approved teacher supplement for objective #'.$objective->id.":\n".$note->content);
+        }
         $evidence = array_slice($evidence, 0, 16);
         return ['text' => implode("\n\n---\n\n", $evidence),
             'hash' => hash('sha256', $objective->id.'|'.$objective->updated_at.'|'.implode('|', $evidence))];

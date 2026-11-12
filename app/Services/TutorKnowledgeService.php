@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\KnowledgeChunk;
 use App\Models\TutorSession;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 
 class TutorKnowledgeService
 {
@@ -90,6 +91,21 @@ class TutorKnowledgeService
                 ['completed', 'mastered', 'needs_review', 'material_gap'],
                 true
             ));
+
+        // Teacher-authored supplements are approved content, not automatic AI suggestions.
+        // Attach only for the current active objective to avoid leaking across topics.
+        if ($currentObjective && $currentObjective->learning_objective_id) {
+            $note = DB::table('objective_support_notes')
+                ->where('learning_objective_id', $currentObjective->learning_objective_id)
+                ->whereNotNull('approved_at')->first();
+            if ($note && trim((string) $note->content) !== '') {
+                $synthetic = new \stdClass();
+                $synthetic->content = $note->content;
+                $synthetic->courseMaterial = null;
+                $synthetic->tutor_material_scope = 'teacher_approved_objective_supplement';
+                $ranked->prepend($synthetic);
+            }
+        }
 
         if (
             !$currentObjective

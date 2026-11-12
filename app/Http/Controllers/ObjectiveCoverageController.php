@@ -6,6 +6,7 @@ use App\Models\CurriculumAnalysis;
 use App\Models\LearningObjective;
 use App\Services\ObjectiveCoverageService;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 class ObjectiveCoverageController extends CurriculumAnalysisController
@@ -58,4 +59,31 @@ class ObjectiveCoverageController extends CurriculumAnalysisController
         RecheckCurriculumObjectiveCoverage::dispatch($learningObjective->id)->onQueue('default');
         return response()->json(['message'=>'Objective recheck queued.'],202);
     }
+    private function checkedObjective(CurriculumAnalysis $analysis, LearningObjective $objective, ObjectiveCoverageService $service): void
+    {
+        $this->guard($analysis);
+        abort_unless($service->objectives($analysis)->contains('id', $objective->id), 404);
+    }
+
+    public function content(CurriculumAnalysis $curriculumAnalysis, LearningObjective $learningObjective, ObjectiveCoverageService $service): JsonResponse
+    {
+        $this->checkedObjective($curriculumAnalysis, $learningObjective, $service);
+        $note = DB::table('objective_support_notes')->where('learning_objective_id', $learningObjective->id)->first();
+        return response()->json(['data' => ['content' => $note->content ?? '', 'approved_at' => $note->approved_at ?? null]]);
+    }
+
+    public function saveContent(Request $request, CurriculumAnalysis $curriculumAnalysis, LearningObjective $learningObjective, ObjectiveCoverageService $service): JsonResponse
+    {
+        $this->checkedObjective($curriculumAnalysis, $learningObjective, $service);
+        $data = $request->validate(['content' => ['required', 'string', 'min:20', 'max:30000']]);
+        $now = now();
+        DB::table('objective_support_notes')->updateOrInsert(
+            ['learning_objective_id' => $learningObjective->id],
+            ['content' => trim($data['content']), 'approved_by' => $request->user()->id,
+             'approved_at' => $now, 'updated_at' => $now, 'created_at' => $now]
+        );
+        // Deliberately do not run verification automatically. The teacher rechecks this objective when ready.
+        return response()->json(['message' => 'Supporting content approved. Recheck this objective to refresh its coverage result.']);
+    }
+
 }
