@@ -12,6 +12,7 @@ use App\Http\Controllers\ClassInvitationController;
 use App\Http\Controllers\CourseMaterialController;
 use App\Http\Controllers\CourseMaterialSupportingSourceController;
 use App\Http\Controllers\CurriculumAnalysisController;
+use App\Http\Controllers\ObjectiveCoverageController;
 use App\Http\Controllers\GradeLevelController;
 use App\Http\Controllers\GradeSubjectController;
 use App\Http\Controllers\GroupController;
@@ -550,6 +551,9 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     Route::post('/curriculum-analyses/{curriculumAnalysis}/refine', [CurriculumAnalysisController::class, 'refine']);
     Route::put('/curriculum-analyses/{curriculumAnalysis}', [CurriculumAnalysisController::class, 'update']);
     Route::post('/curriculum-analyses/{curriculumAnalysis}/approve', [CurriculumAnalysisController::class, 'approve']);
+    Route::get('/curriculum-analyses/{curriculumAnalysis}/coverage', [ObjectiveCoverageController::class, 'index']);
+    Route::post('/curriculum-analyses/{curriculumAnalysis}/coverage/check-all', [ObjectiveCoverageController::class, 'checkAll']);
+    Route::post('/curriculum-analyses/{curriculumAnalysis}/coverage/{learningObjective}/recheck', [ObjectiveCoverageController::class, 'recheck']);
     Route::post('/course-materials/{courseMaterial}/extract', [CourseMaterialController::class, 'extract']);
     Route::post('/course-materials/{courseMaterial}/analyze-content', [CourseMaterialController::class, 'analyzeContent']);
     Route::post('/course-materials/{courseMaterial}/reanalyze',[CourseMaterialController::class, 'reanalyze']);
