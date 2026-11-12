@@ -20,6 +20,11 @@ class StudentAssessmentController extends Controller
         $studentId = auth()->id();
         $assessment = Assessment::findOrFail($assessmentId);
 
+        // Personalized formative attempts are started by
+        // StudentLearnerFormativeController, not the shared assessment route.
+        abort_if($assessment->purpose === 'learner_personalized_formative', 409,
+            'Open your personalized formative assessment from the learner attempt.');
+
         $formativeService->assertStudentReadyForAssessment(
             auth()->user(),
             $assessment
@@ -323,6 +328,13 @@ class StudentAssessmentController extends Controller
             $groupAssessments = Assessment::query()
                 ->where('status', 'published')
                 ->where('type', '!=', 'practice')
+                // A shared personalized-formative container is not an
+                // assignment for every student in the group. Only students
+                // with a prepared learner attempt should see it.
+                ->where(function ($query) {
+                    $query->whereNull('purpose')
+                        ->orWhere('purpose', '!=', 'learner_personalized_formative');
+                })
                 ->where('creator_id', '!=', $student->id)
                 ->whereHas('groups', fn ($query) => $query->whereIn('groups.id', $groupIds))
                 ->when(count($known) > 0, fn ($query) => $query->whereNotIn('id', $known))

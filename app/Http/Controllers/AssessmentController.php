@@ -252,6 +252,47 @@ class AssessmentController extends Controller
     {
         $assessment = Assessment::findOrFail($id);
 
+        // Personalized formative questions belong to the student's attempt,
+        // not to the shared assessment_questions pivot. Never serve the empty
+        // shared container as a normal assessment (or mix learners' questions).
+        if ($assessment->purpose === 'learner_personalized_formative') {
+            $student = Auth::user();
+            abort_unless($student && $student->role === 'student', 403);
+
+            $attempt = LearnerFormativeAttempt::query()
+                ->where('student_id', $student->id)
+                ->where('assessment_id', $assessment->id)
+                ->latest('id')
+                ->first();
+
+            if (!$attempt) {
+                return response()->json([
+                    'message' => 'Your personalized questions have not been prepared yet. Open your AI Tutor learning period to prepare your formative assessment.',
+                ], 409);
+            }
+
+            if ($attempt->status === 'completed') {
+                return response()->json([
+                    'personalized_formative_attempt_id' => $attempt->id,
+                    'student_assessment_id' => $attempt->student_assessment_id,
+                    'completed' => true,
+                ]);
+            }
+
+            if (!in_array($attempt->status, ['ready', 'in_progress'], true)) {
+                return response()->json([
+                    'message' => $attempt->status === 'failed'
+                        ? ($attempt->error_message ?: 'Question preparation failed. Please retry from your AI Tutor learning period.')
+                        : 'Your personalized questions are still being prepared. Please return to your AI Tutor learning period.',
+                    'preparation_status' => $attempt->status,
+                ], 409);
+            }
+
+            return response()->json([
+                'personalized_formative_attempt_id' => $attempt->id,
+            ]);
+        }
+
         $formativeService->assertStudentReadyForAssessment(
             Auth::user(),
             $assessment
