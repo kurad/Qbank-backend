@@ -306,8 +306,22 @@ class GroupController extends Controller
 
         $assessments = $group->assessments()
             ->withCount('studentAssessments')
+            ->when($user->role === 'student', function ($query) use ($user) {
+                // Only expose the authenticated learner's own attempt.
+                $query->with(['studentAssessments' => function ($attempts) use ($user) {
+                    $attempts->where('student_id', $user->id);
+                }]);
+            })
             ->latest('assessment_groups.created_at')
             ->get();
+
+        if ($user->role === 'student') {
+            $assessments->each(function ($assessment) {
+                $attempt = $assessment->studentAssessments->first();
+                $assessment->setAttribute('student_assessment', $attempt);
+                $assessment->unsetRelation('studentAssessments');
+            });
+        }
 
         return response()->json($assessments);
     }

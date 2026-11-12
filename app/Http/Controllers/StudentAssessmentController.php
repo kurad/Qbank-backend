@@ -23,17 +23,30 @@ class StudentAssessmentController extends Controller
             auth()->user(),
             $assessment
         );
+        $student = auth()->user();
+        abort_unless($student && $student->role === 'student', 403);
+        $existing = StudentAssessment::where('student_id', $studentId)
+            ->where('assessment_id', $assessmentId)->first();
+        $isOwnPractice = $assessment->type === 'practice'
+            && (int) $assessment->creator_id === (int) $studentId;
+        $isGroupAssignment = $assessment->groups()
+            ->whereIn('groups.id', $student->groups()->pluck('groups.id'))->exists();
+        abort_unless($existing || $isOwnPractice || $isGroupAssignment, 403,
+            'This assessment is not assigned to you.');
+        if ($existing && in_array($existing->status, ['completed', 'graded', 'under_review'], true)) {
+            return response()->json([
+                'message' => 'Assessment already submitted.',
+                'student_assessment' => $existing,
+            ], 409);
+        }
         $studentAssessment = StudentAssessment::firstOrCreate(
-            [
-                'student_id' => $studentId,
-                'assessment_id' => $assessmentId,
-            ],
-            [
-                'assigned_by' => $assessment->creator_id,
-                'assigned_at' => now(),
-                'status' => 'in_progress',
-            ]
+            ['student_id' => $studentId, 'assessment_id' => $assessmentId],
+            ['assigned_by' => $assessment->creator_id, 'assigned_at' => now(),
+             'status' => 'in_progress']
         );
+        if (!in_array($studentAssessment->status, ['in_progress'], true)) {
+            $studentAssessment->update(['status' => 'in_progress']);
+        }
         return response()->json([
             'message' => 'Assessment started successfully',
             'student_assessment' => $studentAssessment,
@@ -198,6 +211,16 @@ class StudentAssessmentController extends Controller
                 'title' => $assessment->title ?: 'Assessment',
                 'type' => $assessment->type ?: 'assessment',
                 'status' => $item?->status ?: 'pending',
+                // Display state; the persisted status remains unchanged.
+                'lifecycle_status' => match ($item?->status) {
+                    'in_progress' => 'started',
+                    'under_review' => 'submitted',
+                    'graded' => 'results_ready',
+                    'completed' => 'submitted',
+                    default => 'not_started',
+                },
+                'results_available' => $item && in_array($item->status, ['completed', 'graded', 'under_review'], true),
+                'final_result_pending' => $item?->status === 'under_review',
                 'assigned_at' => $item?->assigned_at?->toIso8601String()
                     ?? $assessment->created_at?->toIso8601String(),
                 'completed_at' => $item?->completed_at?->toIso8601String(),
