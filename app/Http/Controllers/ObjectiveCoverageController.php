@@ -68,7 +68,10 @@ class ObjectiveCoverageController extends CurriculumAnalysisController
     public function content(CurriculumAnalysis $curriculumAnalysis, LearningObjective $learningObjective, ObjectiveCoverageService $service): JsonResponse
     {
         $this->checkedObjective($curriculumAnalysis, $learningObjective, $service);
-        $note = DB::table('objective_support_notes')->where('learning_objective_id', $learningObjective->id)->first();
+        $gradeSubjectId = $learningObjective->topic?->grade_subject_id;
+        abort_unless($gradeSubjectId, 422, 'Objective must belong to a teaching area.');
+        $note = DB::table('objective_support_notes')->where('learning_objective_id', $learningObjective->id)
+            ->where('grade_subject_id', $gradeSubjectId)->first();
         return response()->json(['data' => ['content' => $note->content ?? '', 'approved_at' => $note->approved_at ?? null]]);
     }
 
@@ -77,10 +80,13 @@ class ObjectiveCoverageController extends CurriculumAnalysisController
         $this->checkedObjective($curriculumAnalysis, $learningObjective, $service);
         $data = $request->validate(['content' => ['required', 'string', 'min:20', 'max:30000']]);
         $now = now();
+        $gradeSubjectId = $learningObjective->topic?->grade_subject_id;
+        abort_unless($gradeSubjectId, 422, 'Objective must belong to a teaching area.');
         DB::table('objective_support_notes')->updateOrInsert(
-            ['learning_objective_id' => $learningObjective->id],
-            ['content' => trim($data['content']), 'approved_by' => $request->user()->id,
-             'approved_at' => $now, 'updated_at' => $now, 'created_at' => $now]
+            ['learning_objective_id' => $learningObjective->id, 'grade_subject_id' => $gradeSubjectId],
+            ['teacher_id' => $request->user()->id, 'content' => trim($data['content']),
+             'approved_by' => $request->user()->id, 'approved_at' => $now,
+             'updated_at' => $now]
         );
         // Deliberately do not run verification automatically. The teacher rechecks this objective when ready.
         return response()->json(['message' => 'Supporting content approved. Recheck this objective to refresh its coverage result.']);

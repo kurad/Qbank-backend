@@ -97,6 +97,7 @@ class TutorKnowledgeService
         if ($currentObjective && $currentObjective->learning_objective_id) {
             $note = DB::table('objective_support_notes')
                 ->where('learning_objective_id', $currentObjective->learning_objective_id)
+                ->where('grade_subject_id', $session->grade_subject_id)
                 ->whereNotNull('approved_at')->first();
             if ($note && trim((string) $note->content) !== '') {
                 $synthetic = new \stdClass();

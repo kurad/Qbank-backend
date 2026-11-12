@@ -64,6 +64,7 @@ class ObjectiveCoverageService
         // Include them in the coverage evidence and therefore in the content freshness hash.
         $note = DB::table('objective_support_notes')
             ->where('learning_objective_id', $objective->id)
+            ->where('grade_subject_id', $topic->grade_subject_id)
             ->whereNotNull('approved_at')->first();
         if ($note && trim((string) $note->content) !== '') {
             array_unshift($evidence, 'Approved teacher supplement for objective #'.$objective->id.":\n".$note->content);
