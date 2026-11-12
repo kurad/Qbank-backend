@@ -978,6 +978,69 @@ class TeacherGradebookService
         });
     }
 
+
+    /** Assessment-wide summary used by the review queue; no student scores are exposed. */
+    public function assignedPublicationStatus(User $teacher, Assessment $assessment, ?int $groupId = null): array
+    {
+        $this->ensureTeacherOrAdmin($teacher);
+        abort_if(in_array($assessment->type, ['formative', 'practice'], true), 422, 'This is not an assigned assessment.');
+        $accessibleGroups = $this->accessibleGroups($teacher);
+        $assignedGroups = $assessment->groups()->whereIn('groups.id', $accessibleGroups->pluck('id'))->get();
+        abort_if($assignedGroups->isEmpty(), 403, 'You cannot review this assessment.');
+        if ($groupId !== null) {
+            abort_if(!$assignedGroups->contains('id', $groupId), 403, 'This assessment is not assigned to that class.');
+            $assignedGroups = $assignedGroups->where('id', $groupId);
+        }
+        $studentIds = $assignedGroups->flatMap(fn ($group) => $group->students->pluck('id'))->unique()->values();
+        $attempts = StudentAssessment::query()
+            ->where('assessment_id', $assessment->id)
+            ->whereIn('student_id', $studentIds)
+            ->whereIn('status', ['under_review', 'graded'])
+            ->with('studentAnswers:id,student_assessment_id,points_earned')
+            ->get();
+        $pending = $attempts->where('status', 'under_review');
+        $ready = $pending->filter(fn ($a) => $a->studentAnswers->isNotEmpty() &&
+            $a->studentAnswers->every(fn ($answer) => $answer->points_earned !== null));
+        return [
+            'assessment_id' => $assessment->id,
+            'submitted' => $attempts->count(),
+            'already_published' => $attempts->where('status', 'graded')->count(),
+            'awaiting_publication' => $pending->count(),
+            'ready' => $ready->count(),
+            'needs_marking' => $pending->count() - $ready->count(),
+            'ready_student_ids' => $ready->pluck('student_id')->values()->all(),
+            'pending_student_ids' => $pending->pluck('student_id')->values()->all(),
+        ];
+    }
+
+    /** Publish all reviewed submissions in one transaction; never release partial results. */
+    public function publishAllAssignedResults(User $teacher, Assessment $assessment, ?int $groupId = null): array
+    {
+        return DB::transaction(function () use ($teacher, $assessment, $groupId) {
+            // The same authorization and class scope are checked inside the transaction.
+            $status = $this->assignedPublicationStatus($teacher, $assessment, $groupId);
+            abort_if($status['awaiting_publication'] === 0, 422, 'There are no unpublished submissions for this assessment.');
+            abort_if($status['needs_marking'] > 0, 422,
+                $status['needs_marking'] . ' submission(s) still contain ungraded responses.');
+            $attempts = StudentAssessment::query()
+                ->where('assessment_id', $assessment->id)
+                ->whereIn('student_id', $status['pending_student_ids'])
+                ->where('status', 'under_review')
+                ->lockForUpdate()->get();
+            abort_if($attempts->count() !== $status['awaiting_publication'], 409, 'Submissions changed. Refresh and retry.');
+            foreach ($attempts as $attempt) {
+                $answers = $attempt->studentAnswers()->get();
+                abort_if($answers->isEmpty() || $answers->contains(fn ($a) => $a->points_earned === null),
+                    409, 'One or more submissions are no longer ready for publication.');
+                $attempt->update([
+                    'score' => round((float) $answers->sum('points_earned'), 2),
+                    'status' => 'graded',
+                ]);
+            }
+            return ['assessment_id' => $assessment->id, 'published' => $attempts->count()];
+        });
+    }
+
     public function reviewFormativeAnswer(
         User $teacher,
         StudentAnswer $answer,

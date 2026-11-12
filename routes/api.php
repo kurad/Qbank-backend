@@ -612,6 +612,8 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
         Route::put('/formative-answers/{answer}', [TeacherGradebookController::class, 'reviewFormativeAnswer']);
         Route::put('/assigned-answers/{answer}', [TeacherGradebookController::class, 'reviewAssignedAnswer']);
         Route::post('/assigned-assessments/{attempt}/publish', [TeacherGradebookController::class, 'publishAssignedResults']);
+        Route::get('/assigned-assessments/{assessment}/publication-status', [TeacherGradebookController::class, 'assignedPublicationStatus']);
+        Route::post('/assigned-assessments/{assessment}/publish-all', [TeacherGradebookController::class, 'publishAllAssignedResults']);
         Route::get('/students/{student}', [TeacherGradebookController::class, 'student']);
         Route::put('/answers/{answer}', [TeacherGradebookController::class, 'reviewAnswer']);
     });

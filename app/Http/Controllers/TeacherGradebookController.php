@@ -85,6 +85,22 @@ class TeacherGradebookController extends Controller
         ]);
     }
 
+    public function assignedPublicationStatus(Request $request, \App\Models\Assessment $assessment)
+    {
+        $validated = $request->validate(['group_id' => ['nullable', 'integer', 'min:1']]);
+        return response()->json(['data' => $this->gradebook->assignedPublicationStatus(
+            $request->user(), $assessment, isset($validated['group_id']) ? (int) $validated['group_id'] : null
+        )]);
+    }
+
+    public function publishAllAssignedResults(Request $request, \App\Models\Assessment $assessment)
+    {
+        $validated = $request->validate(['group_id' => ['nullable', 'integer', 'min:1']]);
+        return response()->json(['message' => 'Reviewed results published.', 'data' => $this->gradebook->publishAllAssignedResults(
+            $request->user(), $assessment, isset($validated['group_id']) ? (int) $validated['group_id'] : null
+        )]);
+    }
+
     public function reviewQueue(Request $request)
     {
         return response()->json([
