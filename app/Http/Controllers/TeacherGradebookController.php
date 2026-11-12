@@ -65,6 +65,26 @@ class TeacherGradebookController extends Controller
         ]);
     }
 
+    public function reviewAssignedAnswer(Request $request, StudentAnswer $answer)
+    {
+        $validated = $request->validate([
+            'points' => ['required', 'numeric', 'min:0'],
+            'feedback' => ['nullable', 'string', 'max:3000'],
+        ]);
+        return response()->json([
+            'message' => 'Assigned assessment response reviewed.',
+            'data' => $this->gradebook->reviewAssignedAnswer($request->user(), $answer, (float) $validated['points'], $validated['feedback'] ?? null),
+        ]);
+    }
+
+    public function publishAssignedResults(Request $request, \App\Models\StudentAssessment $attempt)
+    {
+        return response()->json([
+            'message' => 'Final results published.',
+            'data' => $this->gradebook->publishAssignedResults($request->user(), $attempt),
+        ]);
+    }
+
     public function reviewQueue(Request $request)
     {
         return response()->json([

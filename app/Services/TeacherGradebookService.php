@@ -545,9 +545,9 @@ class TeacherGradebookService
                     'is_formative' => $attempt->assessment?->type === 'formative',
                     'delivery_mode' => $attempt->assessment?->delivery_mode,
                     'status' => $attempt->status,
-                    'score' => round((float) $attempt->score, 2),
+                    'score' => $attempt->score === null ? null : round((float) $attempt->score, 2),
                     'max_score' => round($maxScore, 2),
-                    'percentage' => $percentage,
+                    'percentage' => $attempt->status === 'under_review' ? null : $percentage,
                     'assigned_at' => optional($attempt->assigned_at)->toDateTimeString(),
                     'completed_at' => optional($attempt->completed_at)->toDateTimeString(),
                     'classes' => $attempt->assessment?->groups?->pluck('group_name')->values()->all() ?? [],
@@ -718,6 +718,12 @@ class TeacherGradebookService
             'studentAssessment.assessment.groups:id,group_name,created_by,grade_subject_id',
         ]);
 
+        // The legacy manual-marking queue must honor the publication gate too.
+        // Otherwise it could publish an assigned score before all questions are reviewed.
+        if (!in_array($answer->studentAssessment?->assessment?->type, ['formative', 'practice'], true)) {
+            return $this->reviewAssignedAnswer($teacher, $answer, $points, $feedback);
+        }
+
         abort_unless(
             $answer->question?->question_type === 'open_ended',
             422,
@@ -887,6 +893,89 @@ class TeacherGradebookService
                 ];
             })
             ->values();
+    }
+
+    /**
+     * Record a teacher's assessment of an assigned response without exposing a score.
+     * This applies to auto-graded and ungraded responses alike.
+     */
+    public function reviewAssignedAnswer(User $teacher, StudentAnswer $answer, float $points, ?string $feedback = null): array
+    {
+        $this->ensureTeacherOrAdmin($teacher);
+
+        return DB::transaction(function () use ($teacher, $answer, $points, $feedback) {
+            $answer = StudentAnswer::query()->lockForUpdate()->findOrFail($answer->id);
+            $answer->load(['question:id,marks', 'studentAssessment.assessment.groups:id,group_name,created_by,grade_subject_id']);
+            $attempt = $answer->studentAssessment;
+            $assessment = $attempt?->assessment;
+            abort_unless($attempt && $assessment && !in_array($assessment->type, ['formative', 'practice'], true), 422, 'Use the formative review workspace for formative assessments.');
+            abort_unless(in_array($attempt->status, ['under_review', 'graded'], true), 422, 'Only submitted assessment responses can be reviewed.');
+            $accessibleIds = $this->accessibleGroups($teacher)->pluck('id');
+            abort_if(($assessment->groups?->pluck('id') ?? collect())->intersect($accessibleIds)->isEmpty(), 403, 'You cannot review this assessment.');
+
+            $max = (float) ($answer->question?->marks ?? 0);
+            abort_if(!is_finite($points) || $points < 0 || $points > $max, 422, "Mark must be between 0 and {$max}.");
+            $previousPoints = (float) ($answer->points_earned ?? 0);
+            $previousCorrect = $answer->is_correct;
+            $newCorrect = $max > 0 && $points >= $max;
+
+            StudentAnswerMarkReview::create([
+                'student_answer_id' => $answer->id,
+                'student_assessment_id' => $attempt->id,
+                'reviewed_by' => $teacher->id,
+                'previous_points' => $previousPoints,
+                'new_points' => $points,
+                'previous_is_correct' => $previousCorrect,
+                'new_is_correct' => $newCorrect,
+                'feedback' => $feedback ? trim($feedback) : null,
+            ]);
+            $answer->update([
+                'points_earned' => round($points, 2),
+                'is_correct' => $newCorrect,
+                'reviewed_by' => $teacher->id,
+                'reviewed_at' => now(),
+                'teacher_feedback' => $feedback ? trim($feedback) : null,
+            ]);
+
+            // A previously published legacy assessment stays published when corrected.
+            // Unpublished assessments remain under review until an explicit publish action.
+            if ($attempt->status === 'graded') {
+                $attempt->update(['score' => round((float) $attempt->studentAnswers()->sum('points_earned'), 2)]);
+            }
+
+            return [
+                'answer_id' => $answer->id,
+                'points_earned' => (float) $answer->points_earned,
+                'reviewed_at' => $answer->reviewed_at?->toDateTimeString(),
+                'assessment_status' => $attempt->status,
+                'assessment_score' => $attempt->status === 'graded' ? (float) $attempt->score : null,
+                'assessment_max_score' => (float) $attempt->max_score,
+            ];
+        });
+    }
+
+    /** Explicit teacher approval publishes results after all responses have been confirmed. */
+    public function publishAssignedResults(User $teacher, StudentAssessment $attempt): array
+    {
+        $this->ensureTeacherOrAdmin($teacher);
+
+        return DB::transaction(function () use ($teacher, $attempt) {
+            $attempt = StudentAssessment::query()->lockForUpdate()->findOrFail($attempt->id);
+            $attempt->load('assessment.groups:id,group_name,created_by,grade_subject_id');
+            $assessment = $attempt->assessment;
+            abort_unless($assessment && !in_array($assessment->type, ['formative', 'practice'], true), 422, 'Only assigned assessments can be published here.');
+            $accessibleIds = $this->accessibleGroups($teacher)->pluck('id');
+            abort_if(($assessment->groups?->pluck('id') ?? collect())->intersect($accessibleIds)->isEmpty(), 403, 'You cannot publish this assessment.');
+            abort_unless($attempt->status === 'under_review', 422, 'The assessment must be awaiting review.');
+
+            $answers = $attempt->studentAnswers()->get();
+            abort_if($answers->isEmpty(), 422, 'No submitted answers to publish.');
+            $unreviewed = $answers->filter(fn ($answer) => $answer->reviewed_at === null || $answer->points_earned === null)->count();
+            abort_if($unreviewed > 0, 422, "Review all questions before publishing. {$unreviewed} remain.");
+            $score = round((float) $answers->sum('points_earned'), 2);
+            $attempt->update(['score' => $score, 'status' => 'graded']);
+            return ['student_assessment_id' => $attempt->id, 'assessment_status' => 'graded', 'assessment_score' => $score, 'assessment_max_score' => (float) $attempt->max_score];
+        });
     }
 
     public function reviewFormativeAnswer(

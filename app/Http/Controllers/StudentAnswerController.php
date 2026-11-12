@@ -455,9 +455,9 @@ class StudentAnswerController extends Controller
 
         // 6) Finalize assessment
         $studentAssessment->update([
-            'score' => $pendingReviewCount > 0 && !$isPractice ? null : round($totalScore, 2),
+            'score' => !$isPractice && $assessment->type !== 'formative' ? null : ($pendingReviewCount > 0 && !$isPractice ? null : round($totalScore, 2)),
             'max_score' => round($maxScore, 2),
-            'status' => $isPractice ? 'completed' : ($pendingReviewCount > 0 ? 'under_review' : 'graded'),
+            'status' => $isPractice ? 'completed' : ($assessment->type !== 'formative' ? 'under_review' : ($pendingReviewCount > 0 ? 'under_review' : 'graded')),
             'completed_at' => now(),
         ]);
 
@@ -466,13 +466,13 @@ class StudentAnswerController extends Controller
             ->where('student_assessment_id', $studentAssessment->id)->delete();
 
         return response()->json([
-            'message' => $pendingReviewCount > 0
+            'message' => (!$isPractice && $assessment->type !== 'formative') || $pendingReviewCount > 0
                 ? 'Assessment submitted. Your final result will be available after teacher review.'
                 : 'Answers submitted successfully',
-            'score' => $pendingReviewCount > 0 ? null : round($totalScore, 2),
+            'score' => (!$isPractice && $assessment->type !== 'formative') || $pendingReviewCount > 0 ? null : round($totalScore, 2),
             'max_score' => round($maxScore, 2),
             'pending_review_count' => $pendingReviewCount,
-            'status' => $isPractice ? 'completed' : ($pendingReviewCount > 0 ? 'under_review' : 'graded'),
+            'status' => $isPractice ? 'completed' : ($assessment->type !== 'formative' ? 'under_review' : ($pendingReviewCount > 0 ? 'under_review' : 'graded')),
             'completed_at' => $studentAssessment->completed_at,
             'student_assessment_id' => $studentAssessment->id,
         ]);

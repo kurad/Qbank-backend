@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\AdminDashboardController;
 use App\Http\Controllers\AIUsageController;
+use App\Http\Controllers\AIGatewaySettingsController;
 use App\Http\Controllers\AssessmentBuilderController;
 use App\Http\Controllers\AssessmentController;
 use App\Http\Controllers\AssessmentSectionController;
@@ -9,6 +10,7 @@ use App\Http\Controllers\AuthController;
 use App\Http\Controllers\TeacherAccessController;
 use App\Http\Controllers\ClassInvitationController;
 use App\Http\Controllers\CourseMaterialController;
+use App\Http\Controllers\CourseMaterialSupportingSourceController;
 use App\Http\Controllers\CurriculumAnalysisController;
 use App\Http\Controllers\GradeLevelController;
 use App\Http\Controllers\GradeSubjectController;
@@ -31,6 +33,7 @@ use App\Http\Controllers\StudentResultsController;
 use App\Http\Controllers\SubjectController;
 use App\Http\Controllers\TeacherGradebookController;
 use App\Http\Controllers\TeacherProgressController;
+use App\Http\Controllers\TeacherMaterialGapController;
 use App\Http\Controllers\TeacherTutorHistoryController;
 use App\Http\Controllers\TopicController;
 use App\Http\Controllers\TutorController;
@@ -132,6 +135,9 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     Route::get('/session-info', [AuthController::class, 'sessionInfo']);
     Route::get('/admin/dashboard-summary', [AdminDashboardController::class, 'summary']);
     Route::get('/admin/ai-usage', [AIUsageController::class, 'index']);
+    Route::get('/admin/ai-gateway', [AIGatewaySettingsController::class, 'show']);
+    Route::put('/admin/ai-gateway', [AIGatewaySettingsController::class, 'save'])->middleware('throttle:20,1');
+    Route::delete('/admin/ai-gateway', [AIGatewaySettingsController::class, 'reset'])->middleware('throttle:20,1');
 
     // Teacher access management / invitation acceptance
     Route::post('/teacher-invitations/{token}/accept', [TeacherAccessController::class, 'acceptExisting']);
@@ -236,6 +242,12 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     Route::get('/course-materials/{courseMaterial}/download', [CourseMaterialController::class, 'downloadOriginal']);
     Route::post('/course-materials', [CourseMaterialController::class, 'store']);
     Route::post('/course-materials/{courseMaterial}/approve', [CourseMaterialController::class, 'approve']);
+    Route::get('/course-materials/{courseMaterial}/supplement', [\App\Http\Controllers\CourseMaterialSupplementController::class, 'show']);
+    Route::put('/course-materials/{courseMaterial}/supplement', [\App\Http\Controllers\CourseMaterialSupplementController::class, 'save']);
+    Route::post('/course-materials/{courseMaterial}/approve-supplement', [\App\Http\Controllers\CourseMaterialSupplementController::class, 'approve']);
+    Route::post('/course-materials/{courseMaterial}/supporting-sources', [CourseMaterialSupportingSourceController::class, 'store']);
+    Route::post('/course-material-supporting-sources/{supportingSource}/refresh', [CourseMaterialSupportingSourceController::class, 'refresh']);
+    Route::delete('/course-material-supporting-sources/{supportingSource}', [CourseMaterialSupportingSourceController::class, 'destroy']);
     Route::delete('/course-materials/{courseMaterial}', [CourseMaterialController::class, 'destroy']);
 
 
@@ -251,6 +263,7 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
 
     Route::get('/learning-periods', [LearningPeriodController::class, 'index']);
     Route::post('/learning-periods', [LearningPeriodController::class, 'store']);
+    Route::post('/learning-periods/batch', [LearningPeriodController::class, 'batchStore']);
     Route::get('/learning-periods/{learningPeriod}', [LearningPeriodController::class, 'show']);
     Route::put('/learning-periods/{learningPeriod}', [LearningPeriodController::class, 'update']);
     Route::post('/learning-periods/{learningPeriod}/publish', [LearningPeriodController::class, 'publish']);
@@ -403,6 +416,9 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     Route::put('/assessments/{id}/title', [AssessmentController::class, 'updateTitle']);
     Route::put('/assessments/{id}/reorder', [AssessmentController::class, 'reorderQuestions']);
     Route::put('/assessments/{id}/instructions', [AssessmentController::class, 'updateInstructions']);
+    Route::put('/assessments/{id}/settings', [AssessmentController::class, 'updateSettings']);
+    Route::post('/assessments/{id}/archive', [AssessmentController::class, 'archive']);
+    Route::post('/assessments/{id}/restore', [AssessmentController::class, 'restore']);
     Route::post('/assessments/{id}/questions', [AssessmentController::class, 'addQuestions']);
     Route::post('/assessments/{assessment}/assign', [AssessmentController::class, 'assign']);
     Route::post('/assessments/{id}/assign-group', [AssessmentController::class, 'assignGroup']);
@@ -474,9 +490,12 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     |--------------------------------------------------------------------------
     */
 
+    Route::get('/student/my-assessments', [StudentAssessmentController::class, 'assessmentHub']);
     Route::get('/assessments', [StudentAssessmentController::class, 'myAssessments']);
     Route::get('/assessments/{studentAssessment}', [StudentAssessmentController::class, 'show']);
     Route::post('/assessments/{assessment}/start', [StudentAssessmentController::class, 'startAssessment']);
+    Route::get('/assessments/{assessment}/draft', [StudentAssessmentController::class, 'getDraft']);
+    Route::put('/assessments/{assessment}/draft', [StudentAssessmentController::class, 'saveDraft']);
     Route::post('/answers', [StudentAssessmentController::class, 'saveAnswer']);
     Route::post('/assessments/{studentAssessment}/submit', [StudentAssessmentController::class, 'submit']);
     Route::post('/assessments/{studentAssessment}/finalize', [StudentAssessmentController::class, 'finalize']);
@@ -569,6 +588,10 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
         Route::get('/', [TeacherLearningActivityController::class, 'index']);
         Route::get('/students/{student}', [TeacherLearningActivityController::class, 'student']);
     });
+
+    Route::get('/teacher/material-gaps', [TeacherMaterialGapController::class, 'index']);
+    Route::put('/teacher/material-gaps/{objective}/note', [TeacherMaterialGapController::class, 'saveNote']);
+    Route::post('/teacher/material-gaps/{objective}/retry', [TeacherMaterialGapController::class, 'retry']);
 
     Route::prefix('teacher/progress')->group(function () {
 
