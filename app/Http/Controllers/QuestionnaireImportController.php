@@ -594,6 +594,19 @@ class QuestionnaireImportController extends Controller
     protected function validateItemForImport(
         QuestionnaireImportItem $item
     ): void {
+        // Do not approve a question that depends on unavailable source material.
+        // Teachers can attach a table/image in Edit extraction before retrying.
+        $text = (string) $item->question;
+        $requiresSource = preg_match(
+            '/\b(?:schema\s+(?:below|shown)|(?:following|given|students|marks)\s+table|tables?\s+(?:below|above|shown)|using\s+the\s+\w+\s+table|(?:figure|diagram|graph)\s+(?:below|above|shown))\b/iu',
+            $text
+        );
+        if ($requiresSource && empty($item->stimulus)) {
+            abort(422, "Question {$item->source_order} refers to a table or diagram, but no supporting content is attached. Use Edit extraction to add the missing table/image before approval.");
+        }
+        if (preg_match('/\[(?:EMBEDDED IMAGE\/DIAGRAM|SOURCE FIGURE PRESENT)[^\]]*\]/iu', $text)) {
+            abort(422, "Question {$item->source_order} contains an extraction warning. Remove it from the question text before approval.");
+        }
         if (
             $item->question_type === 'mcq' &&
             count($item->options ?: []) < 2

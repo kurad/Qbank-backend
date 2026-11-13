@@ -102,6 +102,14 @@ class QuestionnaireImportService
                 }
             }
 
+            // For text-based PDFs, recover source tables visually when the text
+            // model omitted them. This never assigns an arbitrary diagram or fabricates
+            // data: ambiguous tables are left for explicit teacher correction.
+            if (str_ends_with(strtolower($import->original_name), '.pdf')
+                && isset($text) && mb_strlen(trim($text)) >= 20) {
+                $this->recoverMissingPdfTables($absolutePath, $text, $questions);
+            }
+
             if (!$questions) {
                 throw new RuntimeException(
                     'No questions were identified in this questionnaire.'
@@ -178,6 +186,90 @@ class QuestionnaireImportService
 
             throw $e;
         }
+    }
+
+    /**
+     * Recover table structures from the original page (not from AI guesses).
+     * Bounded to 4 requests per import, to control time and provider costs.
+     */
+    protected function recoverMissingPdfTables(string $pdf, string $extractedText, array &$questions): void
+    {
+        $renderer = trim((string) shell_exec('command -v pdftoppm 2>/dev/null'));
+        if (!$renderer || !is_executable($renderer)) return;
+        $pages = preg_split('/\f/u', $extractedText) ?: [];
+        if (!$pages) return;
+        $calls = 0;
+        foreach ($questions as &$question) {
+            if ($calls >= 4) break;
+            $promptText = (string) ($question['question'] ?? '');
+            if (!preg_match('/\b(?:schema\s+(?:below|shown)|(?:following|given|students|marks)\s+table|tables?\s+(?:below|above|shown)|using\s+the\s+\w+\s+table)\b/iu', $promptText)) continue;
+            $existingCount = count((array) ($question['supporting_tables'] ?? []));
+            $mayRequireMultiple = preg_match('/\bschema\s+(?:below|shown)\b/iu', $promptText);
+            if ($existingCount > 0 && (!$mayRequireMultiple || $existingCount >= 2)) continue;
+            $first = trim(preg_replace('/\s+/u', ' ', mb_substr($promptText, 0, 110)));
+            $tokens = preg_split('/\s+/u', mb_strtolower($first)) ?: [];
+            $tokens = array_slice(array_filter($tokens, fn($t) => mb_strlen($t) > 3), 0, 8);
+            $matched = null;
+            $sourceNumber = preg_replace('/\D+/u', '', (string) ($question['source_reference'] ?? ''));
+            foreach ($pages as $index => $page) {
+                if (!trim($page)) continue;
+                $normalized = mb_strtolower(preg_replace('/\s+/u', ' ', $page));
+                $hits = 0;
+                foreach ($tokens as $token) if (str_contains($normalized, $token)) $hits++;
+                $numberMatch = $sourceNumber !== '' && preg_match('/\b(?:question\s*)?' . preg_quote($sourceNumber, '/') . '[\.:\)]/iu', $page);
+                if ($hits >= 5 || ($numberMatch && $hits >= 3)) {
+                    $matched = $index + 1; break;
+                }
+            }
+            if ($matched === null) continue;
+            $tmp = tempnam(sys_get_temp_dir(), 'rh-table-');
+            if (!$tmp) continue;
+            @unlink($tmp);
+            $image = $tmp . '.png';
+            $command = escapeshellarg($renderer) . ' -f ' . (int)$matched . ' -l ' . (int)$matched
+                . ' -singlefile -scale-to 1800 -png ' . escapeshellarg($pdf)
+                . ' ' . escapeshellarg($tmp) . ' 2>/dev/null';
+            exec($command, $ignored, $exit);
+            if ($exit !== 0 || !is_file($image)) { @unlink($image); continue; }
+            $calls++;
+            try {
+                $recovered = $this->vision->extractImageAsJson($image, 'image/png',
+                    'Read the ORIGINAL PAGE image. Extract ONLY tables explicitly supporting this question: '
+                    . mb_substr($promptText, 0, 700) . '. Return each table with its exact title, headers, and rows. '
+                    . 'Never invent values. Ignore unrelated tables on the page. If unsure, return an empty list.',
+                    [
+                        'type' => 'OBJECT',
+                        'properties' => [
+                            'tables' => [
+                                'type' => 'ARRAY',
+                                'items' => [
+                                    'type' => 'OBJECT',
+                                    'properties' => [
+                                        'title' => ['type' => 'STRING'],
+                                        'headers' => ['type' => 'ARRAY', 'items' => ['type' => 'STRING']],
+                                        'rows' => ['type' => 'ARRAY', 'items' => [
+                                            'type' => 'ARRAY', 'items' => ['type' => 'STRING']
+                                        ]],
+                                    ],
+                                    'required' => ['title', 'headers', 'rows'],
+                                ],
+                            ],
+                        ],
+                        'required' => ['tables'],
+                    ]);
+                $tables = array_values(array_filter((array) ($recovered['tables'] ?? []),
+                    fn ($t) => is_array($t) && count($t['headers'] ?? []) >= 2 && count($t['rows'] ?? []) >= 1));
+                // A visual extraction is still teacher-reviewable, never self-approved.
+                if (count($tables) > $existingCount) {
+                    $question['supporting_tables'] = array_slice($tables, 0, 8);
+                }
+            } catch (\Throwable $e) {
+                \Log::warning('Questionnaire visual table recovery skipped', [
+                    'page' => $matched, 'error' => $e->getMessage()
+                ]);
+            } finally { @unlink($image); }
+        }
+        unset($question);
     }
 
     protected function extractText(
@@ -290,7 +382,8 @@ class QuestionnaireImportService
             if ($node->localName === 'p') {
                 $line = $this->docxNodeText($xpath, $node);
                 if ($xpath->query('.//w:drawing | .//w:pict', $node)->length > 0) {
-                    $line .= ' [EMBEDDED IMAGE/DIAGRAM: verify visually against original document before approval]';
+                    // The image is extracted separately for teacher attachment. Do not contaminate question text.
+                    $line .= ' [SOURCE FIGURE PRESENT: attach the correct image during review]';
                 }
                 if (trim($line) !== '') $blocks[] = $line;
             } elseif ($node->localName === 'tbl') {
@@ -344,6 +437,8 @@ class QuestionnaireImportService
                 'content' =>
                     "Teaching area curriculum:\n{$curriculum}\n\n" .
                     "Extract every questionnaire item found in the text below. " .
+                    "Preserve multipart question numbering and original line breaks. " .
+                    "Copy every source table to supporting_tables, not to question text. " .
                     "Preserve the wording. Do not create extra questions. " .
                     "Map each question only to IDs explicitly present in the curriculum context.\n\n" .
                     "QUESTIONNAIRE TEXT:\n{$text}",
@@ -421,8 +516,19 @@ Rules:
     Convert source tables faithfully; never make up missing rows or values.
 17. Preserve associated code/SQL snippets as supporting_code (array of verbatim strings).
     Only include content actually present in the supplied source. Do not include answer choices as tables.
-18. If an image/diagram is referenced but not actually readable, do not fabricate its contents;
-    include the source warning in the question text for teacher review. An image marker is NOT a description of its contents.
+18. NEVER put extraction warnings, OCR notes, or source figure markers in the question text.
+    Markers like [SOURCE FIGURE PRESENT: ...] indicate an asset for the teacher to attach.
+19. For multipart questions (e.g. Question 42 with numbered parts 1–5), preserve one
+    open_ended question with all its numbered subparts on separate lines and original order.
+    Do not combine the parts into a single sentence and do not drop their numbering.
+20. Source tables immediately following 'schema below'/'table below' belong to that
+    question and MUST be represented in supporting_tables. Preserve ALL headers,
+    rows and distinct table titles (e.g. Students Table and Marks Table).
+    Pay special attention to whitespace-aligned tables in PDF text.
+21. Do not report source tables in question text; place them only in supporting_tables.
+    Do not invent missing table rows, columns, diagrams or expected answers.
+22. If a required source table is illegible, leave it unpopulated and let the
+    approval workflow flag the question for the teacher.
 PROMPT;
     }
 
@@ -696,9 +802,13 @@ PROMPT;
             $correctAnswer = [$correctAnswer];
         }
 
-        $question = trim(
-            (string) ($raw['question'] ?? '')
+        $question = trim((string) ($raw['question'] ?? ''));
+        // Old vision prompts could embed review-only warnings into student question text.
+        $question = preg_replace(
+            '/\[(?:EMBEDDED IMAGE\/DIAGRAM|SOURCE FIGURE PRESENT)[^\]]*\]/iu',
+            '', $question
         );
+        $question = trim(preg_replace('/[ \t]{2,}/u', ' ', $question));
 
         $duplicateQuestionId = null;
 
