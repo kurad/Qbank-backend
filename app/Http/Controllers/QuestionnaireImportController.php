@@ -7,6 +7,7 @@ use App\Models\GradeSubject;
 use App\Models\Question;
 use App\Models\QuestionnaireImport;
 use App\Models\QuestionnaireImportItem;
+use App\Services\QuestionnaireImportMediaService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
@@ -159,6 +160,10 @@ class QuestionnaireImportController extends Controller
                 'required',
                 'string',
             ],
+            'stimulus' => ['nullable', 'array', 'max:20'],
+            'stimulus.*.type' => ['required', Rule::in(['table', 'code', 'image'])],
+            'stimulus.*.path' => ['nullable', 'string', 'max:255'],
+            'stimulus.*.title' => ['nullable', 'string', 'max:255'],
             'options' => [
                 'nullable',
                 'array',
@@ -257,6 +262,15 @@ class QuestionnaireImportController extends Controller
                     ->value('id')
                 : null;
 
+        foreach (($validated['stimulus'] ?? []) as $block) {
+            if (($block['type'] ?? null) === 'image') {
+                abort_unless(
+                    app(QuestionnaireImportMediaService::class)->validAssetPath(
+                        $questionnaireImport, (string)($block['path'] ?? '')
+                    ), 422, 'Select an image extracted from this questionnaire.'
+                );
+            }
+        }
         $item->update($validated);
 
         return response()->json([
@@ -365,6 +379,7 @@ class QuestionnaireImportController extends Controller
                         'question' =>
                             trim($item->question),
                         'options' => $options,
+                        'stimulus' => $item->stimulus ?: null,
                         'correct_answer' =>
                             $item->correct_answer ?: null,
                         'marks' =>
@@ -448,7 +463,7 @@ class QuestionnaireImportController extends Controller
     protected function loadImport(
         QuestionnaireImport $import
     ): QuestionnaireImport {
-        return $import->load([
+        $import->load([
             'gradeSubject.subject:id,name',
             'gradeSubject.gradeLevel:id,grade_name',
             'gradeSubject.units:id,grade_subject_id,name,order,status',
@@ -460,6 +475,8 @@ class QuestionnaireImportController extends Controller
             'items.duplicateQuestion:id,question',
             'items.createdQuestion:id,question',
         ]);
+        $import->setAttribute('media_assets', app(QuestionnaireImportMediaService::class)->assets($import));
+        return $import;
     }
 
     protected function authorizeImport(

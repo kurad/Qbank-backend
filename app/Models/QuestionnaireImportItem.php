@@ -13,6 +13,7 @@ class QuestionnaireImportItem extends Model
         'source_reference',
         'question_type',
         'question',
+        'stimulus',
         'options',
         'correct_answer',
         'marks',
@@ -31,6 +32,7 @@ class QuestionnaireImportItem extends Model
 
     protected $casts = [
         'options' => 'array',
+        'stimulus' => 'array',
         'correct_answer' => 'array',
         'marks' => 'decimal:2',
         'mapping_confidence' => 'decimal:2',

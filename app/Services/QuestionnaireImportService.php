@@ -41,6 +41,9 @@ class QuestionnaireImportService
 
             $mimeType = strtolower((string) $import->mime_type);
 
+            // Extract media candidates independently; teachers confirm each image-to-question link.
+            app(QuestionnaireImportMediaService::class)->extract($import, $absolutePath);
+
             if ($this->isImage($mimeType, $import->original_name)) {
                 $payloads = [
                     $this->extractFromImage(
@@ -60,23 +63,32 @@ class QuestionnaireImportService
                     $mimeType
                 );
 
-                if (mb_strlen(trim($text)) < 20) {
-                    throw new RuntimeException(
-                        'Very little text could be extracted from this questionnaire.'
-                    );
-                }
-
-                $import->update([
-                    'extracted_text' => mb_substr($text, 0, 200000),
-                ]);
-
                 $payloads = [];
-
-                foreach ($this->chunkText($text) as $chunk) {
-                    $payloads[] = $this->extractFromText(
-                        $chunk,
-                        $gradeSubject
-                    );
+                if (mb_strlen(trim($text)) < 20 && str_ends_with(strtolower($import->original_name), '.pdf')) {
+                    // Scanned PDF fallback: use bounded visual page previews with the existing vision service.
+                    $pages = array_values(array_filter(
+                        app(QuestionnaireImportMediaService::class)->assets($import),
+                        fn ($asset) => str_starts_with(basename($asset['path']), 'page-') || str_starts_with(basename($asset['path']), 'pdf-')
+                    ));
+                    if (!$pages) {
+                        throw new RuntimeException('Scanned PDF requires pdftoppm for visual extraction.');
+                    }
+                    foreach (array_slice($pages, 0, 8) as $page) {
+                        $payloads[] = $this->extractFromImage(
+                            Storage::disk('public')->path($page['path']),
+                            'image/png',
+                            $gradeSubject
+                        );
+                    }
+                    $import->update(['extracted_text' => '[Scanned PDF: visual extraction from up to 8 pages. Review all questions and diagrams before approval.]']);
+                } else {
+                    if (mb_strlen(trim($text)) < 20) {
+                        throw new RuntimeException('Very little text could be extracted from this questionnaire.');
+                    }
+                    $import->update(['extracted_text' => mb_substr($text, 0, 200000)]);
+                    foreach ($this->chunkText($text) as $chunk) {
+                        $payloads[] = $this->extractFromText($chunk, $gradeSubject);
+                    }
                 }
             }
 
@@ -122,6 +134,7 @@ class QuestionnaireImportService
                             $normalized['question_type'],
                         'question' =>
                             $normalized['question'],
+                        'stimulus' => $normalized['stimulus'],
                         'options' =>
                             $normalized['options'],
                         'correct_answer' =>
@@ -248,40 +261,69 @@ class QuestionnaireImportService
     protected function extractDocx(string $absolutePath): string
     {
         $zip = new ZipArchive();
-
         if ($zip->open($absolutePath) !== true) {
-            throw new RuntimeException(
-                'Unable to open DOCX questionnaire.'
-            );
+            throw new RuntimeException('Unable to open DOCX questionnaire.');
         }
-
         $xml = $zip->getFromName('word/document.xml');
         $zip->close();
-
         if (!$xml) {
-            throw new RuntimeException(
-                'DOCX does not contain readable document text.'
-            );
+            throw new RuntimeException('DOCX does not contain readable document text.');
         }
 
-        $xml = str_replace(
-            ['</w:p>', '</w:tr>', '<w:tab/>'],
-            ["\n", "\n", "\t"],
-            $xml
-        );
+        // Walk blocks in document order; strip_tags() loses table boundaries.
+        $document = new \DOMDocument();
+        $old = libxml_use_internal_errors(true);
+        $loaded = $document->loadXML($xml, LIBXML_NONET);
+        libxml_clear_errors();
+        libxml_use_internal_errors($old);
+        if (!$loaded) {
+            throw new RuntimeException('Unable to read DOCX structure.');
+        }
+        $xpath = new \DOMXPath($document);
+        $xpath->registerNamespace('w', 'http://schemas.openxmlformats.org/wordprocessingml/2006/main');
+        $body = $xpath->query('//w:body')->item(0);
+        if (!$body) {
+            throw new RuntimeException('DOCX contains no document body.');
+        }
+        $blocks = [];
+        foreach ($body->childNodes as $node) {
+            if ($node->localName === 'p') {
+                $line = $this->docxNodeText($xpath, $node);
+                if ($xpath->query('.//w:drawing | .//w:pict', $node)->length > 0) {
+                    $line .= ' [EMBEDDED IMAGE/DIAGRAM: verify visually against original document before approval]';
+                }
+                if (trim($line) !== '') $blocks[] = $line;
+            } elseif ($node->localName === 'tbl') {
+                $rows = [];
+                foreach ($xpath->query('./w:tr', $node) as $tr) {
+                    $cells = [];
+                    foreach ($xpath->query('./w:tc', $tr) as $cell) {
+                        $cells[] = str_replace('|', '\|', $this->docxNodeText($xpath, $cell));
+                    }
+                    if ($cells) $rows[] = $cells;
+                }
+                if ($rows) {
+                    $width = max(array_map('count', $rows));
+                    $blocks[] = '[SUPPORTING TABLE START]';
+                    foreach ($rows as $i => $row) {
+                        $blocks[] = '| ' . implode(' | ', array_pad($row, $width, '')) . ' |';
+                        if ($i === 0) $blocks[] = '| ' . implode(' | ', array_fill(0, $width, '---')) . ' |';
+                    }
+                    $blocks[] = '[SUPPORTING TABLE END]';
+                }
+            }
+        }
+        return trim(implode("\n", $blocks));
+    }
 
-        $text = strip_tags($xml);
-        $text = html_entity_decode(
-            $text,
-            ENT_QUOTES | ENT_XML1,
-            'UTF-8'
-        );
-
-        return preg_replace(
-            "/[ \t]+\n/u",
-            "\n",
-            trim($text)
-        );
+    protected function docxNodeText(\DOMXPath $xpath, \DOMNode $node): string
+    {
+        $parts = [];
+        foreach ($xpath->query('.//w:t | .//w:tab | .//w:br', $node) as $piece) {
+            $parts[] = $piece->localName === 't' ? $piece->textContent
+                : ($piece->localName === 'tab' ? "\t" : "\n");
+        }
+        return trim(implode('', $parts));
     }
 
     protected function extractFromText(
@@ -374,6 +416,13 @@ Rules:
 13. If topic mapping is uncertain, topic_id may be null and confidence should be low.
 14. source_reference may contain a visible question number or page hint, otherwise null.
 15. Do not add explanations unless the questionnaire itself includes one.
+16. For EACH question preserve required supporting tables as supporting_tables, with
+    title (string), headers (array of column-name strings), and rows (arrays of cell strings).
+    Convert source tables faithfully; never make up missing rows or values.
+17. Preserve associated code/SQL snippets as supporting_code (array of verbatim strings).
+    Only include content actually present in the supplied source. Do not include answer choices as tables.
+18. If an image/diagram is referenced but not actually readable, do not fabricate its contents;
+    include the source warning in the question text for teacher review. An image marker is NOT a description of its contents.
 PROMPT;
     }
 
@@ -397,6 +446,19 @@ PROMPT;
                             'question' => [
                                 'type' => 'STRING',
                             ],
+                            'supporting_tables' => [
+                                'type' => 'ARRAY', 'nullable' => true,
+                                'items' => [
+                                    'type' => 'OBJECT',
+                                    'properties' => [
+                                        'title' => ['type' => 'STRING'],
+                                        'headers' => ['type' => 'ARRAY', 'items' => ['type' => 'STRING']],
+                                        'rows' => ['type' => 'ARRAY', 'items' => ['type' => 'ARRAY', 'items' => ['type' => 'STRING']]],
+                                    ],
+                                    'required' => ['title','headers','rows'],
+                                ],
+                            ],
+                            'supporting_code' => ['type' => 'ARRAY', 'nullable' => true, 'items' => ['type' => 'STRING']],
                             'options' => [
                                 'type' => 'ARRAY',
                                 'items' => [
@@ -660,6 +722,7 @@ PROMPT;
                     : null,
             'question_type' => $type,
             'question' => $question,
+            'stimulus' => $this->normalizeStimulus($raw),
             'options' => $options,
             'correct_answer' => array_values($correctAnswer),
             'marks' =>
@@ -686,6 +749,36 @@ PROMPT;
                 ),
             'duplicate_question_id' => $duplicateQuestionId,
         ];
+    }
+
+    protected function normalizeStimulus(array $raw): array
+    {
+        $items = [];
+        foreach (array_slice((array) ($raw['supporting_tables'] ?? []), 0, 8) as $table) {
+            if (!is_array($table)) continue;
+            $headers = array_slice(array_map('strval', (array) ($table['headers'] ?? [])), 0, 12);
+            if (!$headers) continue;
+            $columns = [];
+            foreach ($headers as $index => $header) {
+                $columns[] = ['key' => 'column_' . ($index + 1), 'label' => $header];
+            }
+            $rows = [];
+            foreach (array_slice((array) ($table['rows'] ?? []), 0, 100) as $cells) {
+                if (!is_array($cells)) continue;
+                $row = [];
+                foreach ($columns as $index => $column) {
+                    $row[$column['key']] = (string) ($cells[$index] ?? '');
+                }
+                $rows[] = $row;
+            }
+            $items[] = ['type' => 'table', 'title' => (string) ($table['title'] ?? ''), 'columns' => $columns, 'rows' => $rows];
+        }
+        foreach (array_slice((array) ($raw['supporting_code'] ?? []), 0, 8) as $code) {
+            if (is_string($code) && trim($code) !== '') {
+                $items[] = ['type' => 'code', 'title' => '', 'language' => 'text', 'content' => $code];
+            }
+        }
+        return $items;
     }
 
     protected function validUnitId(

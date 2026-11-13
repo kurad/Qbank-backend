@@ -74,6 +74,30 @@ class ObjectiveCoverageService
             'hash' => hash('sha256', $objective->id.'|'.$objective->updated_at.'|'.implode('|', $evidence))];
     }
 
+    /** Support a provider returning {result: {...}} without guessing missing fields. */
+    private function extractCoverageResult(array $result): array
+    {
+        if (!array_key_exists('status', $result) && isset($result['result']) && is_array($result['result'])) {
+            return $result['result'];
+        }
+        return $result;
+    }
+
+    private function validCoverageResult(array $result): bool
+    {
+        if (!in_array($result['status'] ?? null, ['supported', 'partial', 'unsupported'], true)
+            || !is_string($result['reason'] ?? null)) {
+            return false;
+        }
+        foreach (['supported_focus', 'missing_focus'] as $field) {
+            if (!isset($result[$field]) || !is_array($result[$field])) return false;
+            foreach ($result[$field] as $item) {
+                if (!is_string($item)) return false;
+            }
+        }
+        return true;
+    }
+
     public function verify(LearningObjective $objective): void
     {
         $objective->loadMissing('topic.gradeSubject');
@@ -82,19 +106,61 @@ class ObjectiveCoverageService
             'supported_focus' => [], 'missing_focus' => [$objective->objective]];
         try {
             if (trim($evidence['text']) !== '') {
-                $result = $this->ai->json([
-                    ['role'=>'system','content'=>"Check whether the approved teacher-provided evidence is sufficient to teach and fairly assess the learning objective. Use ONLY this evidence; no outside knowledge. supported means full coverage, partial means some but not all essential skills, unsupported means insufficient essentials. Return JSON.\n\nObjective: {$objective->objective}\nDescription: {$objective->description}\n\nAPPROVED EVIDENCE:\n".$evidence['text']],
-                    ['role'=>'user','content'=>'Identify missing requirements precisely, without supplying the missing subject matter.']
-                ], ['type'=>'object','additionalProperties'=>false,'properties'=>[
-                    'status'=>['type'=>'string','enum'=>['supported','partial','unsupported']],
-                    'reason'=>['type'=>'string'],
-                    'supported_focus'=>['type'=>'array','items'=>['type'=>'string']],
-                    'missing_focus'=>['type'=>'array','items'=>['type'=>'string']],
-                ],'required'=>['status','reason','supported_focus','missing_focus']],
-                ['temperature'=>0,'max_tokens'=>700]);
+                // Groq's JSON-object mode guarantees JSON syntax, but does not enforce
+                // the schema passed to OpenAI/Gemini. Spell it out in the prompt too.
+                $messages = [
+                    ['role' => 'system', 'content' =>
+                        "Check whether the approved teacher-provided evidence is sufficient to teach and fairly assess the learning objective. " .
+                        "Use ONLY this evidence; no outside knowledge. " .
+                        "Return ONE JSON object with exactly these keys: " .
+                        "status (exactly one of supported, partial, unsupported), " .
+                        "reason (string), supported_focus (array of strings), missing_focus (array of strings). " .
+                        "Do not return a success flag, an enclosing result object, or Markdown. " .
+                        "supported means full coverage; partial means some but not all essential skills; unsupported means insufficient essentials.\n\n" .
+                        "Objective: {$objective->objective}\nDescription: {$objective->description}\n\nAPPROVED EVIDENCE:\n" . $evidence['text']],
+                    ['role' => 'user', 'content' => 'Identify missing requirements precisely, without supplying missing subject matter. Return only the required JSON object.'],
+                ];
+                $schema = ['type' => 'object', 'additionalProperties' => false, 'properties' => [
+                    'status' => ['type' => 'string', 'enum' => ['supported', 'partial', 'unsupported']],
+                    'reason' => ['type' => 'string'],
+                    'supported_focus' => ['type' => 'array', 'items' => ['type' => 'string']],
+                    'missing_focus' => ['type' => 'array', 'items' => ['type' => 'string']],
+                ], 'required' => ['status', 'reason', 'supported_focus', 'missing_focus']];
+
+                $result = $this->ai->json($messages, $schema, [
+                    'temperature' => 0, 'max_tokens' => 1800,
+                    '_usage_feature' => 'Objective Content Verification',
+                    '_usage_learning_objective_id' => $objective->id,
+                ]);
+                $result = $this->extractCoverageResult($result);
+
+                if (!$this->validCoverageResult($result)) {
+                    \Log::warning('Objective coverage AI response failed schema validation; retrying once', [
+                        'objective_id' => $objective->id,
+                        'returned_keys' => array_keys($result),
+                        'status_type' => get_debug_type($result['status'] ?? null),
+                        'status_value' => is_scalar($result['status'] ?? null)
+                            ? mb_substr((string) $result['status'], 0, 40) : null,
+                    ]);
+                    // This is intentionally a bounded retry. No result is invented or
+                    // marked supported when an AI provider returns a malformed result.
+                    $messages[] = ['role' => 'user', 'content' =>
+                        'Your answer MUST be a single JSON object with status exactly supported, partial, or unsupported; ' .
+                        'reason as a string; supported_focus and missing_focus as arrays of strings. ' .
+                        'Return no wrapper object and no extra fields.'];
+                    $result = $this->extractCoverageResult($this->ai->json($messages, $schema, [
+                        'temperature' => 0, 'max_tokens' => 1800,
+                        '_usage_feature' => 'Objective Content Verification',
+                        '_usage_learning_objective_id' => $objective->id,
+                    ]));
+                }
             }
-            if (!in_array($result['status'] ?? '', ['supported','partial','unsupported'], true)) {
-                throw new \RuntimeException('AI returned an invalid coverage status.');
+            if (!$this->validCoverageResult($result)) {
+                \Log::warning('Objective coverage AI returned invalid structured result', [
+                    'objective_id' => $objective->id,
+                    'returned_keys' => is_array($result) ? array_keys($result) : [],
+                ]);
+                throw new \RuntimeException('AI returned an invalid coverage result after retry.');
             }
             DB::table('objective_coverage_checks')->updateOrInsert(['learning_objective_id'=>$objective->id], [
                 'status'=>$result['status'], 'reason'=>(string)($result['reason'] ?? ''),

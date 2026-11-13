@@ -156,7 +156,7 @@ class QuestionController extends Controller
              */
             if (
                 !$hasSub &&
-                ($validated['question_type'] ?? null) === 'short_answer' &&
+                in_array(($validated['question_type'] ?? null), ['short_answer', 'open_ended'], true) &&
                 $request->hasFile('correct_answer_image')
             ) {
                 $validated['correct_answer_image'] =
@@ -330,6 +330,19 @@ class QuestionController extends Controller
                     'content' => $content,
                 ];
 
+                continue;
+            }
+
+            if ($type === 'image') {
+                $path = (string)($item['path'] ?? '');
+                if (preg_match('~^questionnaire-media/[0-9]+-[a-f0-9]{16}/[^/]+\.(png|jpe?g|gif|webp)$~i', $path)
+                    && Storage::disk('public')->exists($path)) {
+                    $items[] = [
+                        'type' => 'image',
+                        'title' => trim((string)($item['title'] ?? '')) ?: null,
+                        'path' => $path,
+                    ];
+                }
                 continue;
             }
 
@@ -507,8 +520,10 @@ class QuestionController extends Controller
             'stimulus.*.type' => [
                 'required_with:stimulus',
                 'string',
-                Rule::in(['table', 'code']),
+                Rule::in(['table', 'code', 'image']),
             ],
+
+            'stimulus.*.path' => ['nullable', 'string', 'max:255'],
 
             'stimulus.*.title' => [
                 'nullable',
@@ -965,8 +980,7 @@ class QuestionController extends Controller
              */
             if (
                 !$hasSub &&
-                ($validated['question_type'] ??
-                    $question->question_type) === 'short_answer' &&
+                in_array(($validated['question_type'] ?? $question->question_type), ['short_answer', 'open_ended'], true) &&
                 $request->hasFile('correct_answer_image')
             ) {
                 if ($question->correct_answer_image) {
@@ -982,7 +996,7 @@ class QuestionController extends Controller
 
             if (
                 !$hasSub &&
-                ($validated['question_type'] ?? $question->question_type) === 'short_answer' &&
+                in_array(($validated['question_type'] ?? $question->question_type), ['short_answer', 'open_ended'], true) &&
                 $request->boolean('remove_correct_answer_image') &&
                 !$request->hasFile('correct_answer_image')
             ) {
