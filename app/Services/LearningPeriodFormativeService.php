@@ -46,6 +46,13 @@ class LearningPeriodFormativeService
         User $student,
         LearningPeriod $period
     ): array {
+        if (!$period->require_formative_assessment) {
+            return [
+                'required' => false, 'ready' => false, 'status' => 'not_required',
+                'message' => 'All scheduled topics are complete. No formative assessment was assigned by your teacher.',
+            ];
+        }
+
         $period->loadMissing([
             'group.students:id,name,email',
             'gradeSubject.subject:id,name',
@@ -143,6 +150,10 @@ class LearningPeriodFormativeService
     public function ensureForPeriod(
         LearningPeriod $period
     ): Assessment {
+        if (!$period->require_formative_assessment) {
+            throw new RuntimeException('Formative assessment is disabled for this learning period.');
+        }
+
         $existing = Assessment::query()
             ->where('learning_period_id', $period->id)
             ->where('purpose', 'period_formative')

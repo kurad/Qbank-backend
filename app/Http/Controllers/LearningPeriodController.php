@@ -195,6 +195,7 @@ class LearningPeriodController extends Controller
                 'nullable',
                 'string',
             ],
+            'require_formative_assessment' => ['sometimes', 'boolean'],
             'start_date' => [
                 'required',
                 'date',
@@ -226,6 +227,7 @@ class LearningPeriodController extends Controller
             'start_date' => $data['start_date'],
             'end_date' => $data['end_date'],
             'status' => 'draft',
+            'require_formative_assessment' => $data['require_formative_assessment'] ?? true,
             'created_by' => $request->user()->id,
         ]);
 
@@ -270,6 +272,7 @@ class LearningPeriodController extends Controller
                 'nullable',
                 'string',
             ],
+            'require_formative_assessment' => ['sometimes', 'boolean'],
             'start_date' => [
                 'required',
                 'date',
@@ -385,6 +388,7 @@ class LearningPeriodController extends Controller
                     'start_date' => $data['start_date'],
                     'end_date' => $data['end_date'],
                     'status' => $publish ? 'published' : 'draft',
+                    'require_formative_assessment' => $data['require_formative_assessment'] ?? true,
                     'created_by' => $request->user()->id,
                     'published_at' => $publish ? now() : null,
                 ]);
@@ -471,6 +475,7 @@ class LearningPeriodController extends Controller
                 'nullable',
                 'string',
             ],
+            'require_formative_assessment' => ['sometimes', 'boolean'],
             'start_date' => [
                 'sometimes',
                 'required',

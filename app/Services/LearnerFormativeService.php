@@ -40,6 +40,14 @@ class LearnerFormativeService
 
     public function statusForStudent(User $student, LearningPeriod $period): array
     {
+        if (!$period->require_formative_assessment) {
+            return [
+                'required' => false, 'eligible' => false, 'ready' => false,
+                'status' => 'not_required', 'progress' => 0,
+                'message' => 'No formative assessment has been assigned for this learning period.',
+            ];
+        }
+
         $eligible = $this->studentCoveredPeriod($student, $period);
 
         if (!$eligible) {
@@ -128,6 +136,9 @@ class LearnerFormativeService
 
     public function beginPreparation(User $student, LearningPeriod $period): LearnerFormativeAttempt
     {
+        abort_unless($period->require_formative_assessment, 403,
+            'Your teacher has not assigned a formative assessment for this learning period.');
+
         if (!$this->studentCoveredPeriod($student, $period)) {
             abort(403, 'Complete all topics in this learning period before beginning the assessment.');
         }
@@ -178,6 +189,9 @@ class LearnerFormativeService
 
         $student = $attempt->student;
         $period = $attempt->learningPeriod;
+        if (!$period->require_formative_assessment) {
+            return;
+        }
 
         if (!$student || !$period) {
             throw new RuntimeException('Learner assessment context is missing.');

@@ -765,13 +765,15 @@ class HomeController extends Controller
                             )
                             : 100,
                     'message' =>
-                        ($formative['status'] ?? null) === 'completed'
-                            ? 'You have covered all topics and completed the required formative assessment for this learning period.'
-                            : 'You have covered all topics. Complete the required formative assessment to finish this learning period.',
+                        !($formative['required'] ?? true)
+                            ? 'You have covered all assigned topics. Your teacher has not required a formative assessment for this learning period.'
+                            : (in_array($formative['status'] ?? null, ['completed', 'graded'], true)
+                                ? 'You have covered all topics and completed the required formative assessment for this learning period.'
+                                : 'You have covered all topics. Complete the required formative assessment to finish this learning period.'),
                     'formative_assessment' =>
                         $formative,
                     'period_complete' =>
-                        in_array(
+                        !($formative['required'] ?? true) || in_array(
                             $formative['status'] ?? null,
                             ['completed', 'graded'],
                             true

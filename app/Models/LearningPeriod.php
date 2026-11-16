@@ -22,12 +22,14 @@ class LearningPeriod extends Model
         'status',
         'created_by',
         'published_at',
+        'require_formative_assessment',
     ];
 
     protected $casts = [
         'start_date' => 'date',
         'end_date' => 'date',
         'published_at' => 'datetime',
+        'require_formative_assessment' => 'boolean',
     ];
 
     public function group(): BelongsTo

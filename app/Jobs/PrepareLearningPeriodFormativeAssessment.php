@@ -48,7 +48,7 @@ class PrepareLearningPeriodFormativeAssessment implements ShouldQueue, ShouldBeU
             $this->learningPeriodId
         );
 
-        if (!$period) {
+        if (!$period || !$period->require_formative_assessment) {
             return;
         }
 
