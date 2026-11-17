@@ -1985,7 +1985,12 @@ PROMPT;
                     'Tutor Question Bank Selection',
                     [
                         'temperature' => 0,
-                        'max_tokens' => 120,
+                        // Responses API reasoning tokens count against this budget.
+                        // A 120-token cap can produce an incomplete response before
+                        // even a tiny JSON object is emitted. Also gives Groq enough
+                        // room to produce and validate the full response.
+                        'max_tokens' => 1024,
+                        'reasoning_effort' => 'low',
                     ]
                 )
             );

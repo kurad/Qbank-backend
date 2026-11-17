@@ -301,7 +301,7 @@ class GeminiProvider
         }
     }
 
-    /** Gemini's responseSchema accepts a subset of JSON Schema. */
+    /** Normalize JSON Schema unions into Gemini responseSchema's scalar type + nullable flag. */
     protected function normalizeResponseSchema(array $schema): array
     {
         $allowed = [
@@ -313,13 +313,31 @@ class GeminiProvider
             $result = [];
             foreach ($node as $key => $value) {
                 if (!in_array($key, $allowed, true)) continue;
-                if ($key === 'properties' && is_array($value)) {
+                if ($key === 'type') {
+                    if (is_array($value)) {
+                        $types = array_values(array_unique(array_map('strtolower', array_filter($value, 'is_string'))));
+                        $nonNull = array_values(array_diff($types, ['null']));
+                        if (count($nonNull) !== 1) {
+                            throw new RuntimeException('Gemini responseSchema cannot represent a union of multiple non-null types.');
+                        }
+                        $result['type'] = strtoupper($nonNull[0]);
+                        if (in_array('null', $types, true)) $result['nullable'] = true;
+                    } elseif (is_string($value)) {
+                        $result['type'] = strtoupper($value);
+                    }
+                } elseif ($key === 'properties' && is_array($value)) {
                     $result[$key] = [];
                     foreach ($value as $name => $property) {
                         if (is_array($property)) $result[$key][$name] = $walk($property);
                     }
+                    // An empty PHP array encodes as [] rather than JSON {}, but
+                    // Gemini's properties must always be a JSON object.
+                    if ($result[$key] === []) $result[$key] = (object) [];
                 } elseif ($key === 'items' && is_array($value)) {
                     $result[$key] = $walk($value);
+                } elseif ($key === 'enum' && is_array($value)) {
+                    $result[$key] = array_values(array_filter($value, fn ($item) => $item !== null));
+                    if ($result[$key] === []) unset($result[$key]);
                 } else {
                     $result[$key] = $value;
                 }
