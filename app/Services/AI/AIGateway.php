@@ -15,7 +15,8 @@ class AIGateway
         protected OpenAIProvider $openai,
         protected GeminiProvider $gemini,
         protected GroqProvider $groq,
-        protected AIGatewayRouting $routing
+        protected AIGatewayRouting $routing,
+        protected AIProviderHealth $health
     ) {
     }
 
@@ -58,6 +59,7 @@ class AIGateway
         $attemptedProvider = null;
 
         foreach ($candidates as $providerKey) {
+            if (!$this->health->available($providerKey)) continue;
             try {
                 if ($providerKey === 'openai') {
                     if (!$this->openai->supportsAttachments($attachments)) {
@@ -76,11 +78,9 @@ class AIGateway
 
                     $attemptedProvider ??= 'openai';
 
-                    return $this->openai->multimodalText(
-                        $messages,
-                        $attachments,
-                        $callOptions
-                    );
+                     $result = $this->openai->multimodalText($messages, $attachments, $callOptions);
+                    $this->health->recovered($providerKey);
+                    return $result;
                 }
 
                 if ($providerKey === 'gemini') {
@@ -89,14 +89,13 @@ class AIGateway
                         : $this->fallbackUsageOptions($options, $attemptedProvider);
 
                     $attemptedProvider ??= 'gemini';
-                    return $this->gemini->multimodalText(
-                        $messages,
-                        $attachments,
-                        $callOptions
-                    );
+                     $result = $this->gemini->multimodalText($messages, $attachments, $callOptions);
+                    $this->health->recovered($providerKey);
+                    return $result;
                 }
             } catch (Throwable $e) {
                 $errors[$providerKey] = $e->getMessage();
+                $this->health->failed($providerKey, $e);
                 $attemptedProvider ??= $providerKey;
 
                 Log::warning("AI multimodal provider [{$providerKey}] failed.", [
@@ -121,15 +120,19 @@ class AIGateway
         $errors = [];
 
         foreach ($providers as $index => $providerKey) {
+            if (!$this->health->available($providerKey)) continue;
             try {
                 $provider = $this->resolveProvider($providerKey);
-                $callOptions = $index === 0
+                $callOptions = $providerKey === $primary
                     ? $options
                     : $this->fallbackUsageOptions($options, (string) $primary);
 
-                return $this->callJsonProvider($provider, $messages, $schema, $callOptions);
+                 $result = $this->callJsonProvider($provider, $messages, $schema, $callOptions);
+                $this->health->recovered($providerKey);
+                return $result;
             } catch (Throwable $e) {
                 $errors[$providerKey] = $e->getMessage();
+                $this->health->failed($providerKey, $e);
                 Log::warning("AI JSON provider [{$providerKey}] failed.", [
                     'message' => $e->getMessage(),
                     'attempt' => $index + 1,
@@ -154,9 +157,10 @@ class AIGateway
         $errors = [];
 
         foreach ($providers as $index => $providerKey) {
+            if (!$this->health->available($providerKey)) continue;
             try {
                 $provider = $this->resolveProvider($providerKey);
-                $callOptions = $index === 0
+                $callOptions = $providerKey === $primary
                     ? $options
                     : $this->fallbackUsageOptions($options, (string) $primary);
 
@@ -164,9 +168,12 @@ class AIGateway
                     Log::info("AI fallback: using {$providerKey} provider.");
                 }
 
-                return $provider->{$method}($messages, $callOptions);
+                 $result = $provider->{$method}($messages, $callOptions);
+                $this->health->recovered($providerKey);
+                return $result;
             } catch (Throwable $e) {
                 $errors[$providerKey] = $e->getMessage();
+                $this->health->failed($providerKey, $e);
                 Log::warning("AI provider [{$providerKey}] failed.", [
                     'message' => $e->getMessage(),
                     'attempt' => $index + 1,

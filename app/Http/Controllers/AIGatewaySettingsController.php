@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Services\AI\AIGatewayRouting;
+use App\Services\AI\AIProviderHealth;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -16,12 +17,13 @@ class AIGatewaySettingsController extends Controller
         abort_unless($request->user()?->isSystemAdmin(), 403, 'System Administrator access is required.');
     }
 
-    public function show(Request $request, AIGatewayRouting $routing): JsonResponse
+    public function show(Request $request, AIGatewayRouting $routing, AIProviderHealth $health): JsonResponse
     {
         $this->authorizeSystem($request);
         $rows = $routing->rows();
         return response()->json([
             'providers' => AIGatewayRouting::PROVIDERS,
+            'provider_health' => $health->all(),
             'features' => AIGatewayRouting::FEATURES,
             'configured_default' => $routing->configuredDefault(),
             'global' => $rows['global'] ?? null,
@@ -49,7 +51,7 @@ class AIGatewaySettingsController extends Controller
         ]);
         $routing->resetCache();
         Log::info('AI gateway route updated', ['feature' => $data['feature'], 'providers' => $data['providers'], 'admin_id' => $request->user()->id]);
-        return $this->show($request, $routing);
+        return $this->show($request, $routing, app(AIProviderHealth::class));
     }
 
     public function reset(Request $request, AIGatewayRouting $routing): JsonResponse
@@ -61,6 +63,6 @@ class AIGatewaySettingsController extends Controller
         DB::table('ai_gateway_routes')->where('feature', $data['feature'])->delete();
         $routing->resetCache();
         Log::info('AI gateway route reset', ['feature' => $data['feature'], 'admin_id' => $request->user()->id]);
-        return $this->show($request, $routing);
+        return $this->show($request, $routing, app(AIProviderHealth::class));
     }
 }

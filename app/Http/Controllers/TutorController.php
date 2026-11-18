@@ -401,10 +401,10 @@ class TutorController extends Controller
         abort_unless($currentObjective, 422, 'There is no supported learning goal available in this session.');
 
         $knowledge =
-            $this->ai->teachingContext(
+            $this->ai->conversationalTeachingContext(
                 $tutorSession,
                 $studentText,
-                6
+                count($uploadedFiles) > 0
             );
 
         $aiAttachments = [];

@@ -3,12 +3,14 @@
 namespace App\Http\Controllers;
 
 use App\Models\AIUsageLog;
+use App\Services\AI\AIUsageCost;
+use App\Services\AI\AIProviderHealth;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 class AIUsageController extends Controller
 {
-    public function index(Request $request)
+    public function index(Request $request, AIUsageCost $cost, AIProviderHealth $health)
     {
         $admin = $request->user();
 
@@ -161,12 +163,46 @@ class AIUsageController extends Controller
                 $recentPage
             );
 
+        // Aggregate by price-key dimensions. No model rate is assumed if not configured.
+        $priceGroups = (clone $base)
+            ->select('ai_usage_logs.provider', 'ai_usage_logs.model', 'ai_usage_logs.user_id', 'ai_usage_logs.school_id')
+            ->selectRaw('COALESCE(SUM(ai_usage_logs.prompt_tokens), 0) as prompt_tokens')
+            ->selectRaw('COALESCE(SUM(ai_usage_logs.output_tokens), 0) as output_tokens')
+            ->selectRaw('COALESCE(SUM(ai_usage_logs.cached_tokens), 0) as cached_tokens')
+            ->selectRaw('COALESCE(SUM(ai_usage_logs.thinking_tokens), 0) as thinking_tokens')
+            ->groupBy('ai_usage_logs.provider', 'ai_usage_logs.model', 'ai_usage_logs.user_id', 'ai_usage_logs.school_id')
+            ->get();
+        $pricedTotal = 0.0;
+        $missingPricing = 0;
+        $userCosts = [];
+        $modelCosts = [];
+        foreach ($priceGroups as $group) {
+            $estimate = $cost->forRow($group);
+            if ($estimate === null) { $missingPricing++; continue; }
+            $pricedTotal += $estimate;
+            $userKey = (string) ($group->user_id ?? '') . ':' . (string) ($group->school_id ?? '');
+            $modelKey = $group->provider . '/' . $group->model;
+            $userCosts[$userKey] = ($userCosts[$userKey] ?? 0) + $estimate;
+            $modelCosts[$modelKey] = ($modelCosts[$modelKey] ?? 0) + $estimate;
+        }
+        foreach ($users as $row) {
+            $key = (string) ($row->user_id ?? '') . ':' . (string) ($row->school_id ?? '');
+            $row->estimated_cost_usd = round($userCosts[$key] ?? 0, 6);
+        }
+        foreach ($models as $row) {
+            $row->estimated_cost_usd = round($modelCosts[$row->provider . '/' . $row->model] ?? 0, 6);
+        }
+        $recentRows = $recent->items();
+        foreach ($recentRows as $row) $row->estimated_cost_usd = $cost->forRow($row);
+
         return response()->json([
             'range' => [
                 'days' => $days,
                 'from' => $from->toIso8601String(),
                 'to' => $to->toIso8601String(),
             ],
+            'provider_health' => $health->all(),
+            'cost_estimate' => ['usd' => round($pricedTotal, 6), 'missing_price_groups' => $missingPricing, 'complete' => $missingPricing === 0],
             'summary' => [
                 'requests' => $requests,
                 'successful_requests' => (int) ($summaryRow->successful_requests ?? 0),
@@ -187,7 +223,7 @@ class AIUsageController extends Controller
             'features' => $features,
             'users' => $users,
             'schools' => $schools,
-            'recent' => $recent->items(),
+            'recent' => $recentRows,
             'recent_pagination' => [
                 'current_page' => $recent->currentPage(),
                 'last_page' => $recent->lastPage(),

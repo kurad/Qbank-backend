@@ -351,6 +351,57 @@ PROMPT;
     }
    
     /**
+     * Reduce the source-chunk budget for ordinary chat only. Checkpoints,
+     * evaluations, objective coverage and teacher-approved supplements retain
+     * their existing retrieval paths and evidence rules.
+     *
+     * Disabled by default for safe rollout. Set TUTOR_ADAPTIVE_CONTEXT=true
+     * after comparing a few real student conversations in the test instance.
+     */
+    public function conversationalTeachingContext(
+        TutorSession $session,
+        string $studentMessage,
+        bool $hasAttachments = false
+    ): Collection {
+        $limit = 6;
+        if ((bool) config('tutor_context.adaptive_enabled', false) && !$hasAttachments) {
+            $limit = $this->conversationalChunkLimit($studentMessage);
+        }
+
+        return $this->teachingContext($session, $studentMessage, $limit);
+    }
+
+    /**
+     * Conservative, deterministic heuristic; no extra AI call or new data.
+     * More complicated questions and requests for multiple worked examples
+     * retain all six chunks. The knowledge service separately appends any
+     * approved objective notes and teacher supporting sources.
+     */
+    protected function conversationalChunkLimit(string $message): int
+    {
+        $message = trim(mb_strtolower($message));
+        $length = mb_strlen($message);
+
+        $complex = preg_match(
+            '/\b(compare|contrast|differentiate|derive|prove|demonstrate|analy[sz]e|evaluate|solve|calculate|design|implement|debug|troubleshoot|step.by.step|multiple|several|detailed|in.depth|full explanation|worked examples|all examples|diagram|figure|image|table|schema|join|equation|formula|algorithm|code|sql query)\b/u',
+            $message
+        );
+        if ($complex || $length >= 320) {
+            return 6;
+        }
+
+        $shortClarification = $length <= 100 && preg_match(
+            '/^(what (does|is|are)|define|meaning of|remind me|can you repeat|i don.t understand|why|how come|please clarify|explain again|give an example)/u',
+            $message
+        );
+        if ($shortClarification) {
+            return 3;
+        }
+
+        return $length >= 180 ? 5 : 4;
+    }
+
+    /**
      * Decide how the current objective should be checked before generating
      * the actual checkpoint. This prevents a fixed question-type rotation
      * from forcing every objective into the same assessment style.
