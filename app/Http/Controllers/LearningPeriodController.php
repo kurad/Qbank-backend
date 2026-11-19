@@ -553,6 +553,62 @@ class LearningPeriodController extends Controller
     }
 
     /**
+     * Delete an unused draft learning period and its topic assignments.
+     *
+     * Student learning evidence and assessment records must never be
+     * removed as a side effect of deleting a learning period.
+     */
+    public function destroy(
+        Request $request,
+        LearningPeriod $learningPeriod
+    ) {
+        $group = $this->resolveGroup($learningPeriod);
+        $this->ensureCanManage($request, $group);
+
+        DB::transaction(function () use ($learningPeriod) {
+            // Lock the period to avoid racing an edit or publish operation.
+            $period = LearningPeriod::query()
+                ->lockForUpdate()
+                ->findOrFail($learningPeriod->id);
+
+            abort_unless(
+                $period->status === 'draft',
+                422,
+                'Only draft learning periods can be deleted.'
+            );
+
+            // The FK on several of these tables is CASCADE or SET NULL.
+            // Block deletion rather than erase or detach student evidence.
+            $dependentTables = [
+                'tutor_sessions',
+                'practice_attempts',
+                'learner_formative_attempts',
+                'student_topic_learning_states',
+                'learning_support_threads',
+                'assessments',
+                'student_topic_revision_notes',
+            ];
+
+            foreach ($dependentTables as $table) {
+                if (\Illuminate\Support\Facades\Schema::hasTable($table)
+                    && DB::table($table)
+                        ->where('learning_period_id', $period->id)
+                        ->exists()) {
+                    abort(422, 'This learning period has associated learning or assessment records and cannot be deleted. Archive it instead.');
+                }
+            }
+
+            // Learning-period topic assignments are draft configuration
+            // and are removed by their existing cascade foreign key.
+            $period->delete();
+        });
+
+        return response()->json([
+            'message' => 'Draft learning period deleted successfully.',
+        ]);
+    }
+
+    /**
      * List topics assigned to a learning period.
      */
     public function topics(
