@@ -207,10 +207,11 @@ PROMPT;
         $chunks = $this->knowledge->retrieve(
             $session,
             $retrievalQuery,
-            6
+            max(2, min(6, (int) config('tutor_context.opening_chunks', 4)))
         );
         $context = $this->formatChunks($chunks);
-        $history = $this->previousLearningHistory($session);
+        // A new topic opening needs its objectives, not old chat transcripts.
+        $history = 'No previous chat transcript included in this opening.';
         $system = $this->buildSystemPrompt(
             $session,
             $objectives,
@@ -249,7 +250,7 @@ PROMPT;
             'AI Tutor Opening',
             [
                 'temperature' => 0.3,
-                'max_tokens' => 1500,
+                'max_tokens' => (int) config('tutor_context.opening_max_tokens', 2500),
             ]
         ));
     }

@@ -30,6 +30,30 @@ class AIUsageRecorder
         ]);
     }
 
+    /** Provider billed tokens but its response could not be used (e.g. MAX_TOKENS). */
+    public function incomplete(
+        string $provider,
+        ?string $model,
+        string $operation,
+        array $usage,
+        ?int $latencyMs,
+        ?string $finishReason,
+        array $context = []
+    ): void {
+        $this->store([
+            'provider' => $provider,
+            'model' => $model,
+            'operation' => $operation,
+            'status' => 'failed',
+            'http_status' => $context['http_status'] ?? 200,
+            'finish_reason' => $finishReason,
+            'latency_ms' => $latencyMs,
+            'usage' => $usage,
+            'error_message' => 'Provider response incomplete: ' . ($finishReason ?: 'unknown finish reason'),
+            'context' => $context,
+        ]);
+    }
+
     public function failure(
         string $provider,
         ?string $model,

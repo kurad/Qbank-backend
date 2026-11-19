@@ -260,6 +260,25 @@ class TutorController extends Controller
         ]);
     }
 
+    /** Cached revision notes do not create a new Tutor session. */
+    public function revisionNotes(Request $request, int $learningPeriod, int $topic, \App\Services\TutorRevisionNotesService $notes)
+    {
+        $saved = $notes->existing($request->user(), $learningPeriod, $topic);
+        return response()->json(['data' => $saved ? [
+            'content' => $saved->content,
+            'updated_at' => $saved->updated_at,
+        ] : null]);
+    }
+
+    public function prepareRevisionNotes(Request $request, int $learningPeriod, int $topic, \App\Services\TutorRevisionNotesService $notes)
+    {
+        $saved = $notes->generate($request->user(), $learningPeriod, $topic);
+        return response()->json(['data' => [
+            'content' => $saved->content,
+            'updated_at' => $saved->updated_at,
+        ]]);
+    }
+
     public function createSession(Request $request)
 
     {

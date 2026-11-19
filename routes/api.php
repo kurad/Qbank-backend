@@ -316,6 +316,8 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     | The backend automatically attaches all active objectives.
     */
 
+    Route::get('/tutor/learning-periods/{learningPeriod}/topics/{topic}/revision-notes', [TutorController::class, 'revisionNotes'])->whereNumber(['learningPeriod', 'topic']);
+    Route::post('/tutor/learning-periods/{learningPeriod}/topics/{topic}/revision-notes', [TutorController::class, 'prepareRevisionNotes'])->whereNumber(['learningPeriod', 'topic'])->middleware('throttle:3,1');
     Route::post('/tutor/sessions', [TutorController::class, 'createSession']);
     Route::get('/tutor/sessions', [TutorController::class, 'sessions']);
     Route::get('/tutor/sessions/{tutorSession}', [TutorController::class, 'showSession']);

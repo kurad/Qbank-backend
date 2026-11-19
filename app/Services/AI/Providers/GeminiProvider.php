@@ -21,6 +21,7 @@ class GeminiProvider
         $context = $this->usageContext($options);
         $startedAt = microtime(true);
         $httpStatus = null;
+        $usageRecorded = false;
 
         try {
             $apiKey = config('services.gemini.key');
@@ -118,28 +119,34 @@ class GeminiProvider
                 'usage' => $usage ?: null,
             ]);
 
-            $this->usageRecorder->success(
-                'gemini',
-                $model,
-                $operation,
-                is_array($usage) ? $usage : [],
-                $this->latencyMs($startedAt),
-                $finishReason,
-                $context + ['http_status' => $httpStatus]
-            );
-
+            // HTTP 200 with MAX_TOKENS is billable, but it is not a usable Tutor
+            // response. Store its actual token usage as a failed operation once.
             if ($finishReason === 'MAX_TOKENS') {
-                Log::warning('Gemini response reached the output token limit.', [
+                $this->usageRecorder->incomplete(
+                    'gemini', $model, $operation,
+                    is_array($usage) ? $usage : [],
+                    $this->latencyMs($startedAt), $finishReason,
+                    $context + ['http_status' => $httpStatus]
+                );
+                $usageRecorded = true;
+                Log::warning('Gemini response was truncated; fallback may be needed.', [
                     'model' => $model,
                     'max_output_tokens' => $generationConfig['maxOutputTokens'] ?? null,
-                    'thinking_config' => $generationConfig['thinkingConfig'] ?? null,
                     'usage' => $usage ?: null,
                 ]);
+            } else {
+                $this->usageRecorder->success(
+                    'gemini', $model, $operation,
+                    is_array($usage) ? $usage : [],
+                    $this->latencyMs($startedAt), $finishReason,
+                    $context + ['http_status' => $httpStatus]
+                );
+                $usageRecorded = true;
             }
 
             return $data;
         } catch (Throwable $e) {
-            $this->usageRecorder->failure(
+            if (!$usageRecorded) $this->usageRecorder->failure(
                 'gemini',
                 $model,
                 $operation,
