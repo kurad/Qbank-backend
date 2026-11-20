@@ -102,39 +102,50 @@ class TutorSessionService
         }
 
         /*
-         * Keep normal learning sequential within the SAME learning period.
-         *
-         * A learner who has already started another topic must resolve it
-         * before opening a new one. "Resolve" means the topic becomes covered
-         * either through mastery or through the existing move-on/needs-review
-         * pathway. Review sessions remain exempt, and learning in a different
-         * period/subject is unaffected.
+         * Enforce the teacher's display_order, not merely "whichever topic
+         * was started first". Older deployments allowed students to start a
+         * later topic first. Preserve those sessions and their evidence, but
+         * let the student begin the earliest still-uncovered assigned topic.
+         * Newly started later topics stay locked until earlier ones are
+         * covered (mastered or explicitly moved on/needs review).
+         * Review and teacher-directed remediation remain exempt.
          */
         if ($sessionMode === 'learning') {
-            $unfinishedState = StudentTopicLearningState::query()
-                ->with('topic:id,topic_name')
-                ->where('student_id', $student->id)
-                ->where(
-                    'learning_period_id',
-                    $resolved['learningPeriod']->id
-                )
-                ->where('progression_status', 'in_progress')
-                ->where(
-                    'topic_id',
-                    '!=',
-                    $resolved['topic']->id
-                )
-                ->latest('updated_at')
-                ->first();
+            $assignments = $resolved['learningPeriod']->topics()
+                ->orderBy('display_order')
+                ->orderBy('id')
+                ->get(['topic_id', 'display_order']);
 
-            if ($unfinishedState) {
-                $unfinishedName =
-                    $unfinishedState->topic?->topic_name
-                    ?: 'your unfinished topic';
+            $states = StudentTopicLearningState::query()
+                ->where('student_id', $student->id)
+                ->where('learning_period_id', $resolved['learningPeriod']->id)
+                ->get(['topic_id', 'progression_status'])
+                ->keyBy('topic_id');
+
+            $firstUncovered = $assignments->first(function ($assignment) use ($states) {
+                return $states->get($assignment->topic_id)?->progression_status !== 'covered';
+            });
+
+            // An already-started session remains resumable after an upgrade,
+            // even if it was started out of sequence before this guard existed.
+            $resumingExisting = TutorSession::query()
+                ->where('student_id', $student->id)
+                ->where('group_id', $resolved['group']->id)
+                ->where('learning_period_id', $resolved['learningPeriod']->id)
+                ->where('topic_id', $resolved['topic']->id)
+                ->where('session_mode', 'learning')
+                ->where('status', 'active')
+                ->exists();
+
+            if ($firstUncovered &&
+                (int) $firstUncovered->topic_id !== (int) $resolved['topic']->id &&
+                !$resumingExisting) {
+                $next = \App\Models\Topic::query()
+                    ->whereKey($firstUncovered->topic_id)
+                    ->value('topic_name') ?: 'the next assigned topic';
 
                 throw ValidationException::withMessages([
-                    'topic_id' =>
-                        "Please finish or move on from \"{$unfinishedName}\" before starting another topic in this learning period.",
+                    'topic_id' => "Please start or finish \"{$next}\" first. Your teacher has set a topic order for this learning period.",
                 ]);
             }
         }
