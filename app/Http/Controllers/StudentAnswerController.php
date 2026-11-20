@@ -75,11 +75,23 @@ class StudentAnswerController extends Controller
                 return (string)$opt;
             }, $options);
 
-            $optKeys = array_map($normText, $optTexts);
+            $optKeys = [];
+            foreach ($options as $i => $opt) {
+                $text = trim($optTexts[$i]);
+                if ($text !== '') {
+                    $optKeys[] = $normText($text);
+                    continue;
+                }
+                $path = is_array($opt) ? (string)($opt['image'] ?? $opt['option_image'] ?? $opt['image_url'] ?? '') : '';
+                if (str_contains($path, '/storage/')) $path = explode('/storage/', $path, 2)[1];
+                $path = ltrim(preg_replace('/[?#].*$/', '', $path), '/');
+                if (str_starts_with($path, 'storage/')) $path = substr($path, 8);
+                $optKeys[] = $path !== '' ? $normText('image:' . $path) : '';
+            }
 
             $addByIndex = function ($idx, array &$set) use ($optKeys) {
                 $i = is_numeric($idx) ? (int)$idx : null;
-                if ($i !== null && $i >= 0 && $i < count($optKeys)) $set[$optKeys[$i]] = true;
+                if ($i !== null && $i >= 0 && $i < count($optKeys) && $optKeys[$i] !== '') $set[$optKeys[$i]] = true;
             };
 
             $addByText = function ($txt, array &$set) use ($normText) {
@@ -118,6 +130,14 @@ class StudentAnswerController extends Controller
                     $idx = ord(strtoupper($sTrim)) - 65;
                     if ($idx >= 0 && $idx < count($optKeys)) $addByIndex($idx, $set);
                     else $addByText($sTrim, $set);
+                    return;
+                }
+
+                // Image-only choices use a stable key based on the stored image path.
+                // Never accept a key that isn't in the question's actual options.
+                if (str_starts_with(strtolower($sTrim), 'image:')) {
+                    $key = $normText($sTrim);
+                    if (in_array($key, $optKeys, true)) $set[$key] = true;
                     return;
                 }
 

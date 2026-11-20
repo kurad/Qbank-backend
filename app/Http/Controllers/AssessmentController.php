@@ -877,7 +877,13 @@ class AssessmentController extends Controller
 
             $optionTexts = array_map(function ($option) {
                 if (is_array($option)) {
-                    return (string) ($option['text'] ?? $option['label'] ?? $option['value'] ?? '');
+                    $text = trim((string) ($option['text'] ?? $option['label'] ?? $option['value'] ?? ''));
+                    if ($text !== '') return $text;
+                    $image = (string) ($option['image'] ?? $option['option_image'] ?? $option['image_url'] ?? '');
+                    if (str_contains($image, '/storage/')) $image = explode('/storage/', $image, 2)[1];
+                    $image = ltrim(preg_replace('/[?#].*$/', '', $image), '/');
+                    if (str_starts_with($image, 'storage/')) $image = substr($image, 8);
+                    return $image !== '' ? 'image:' . $image : '';
                 }
                 return (string) $option;
             }, $options);
