@@ -12,10 +12,12 @@ class StudentAssessment extends Model
     protected $fillable = [
         'student_id', 'assessment_id', 'assigned_by',
         'assigned_at', 'score', 'max_score',
-        'status', 'completed_at'
+        'status', 'completed_at', 'question_order', 'option_order'
         
     ];
     protected $casts = [
+    'question_order' => 'array',
+    'option_order' => 'array',
     'assigned_at'   => 'datetime',
     'completed_at'  => 'datetime',
     'score'         => 'float',

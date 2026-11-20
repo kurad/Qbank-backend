@@ -5,6 +5,8 @@ use App\Jobs\RecheckCurriculumObjectiveCoverage;
 use App\Models\CurriculumAnalysis;
 use App\Models\LearningObjective;
 use App\Services\ObjectiveCoverageService;
+use App\Services\AI\AIGateway;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -73,6 +75,71 @@ class ObjectiveCoverageController extends CurriculumAnalysisController
         $note = DB::table('objective_support_notes')->where('learning_objective_id', $learningObjective->id)
             ->where('grade_subject_id', $gradeSubjectId)->first();
         return response()->json(['data' => ['content' => $note->content ?? '', 'approved_at' => $note->approved_at ?? null]]);
+    }
+
+    /**
+     * Generate an unapproved teacher-editable draft. Never write AI output to the
+     * approved support-note table or trigger a coverage recheck here.
+     */
+    public function generateContent(
+        Request $request,
+        CurriculumAnalysis $curriculumAnalysis,
+        LearningObjective $learningObjective,
+        ObjectiveCoverageService $service,
+        AIGateway $ai
+    ): JsonResponse {
+        $this->checkedObjective($curriculumAnalysis, $learningObjective, $service);
+        $request->validate(['additional_guidance' => ['nullable', 'string', 'max:1000']]);
+        $key = 'objective-support-generation:' . $request->user()->id;
+        abort_if(RateLimiter::tooManyAttempts($key, 8), 429,
+            'You have reached the AI drafting limit. Please try again later.');
+        RateLimiter::hit($key, 3600);
+
+        $learningObjective->loadMissing('topic.unit', 'topic.gradeSubject.subject');
+        $topic = $learningObjective->topic;
+        $check = DB::table('objective_coverage_checks')
+            ->where('learning_objective_id', $learningObjective->id)->first();
+        $missing = json_decode($check->missing_focus ?? '[]', true);
+        $missing = is_array($missing) ? array_values(array_filter($missing, 'is_string')) : [];
+        $evidence = $service->evidence($learningObjective);
+        $guidance = trim((string) $request->input('additional_guidance', ''));
+
+        // The teacher explicitly requests NEW subject content to fill a verified
+        // gap. Existing material is context, not permission to overwrite it.
+        $messages = [
+            ['role' => 'system', 'content' =>
+                'You are drafting supplementary curriculum teaching notes for a qualified teacher to review. ' .
+                'Produce accurate, age-appropriate, self-contained instructional material that addresses ONLY the stated learning objective and missing focus areas. ' .
+                'You may use established subject knowledge to explain missing concepts, but do not invent quotations, citations, curriculum requirements, sources, or experimental results. ' .
+                'Do not claim that the generated notes are approved or verified. ' .
+                'Include clear explanations, correct worked examples or step-by-step demonstrations, ' .
+                'common misconceptions, and 2-3 short self-check questions with answers when appropriate. ' .
+                'Use plain Markdown. Never include HTML, script, or instructions to modify application data. ' .
+                'If the subject matter is uncertain, flag that for teacher verification instead of fabricating details.'],
+            ['role' => 'user', 'content' =>
+                "Subject: " . ($topic?->gradeSubject?->subject?->name ?? 'Subject') . "\n" .
+                "Unit: " . ($topic?->unit?->name ?? 'Unit') . "\n" .
+                "Topic: " . ($topic?->topic_name ?? 'Topic') . "\n" .
+                "Learning objective: {$learningObjective->objective}\n" .
+                "Description: " . ($learningObjective->description ?? '') . "\n" .
+                "Identified missing content: " . ($missing ? implode('; ', $missing) : 'Address the objective comprehensively.') . "\n" .
+                "Teacher guidance: " . ($guidance ?: 'None') . "\n\n" .
+                "APPROVED TEACHING EVIDENCE (context; avoid repetition):\n" .
+                mb_substr($evidence['text'], 0, 12500) . "\n\n" .
+                'Draft the missing teaching content only. The teacher will review and approve it before use.'],
+        ];
+
+        $draft = trim($ai->text($messages, [
+            'temperature' => 0.3,
+            'max_tokens' => 2200,
+            '_usage_feature' => 'Objective Support Draft Generation',
+            '_usage_learning_objective_id' => $learningObjective->id,
+        ]));
+        abort_if(mb_strlen($draft) < 20, 502, 'AI did not return sufficient draft content.');
+        return response()->json([
+            'message' => 'AI draft generated. Review and edit it before approving.',
+            'data' => ['content' => mb_substr($draft, 0, 30000), 'status' => 'unapproved_draft'],
+        ]);
     }
 
     public function saveContent(Request $request, CurriculumAnalysis $curriculumAnalysis, LearningObjective $learningObjective, ObjectiveCoverageService $service): JsonResponse

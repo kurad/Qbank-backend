@@ -38,6 +38,8 @@ class AssessmentBuilderController extends Controller
             'delivery_mode' => 'required|in:online,offline',
             'question_ids' => 'required|array|min:1',
             'question_ids.*' => 'integer|exists:questions,id',
+            'shuffle_questions' => 'sometimes|boolean',
+            'shuffle_options' => 'sometimes|boolean',
         ]);
 
         $assessmentData = [
@@ -46,6 +48,8 @@ class AssessmentBuilderController extends Controller
             'subject_id' => $validated['subject_id'],
             'type' => $validated['type'],
             'delivery_mode' => $validated['delivery_mode'],
+            'shuffle_questions' => (bool) ($validated['shuffle_questions'] ?? false),
+            'shuffle_options' => (bool) ($validated['shuffle_options'] ?? false),
         ];
 
         $result = $this->svc->createWithTopicsAndQuestions(

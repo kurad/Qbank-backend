@@ -316,8 +316,6 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     | The backend automatically attaches all active objectives.
     */
 
-    Route::get('/tutor/learning-periods/{learningPeriod}/topics/{topic}/revision-notes', [TutorController::class, 'revisionNotes'])->whereNumber(['learningPeriod', 'topic']);
-    Route::post('/tutor/learning-periods/{learningPeriod}/topics/{topic}/revision-notes', [TutorController::class, 'prepareRevisionNotes'])->whereNumber(['learningPeriod', 'topic'])->middleware('throttle:3,1');
     Route::post('/tutor/sessions', [TutorController::class, 'createSession']);
     Route::get('/tutor/sessions', [TutorController::class, 'sessions']);
     Route::get('/tutor/sessions/{tutorSession}', [TutorController::class, 'showSession']);
@@ -557,6 +555,7 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     Route::post('/curriculum-analyses/{curriculumAnalysis}/coverage/check-all', [ObjectiveCoverageController::class, 'checkAll']);
     Route::post('/curriculum-analyses/{curriculumAnalysis}/coverage/{learningObjective}/recheck', [ObjectiveCoverageController::class, 'recheck']);
     Route::get('/curriculum-analyses/{curriculumAnalysis}/coverage/{learningObjective}/content', [ObjectiveCoverageController::class, 'content']);
+    Route::post('/curriculum-analyses/{curriculumAnalysis}/coverage/{learningObjective}/content/generate', [ObjectiveCoverageController::class, 'generateContent']);
     Route::put('/curriculum-analyses/{curriculumAnalysis}/coverage/{learningObjective}/content', [ObjectiveCoverageController::class, 'saveContent']);
     Route::post('/course-materials/{courseMaterial}/extract', [CourseMaterialController::class, 'extract']);
     Route::post('/course-materials/{courseMaterial}/analyze-content', [CourseMaterialController::class, 'analyzeContent']);

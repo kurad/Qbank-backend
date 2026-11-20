@@ -46,6 +46,8 @@ class ModernAssessmentBuilderController extends Controller
                 'nullable',
                 'string',
             ],
+            'shuffle_questions' => ['sometimes', 'boolean'],
+            'shuffle_options' => ['sometimes', 'boolean'],
         ]);
 
         $assessment = $this->service->createDraft(
@@ -114,6 +116,8 @@ class ModernAssessmentBuilderController extends Controller
                 'nullable',
                 'string',
             ],
+            'shuffle_questions' => ['sometimes', 'boolean'],
+            'shuffle_options' => ['sometimes', 'boolean'],
         ]);
 
         $assessment = $this->service->updateAssessment(

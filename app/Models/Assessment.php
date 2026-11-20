@@ -22,6 +22,8 @@ class Assessment extends Model
         'question_count',
         'delivery_mode',
         'due_date',
+        'shuffle_questions',
+        'shuffle_options',
         'is_timed',
         'time_limit',
         'instructions',
@@ -30,6 +32,8 @@ class Assessment extends Model
     ];
 
     protected $casts = [
+        'shuffle_questions' => 'boolean',
+        'shuffle_options' => 'boolean',
         'is_timed' => 'boolean',
         'is_system_generated' => 'boolean',
         'is_mandatory' => 'boolean',

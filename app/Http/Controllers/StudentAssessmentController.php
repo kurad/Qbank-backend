@@ -9,6 +9,7 @@ use App\Models\StudentAssessment;
 use App\Models\LearnerFormativeAttempt;
 use Illuminate\Support\Facades\DB;
 use App\Services\LearningPeriodFormativeService;
+use App\Services\AssessmentShuffleService;
 
 class StudentAssessmentController extends Controller
 {
@@ -52,6 +53,9 @@ class StudentAssessmentController extends Controller
         );
         if (!in_array($studentAssessment->status, ['in_progress'], true)) {
             $studentAssessment->update(['status' => 'in_progress']);
+        }
+        if ($assessment->shuffle_questions || $assessment->shuffle_options) {
+            app(AssessmentShuffleService::class)->ensureSnapshot($assessment, $studentAssessment);
         }
         return response()->json([
             'message' => 'Assessment started successfully',

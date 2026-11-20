@@ -6,6 +6,7 @@ use App\Models\Assessment;
 use App\Models\StudentAssessment;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
+use App\Services\AssessmentShuffleService;
 
 class AssessmentAssigner
 {
@@ -75,6 +76,11 @@ class AssessmentAssigner
             ->where('student_id', $student->id)
             ->first();
         $assessment->student_assessment_id = $studentAssessment ? $studentAssessment->id : null;
+        $presentation = app(AssessmentShuffleService::class);
+        // A pending attempt has no snapshot yet; the POST /start endpoint creates it.
+        if ($studentAssessment && $studentAssessment->question_order !== null) {
+            $assessment->setRelation('questions', $presentation->orderQuestions($assessment->questions, $studentAssessment));
+        }
 
         // Get topic object from the first question's topic (if available)
         $topic = null;
@@ -96,9 +102,9 @@ class AssessmentAssigner
         $normalizedQuestions = [];
 
         // Ensure assessment questions are processed in stable order (AssessmentQuestion.order)
-        $assessmentQuestions = $assessment->questions->sortBy(function ($aq) {
-            return $aq->order ?? 0;
-        })->values();
+        $assessmentQuestions = $studentAssessment && $studentAssessment->question_order !== null
+            ? $assessment->questions->values()
+            : $assessment->questions->sortBy(fn ($aq) => $aq->order ?? 0)->values();
 
         $seenParents = [];
         foreach ($assessmentQuestions as $aq) {
@@ -136,7 +142,35 @@ class AssessmentAssigner
             }
         }
 
-        // Replace the questions relation in the returned assessment with normalized structure
+        // Shuffle MCQ only: matching pairs, true/false, multipart question order are untouched.
+        if ($studentAssessment && $studentAssessment->option_order !== null) {
+            foreach ($normalizedQuestions as &$item) {
+                if (($item['question_type'] ?? '') === 'mcq') {
+                    $item['options'] = $presentation->orderOptions($item['options'] ?? [], (int) $item['id'], $studentAssessment);
+                }
+                foreach ($item['sub_questions'] ?? [] as &$sub) {
+                    if (($sub['question_type'] ?? '') === 'mcq') {
+                        $sub['options'] = $presentation->orderOptions($sub['options'] ?? [], (int) $sub['id'], $studentAssessment);
+                    }
+                }
+                unset($sub);
+            }
+            unset($item);
+            // assessment.questions[].question remains compatible with the wizard UI.
+            foreach ($assessmentQuestions as $aq) {
+                $q = $aq->question;
+                if (!$q || $q->question_type !== 'mcq') continue;
+                $raw = $q->options;
+                $options = is_string($raw) ? json_decode($raw, true) : $raw;
+                if (is_array($options)) $q->options = $presentation->orderOptions($options, (int) $q->id, $studentAssessment);
+                foreach ($q->subQuestions as $subQ) {
+                    if ($subQ->question_type !== 'mcq') continue;
+                    $subOptions = $subQ->options;
+                    if (is_array($subOptions)) $subQ->options = $presentation->orderOptions($subOptions, (int) $subQ->id, $studentAssessment);
+                }
+            }
+        }
+        // Keep existing API payload shape for clients expecting normalized questions.
         $assessment->questions = collect($normalizedQuestions);
 
         return [

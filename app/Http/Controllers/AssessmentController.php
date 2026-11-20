@@ -298,6 +298,37 @@ class AssessmentController extends Controller
             $assessment
         );
 
+        // Create the immutable presentation snapshot before returning any
+        // questions. This prevents the initial GET from exposing an unshuffled
+        // version before the normal POST /start call.
+        $student = Auth::user();
+        if (($assessment->shuffle_questions || $assessment->shuffle_options)
+            && $student && $student->role === 'student') {
+            $existing = StudentAssessment::where('student_id', $student->id)
+                ->where('assessment_id', $assessment->id)->first();
+            $isOwnPractice = $assessment->type === 'practice'
+                && (int) $assessment->creator_id === (int) $student->id;
+            $isGroupAssignment = $assessment->groups()
+                ->whereIn('groups.id', $student->groups()->pluck('groups.id'))->exists();
+            abort_unless($existing || $isOwnPractice || $isGroupAssignment,
+                403, 'This assessment is not assigned to you.');
+
+            abort_if($existing && in_array($existing->status,
+                ['completed', 'graded', 'under_review'], true),
+                409, 'Assessment already submitted.');
+
+            $studentAssessment = StudentAssessment::firstOrCreate(
+                ['student_id' => $student->id, 'assessment_id' => $assessment->id],
+                ['assigned_by' => $assessment->creator_id, 'assigned_at' => now(),
+                 'status' => 'in_progress']
+            );
+            if ($studentAssessment->status !== 'in_progress') {
+                $studentAssessment->update(['status' => 'in_progress']);
+            }
+            app(\App\Services\AssessmentShuffleService::class)
+                ->ensureSnapshot($assessment, $studentAssessment);
+        }
+
         $data = $assigner->questionsForPractice($id);
         return response()->json($data);
     }
@@ -562,6 +593,8 @@ class AssessmentController extends Controller
             'is_timed' => 'boolean',
             'time_limit' => 'nullable|integer|min:1',
             'use_default_sections' => 'sometimes|boolean',
+            'shuffle_questions' => 'sometimes|boolean',
+            'shuffle_options' => 'sometimes|boolean',
 
         ]);
         // Adjust field based on delivery mode
@@ -588,6 +621,8 @@ class AssessmentController extends Controller
             'is_timed' => $validated['is_timed'] ?? false,
             'time_limit' => $validated['time_limit'] ?? null,
             'delivery_mode' => $validated['delivery_mode'],
+            'shuffle_questions' => (bool) ($validated['shuffle_questions'] ?? false),
+            'shuffle_options' => (bool) ($validated['shuffle_options'] ?? false),
         ]);
         // Attach the provided topic via pivot
         $assessment->topics()->attach($validated['topic_id']);
@@ -986,6 +1021,14 @@ class AssessmentController extends Controller
                 }
             }
 
+            // Standard teacher-assigned/practice assessment option order is
+            // stored on the student's attempt. Personalized formative uses its
+            // own independent per-question order above.
+            if (!$learnerAttempt && is_array($options) && $question->question_type === 'mcq') {
+                $options = app(\App\Services\AssessmentShuffleService::class)
+                    ->orderOptions($options, (int) $question->id, $studentAssessment);
+            }
+
             // Add image URLs to options if they exist.
             if (is_array($options)) {
                 $options = array_map(function ($opt) {
@@ -1029,6 +1072,24 @@ class AssessmentController extends Controller
                 'confidence_score' => $answer->confidence_score ?? null,
                 'submitted_at' => $answer->submitted_at ?? $answer->created_at ?? null,
             ];
+        }
+
+        // Show the same question order the student saw during the attempt.
+        if (!$learnerAttempt && is_array($studentAssessment->question_order)) {
+            $positions = array_flip(array_map('intval', $studentAssessment->question_order));
+            // A multipart parent's children share its position when only the
+            // parent was directly attached to the assessment.
+            foreach ($studentAnswers as $answer) {
+                $qid = (int) $answer->question_id;
+                $parentId = (int) ($answer->question?->parent_question_id ?? 0);
+                if (!isset($positions[$qid]) && isset($positions[$parentId])) {
+                    $positions[$qid] = $positions[$parentId];
+                }
+            }
+            usort($results['questions'], fn ($a, $b) =>
+                ($positions[(int) $a['question_id']] ?? PHP_INT_MAX)
+                <=> ($positions[(int) $b['question_id']] ?? PHP_INT_MAX)
+            );
         }
 
         return response()->json($results);
@@ -1261,6 +1322,8 @@ class AssessmentController extends Controller
                 'nullable',
                 'date',
             ],
+            'shuffle_questions' => ['sometimes', 'boolean'],
+            'shuffle_options' => ['sometimes', 'boolean'],
         ]);
 
         $started = (int) ($assessment->started_attempts_count ?? 0);
@@ -1269,6 +1332,8 @@ class AssessmentController extends Controller
             $lockedChanged =
                 strtolower((string) $assessment->type) !== strtolower((string) $data['type'])
                 || strtolower((string) ($assessment->delivery_mode ?? 'online')) !== strtolower((string) $data['delivery_mode'])
+                || (array_key_exists('shuffle_questions', $data) && (bool) $assessment->shuffle_questions !== (bool) $data['shuffle_questions'])
+                || (array_key_exists('shuffle_options', $data) && (bool) $assessment->shuffle_options !== (bool) $data['shuffle_options'])
                 || (bool) $assessment->is_timed !== (bool) $data['is_timed']
                 || (
                     (bool) $data['is_timed']
@@ -1282,6 +1347,8 @@ class AssessmentController extends Controller
             }
         }
 
+        if (array_key_exists('shuffle_questions', $data)) $assessment->shuffle_questions = (bool) $data['shuffle_questions'];
+        if (array_key_exists('shuffle_options', $data)) $assessment->shuffle_options = (bool) $data['shuffle_options'];
         $assessment->type = $data['type'];
         $assessment->delivery_mode = $data['delivery_mode'];
         $assessment->is_timed = (bool) $data['is_timed'];

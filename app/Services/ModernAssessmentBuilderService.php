@@ -55,6 +55,8 @@ class ModernAssessmentBuilderService
             $data['instructions'] ??
                 null,
 
+            'shuffle_questions' => (bool) ($data['shuffle_questions'] ?? false),
+            'shuffle_options' => (bool) ($data['shuffle_options'] ?? false),
             'status' =>
             'draft',
         ]);
@@ -99,6 +101,17 @@ class ModernAssessmentBuilderService
                 false
             );
 
+        // An existing started attempt must retain its published presentation policy.
+        $hasStarted = $assessment->studentAssessments()
+            ->whereIn('status', ['in_progress', 'completed', 'graded', 'under_review'])
+            ->exists();
+        foreach (['shuffle_questions', 'shuffle_options'] as $key) {
+            if ($hasStarted && array_key_exists($key, $data)
+                && (bool) $assessment->{$key} !== (bool) $data[$key]) {
+                throw ValidationException::withMessages([$key => 'Cannot change shuffling after an attempt has started.']);
+            }
+        }
+
         $assessment->update([
             'title' =>
             $data['title'],
@@ -125,6 +138,8 @@ class ModernAssessmentBuilderService
             'instructions' =>
             $data['instructions'] ??
                 null,
+            'shuffle_questions' => (bool) ($data['shuffle_questions'] ?? $assessment->shuffle_questions),
+            'shuffle_options' => (bool) ($data['shuffle_options'] ?? $assessment->shuffle_options),
         ]);
 
         return $this->getForBuilder(
