@@ -1344,11 +1344,16 @@ class TeacherProgressService
                 $students,
                 $progress
             ) {
+                // A learning period belongs to one class. Do not include
+                // students from other classes in its denominator.
+                $periodStudents = $students->filter(fn ($student) =>
+                    $period->group?->students?->contains('id', $student->id)
+                )->values();
                 $periodTopics =
                     $period->topics;
 
                 $studentProgress =
-                    $students->map(
+                    $periodStudents->map(
                         function ($student) use (
                             $periodTopics,
                             $progress
@@ -1380,7 +1385,7 @@ class TeacherProgressService
                         fn ($periodTopic) =>
                             $this->topicProgressFor(
                                 $periodTopic,
-                                $students,
+                                $periodStudents,
                                 $progress
                             )
                     );
@@ -1480,6 +1485,9 @@ class TeacherProgressService
                     $students,
                     $progress
                 ) {
+                    $periodStudents = $students->filter(fn ($student) =>
+                        $period->group?->students?->contains('id', $student->id)
+                    )->values();
                     return $period
                         ->topics
                         ->map(
@@ -1487,14 +1495,14 @@ class TeacherProgressService
                                 $periodTopic
                             ) use (
                                 $period,
-                                $students,
+                                $periodStudents,
                                 $progress
                             ) {
                                 $row =
                                     $this
                                         ->topicProgressFor(
                                             $periodTopic,
-                                            $students,
+                                            $periodStudents,
                                             $progress
                                         );
 
@@ -2028,6 +2036,7 @@ class TeacherProgressService
     {
         return [
             'group:id,group_name,class_code',
+            'group.students:id,name,email',
 
             'gradeSubject.subject:id,name',
 

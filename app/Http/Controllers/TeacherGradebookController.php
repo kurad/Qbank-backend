@@ -47,6 +47,25 @@ class TeacherGradebookController extends Controller
         ]);
     }
 
+    public function setQuestionExclusion(
+        Request $request,
+        \App\Models\Assessment $assessment,
+        int $questionId,
+        \App\Services\AssessmentQuestionExclusionService $exclusions
+    ) {
+        $data = $request->validate([
+            'excluded' => ['required', 'boolean'],
+            'reason' => ['required_if:excluded,true', 'nullable', 'string', 'min:5', 'max:1000'],
+        ]);
+        $user = $request->user();
+        abort_unless($user && in_array($user->role, ['teacher', 'admin'], true), 403);
+        $allowed = $this->gradebook->canManageAssessment($user, $assessment);
+        abort_unless($allowed, 403, 'You cannot change grading for this assessment.');
+        return response()->json(['data' => $exclusions->setExcluded(
+            $user, $assessment, $questionId, (bool) $data['excluded'], $data['reason'] ?? null
+        )]);
+    }
+
     public function reviewFormativeAnswer(Request $request, StudentAnswer $answer)
     {
         $validated = $request->validate([

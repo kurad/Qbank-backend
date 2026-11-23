@@ -975,6 +975,8 @@ class AssessmentController extends Controller
             $startedAt = \Carbon\Carbon::parse($startedAt);
         }
 
+        $excludedQuestionIds = app(\App\Services\AssessmentQuestionExclusionService::class)
+            ->excludedIds((int) $assessment->id);
         $results = [
             'assessment_title' => $assessment->title,
             'assessment_type' => $assessment->type,
@@ -1049,6 +1051,7 @@ class AssessmentController extends Controller
             $results['questions'][] = [
                 'student_assessment_id' => $studentAssessment->id, // ✅ ADD THIS
                 'question_id' => $question->id,
+                'excluded' => in_array((int) $question->id, $excludedQuestionIds, true),
                 'question_text' => $question->question,
                 'stimulus' => $question->stimulus,
                 'question_type' => $question->question_type,
@@ -1063,7 +1066,7 @@ class AssessmentController extends Controller
                 'multiple_answers' => (bool) ($question->multiple_answers ?? false),
                 // Prefer stored answer points, fallback to alternative fields or zero
                 'points_earned' => $answer->points_earned === null ? null : $answer->points_earned,
-                'pending_review' => $answer->points_earned === null,
+                'pending_review' => $answer->points_earned === null && !in_array((int) $question->id, $excludedQuestionIds, true),
                 // Use per-answer max if set, otherwise fall back to question marks or legacy max_points
                 'max_points' => $answer->max_points ?? $question->marks ?? $question->max_points ?? 0,
                 'explanation' => $question->explanation,

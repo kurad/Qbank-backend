@@ -177,6 +177,7 @@ class StudentAssessmentController extends Controller
             'completed_at' => now(),
             'score' => $needsReview ? null : $assessment->studentAnswers()->sum('points_earned'),
         ]);
+        app(\App\Services\AssessmentQuestionExclusionService::class)->recalculate($assessment);
         return response()->json([
             'status' => $assessment->status,
         ]);
@@ -218,6 +219,7 @@ class StudentAssessmentController extends Controller
             'score' => $pending ? null : $answers->sum('points_earned'),
             'status' => $pending ? 'under_review' : 'graded'
         ]);
+        app(\App\Services\AssessmentQuestionExclusionService::class)->recalculate($sa);
 
         return response()->json([
             'message' => 'Assessment graded successfully',

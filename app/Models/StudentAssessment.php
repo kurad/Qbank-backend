@@ -11,7 +11,7 @@ class StudentAssessment extends Model
 
     protected $fillable = [
         'student_id', 'assessment_id', 'assigned_by',
-        'assigned_at', 'score', 'max_score',
+        'assigned_at', 'score', 'max_score', 'original_max_score',
         'status', 'completed_at', 'question_order', 'option_order'
         
     ];
@@ -22,6 +22,7 @@ class StudentAssessment extends Model
     'completed_at'  => 'datetime',
     'score'         => 'float',
     'max_score'     => 'float',
+    'original_max_score' => 'float',
 ];
 
     public $timestamps = false;

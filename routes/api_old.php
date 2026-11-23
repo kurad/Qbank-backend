@@ -1,0 +1,637 @@
+<?php
+
+use App\Http\Controllers\AdminDashboardController;
+use App\Http\Controllers\AIUsageController;
+use App\Http\Controllers\AIGatewaySettingsController;
+use App\Http\Controllers\AssessmentBuilderController;
+use App\Http\Controllers\AssessmentController;
+use App\Http\Controllers\AssessmentSectionController;
+use App\Http\Controllers\AuthController;
+use App\Http\Controllers\TeacherAccessController;
+use App\Http\Controllers\ClassInvitationController;
+use App\Http\Controllers\CourseMaterialController;
+use App\Http\Controllers\CourseMaterialSupportingSourceController;
+use App\Http\Controllers\CurriculumAnalysisController;
+use App\Http\Controllers\ObjectiveCoverageController;
+use App\Http\Controllers\GradeLevelController;
+use App\Http\Controllers\GradeSubjectController;
+use App\Http\Controllers\GroupController;
+use App\Http\Controllers\HomeController;
+use App\Http\Controllers\LearningObjectiveController;
+use App\Http\Controllers\LearningPeriodController;
+use App\Http\Controllers\LearningSupportController;
+use App\Http\Controllers\ModernAssessmentBuilderController;
+use App\Http\Controllers\PaperGeneratorController;
+use App\Http\Controllers\PracticePaperController;
+use App\Http\Controllers\QuestionController;
+use App\Http\Controllers\QuestionnaireImportController;
+use App\Http\Controllers\SchoolController;
+use App\Http\Controllers\SchoolStudentController;
+use App\Http\Controllers\SystemSchoolUserController;
+use App\Http\Controllers\StudentAnswerController;
+use App\Http\Controllers\StudentAssessmentController;
+use App\Http\Controllers\StudentResultsController;
+use App\Http\Controllers\SubjectController;
+use App\Http\Controllers\TeacherGradebookController;
+use App\Http\Controllers\TeacherProgressController;
+use App\Http\Controllers\TeacherMaterialGapController;
+use App\Http\Controllers\TeacherTutorHistoryController;
+use App\Http\Controllers\TopicController;
+use App\Http\Controllers\TutorController;
+use App\Http\Controllers\EnglishWritingController;
+use App\Http\Controllers\UnitController;
+use App\Models\User;
+use Illuminate\Auth\Events\Verified;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Route;
+
+
+/*
+|--------------------------------------------------------------------------
+| Public Email Verification Routes
+|--------------------------------------------------------------------------
+*/
+
+use App\Http\Controllers\StudentPracticeController;
+use App\Http\Controllers\TeacherLearningActivityController;
+use App\Http\Controllers\StudentFormativeAssessmentController;
+use App\Http\Controllers\StudentLearnerFormativeController;
+Route::get('/email/verify/{id}/{hash}', function (Request $request, $id, $hash) {
+    $user = User::findOrFail($id);
+
+    if (!hash_equals(sha1($user->getEmailForVerification()), (string) $hash)) {
+        return response()->json(['message' => 'Invalid verification link.'], 403);
+    }
+
+    if ($user->hasVerifiedEmail()) {
+        return response()->json(['message' => 'Email already verified.']);
+    }
+
+    $user->markEmailAsVerified();
+
+    event(new Verified($user));
+
+    return response()->json(['message' => 'Email verified successfully.']);
+})->middleware(['signed', 'throttle:6,1'])->name('verification.verify');
+
+Route::post('/email/resend-verification', function (Request $request) {
+    $request->validate(['email' => ['required', 'email']]);
+
+    $user = User::where('email', $request->email)->first();
+
+    if (!$user) {
+        return response()->json(['message' => 'If that email exists, a link has been sent.']);
+    }
+
+    if ($user->hasVerifiedEmail()) {
+        return response()->json(['message' => 'Email is already verified.']);
+    }
+
+    $user->sendEmailVerificationNotification();
+
+    return response()->json(['message' => 'Verification link sent.']);
+})->middleware(['throttle:6,1']);
+
+
+/*
+|--------------------------------------------------------------------------
+| Public Authentication Routes
+|--------------------------------------------------------------------------
+*/
+
+Route::post('/login', [AuthController::class, 'login']);
+Route::post('/register', [AuthController::class, 'register']);
+Route::get('/teacher-invitations/{token}', [TeacherAccessController::class, 'preview']);
+Route::post('/teacher-invitations/{token}/register', [TeacherAccessController::class, 'registerFromInvitation']);
+
+Route::post('/refresh-token', [AuthController::class, 'refreshToken']);
+
+// Public class invitation preview
+Route::get('/class-invitations/{classCode}', [ClassInvitationController::class, 'show']);
+Route::post('/class-invitations/{classCode}/resolve-account', [ClassInvitationController::class, 'resolveAccount'])->middleware('throttle:10,1');
+Route::get('/auth/google', [AuthController::class, 'redirectToGoogle']);
+Route::get('/auth/google/callback', [AuthController::class, 'handleGoogleCallback']);
+
+/*
+|--------------------------------------------------------------------------
+| Protected Routes
+|--------------------------------------------------------------------------
+*/
+
+Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
+
+    /*
+    |--------------------------------------------------------------------------
+    | Authenticated User
+    |--------------------------------------------------------------------------
+    */
+
+
+
+    Route::get('/user', function (Request $request) {
+        return $request->user();
+    });
+
+    Route::post('/logout', [AuthController::class, 'logout']);
+    Route::get('/session-info', [AuthController::class, 'sessionInfo']);
+    Route::get('/admin/dashboard-summary', [AdminDashboardController::class, 'summary']);
+    Route::get('/admin/ai-usage', [AIUsageController::class, 'index']);
+    Route::get('/admin/ai-gateway', [AIGatewaySettingsController::class, 'show']);
+    Route::put('/admin/ai-gateway', [AIGatewaySettingsController::class, 'save'])->middleware('throttle:20,1');
+    Route::delete('/admin/ai-gateway', [AIGatewaySettingsController::class, 'reset'])->middleware('throttle:20,1');
+
+    // Teacher access management / invitation acceptance
+    Route::post('/teacher-invitations/{token}/accept', [TeacherAccessController::class, 'acceptExisting']);
+    Route::get('/teacher-management/context', [TeacherAccessController::class, 'context']);
+    Route::get('/teacher-management/teachers', [TeacherAccessController::class, 'teachers']);
+    Route::get('/teacher-management/requests', [TeacherAccessController::class, 'pendingRequests']);
+    Route::post('/teacher-management/requests/{user}/approve', [TeacherAccessController::class, 'approve']);
+    Route::post('/teacher-management/requests/{user}/reject', [TeacherAccessController::class, 'reject']);
+    Route::get('/teacher-management/invitations', [TeacherAccessController::class, 'invitations']);
+    Route::post('/teacher-management/invitations', [TeacherAccessController::class, 'invite']);
+    Route::post('/teacher-management/invitations/{teacherInvitation}/resend', [TeacherAccessController::class, 'resend']);
+    Route::post('/teacher-management/invitations/{teacherInvitation}/revoke', [TeacherAccessController::class, 'revoke']);
+
+
+    // School-level student management. System Admins do not manage student accounts.
+    // System Admin: school-scoped teacher/student access management.
+    Route::get('/system/schools/user-options', [SystemSchoolUserController::class, 'schools']);
+    Route::get('/system/schools/{school}/users', [SystemSchoolUserController::class, 'index']);
+    Route::patch('/system/schools/{school}/users/{user}/status', [SystemSchoolUserController::class, 'updateStatus'])->middleware('throttle:20,1');
+
+    Route::get('/school-management/students', [SchoolStudentController::class, 'index']);
+    Route::patch('/school-management/students/{student}/status', [SchoolStudentController::class, 'updateStatus']);
+
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | General Question Access
+    |--------------------------------------------------------------------------
+    */
+
+
+    Route::get('/subjects', [SubjectController::class, 'index']);
+    Route::get('/subjects/search', [SubjectController::class, 'searchSubjects']);
+    Route::get('/subjects/details', [SubjectController::class, 'subjectsByGrade']);
+    Route::get('/subjects/overview', [HomeController::class, 'subjectsOverview']);
+    Route::get('/subjects/{subject}/topics', [HomeController::class, 'subjectTopics']);
+    Route::get('/subjects/{subject}/grades', [SubjectController::class, 'gradesForSubject']);
+    Route::get('/subjects/{id}/topics', [TopicController::class, 'topicsBySubject']);
+    Route::get('/subjects/{subjectId}/topics-with-questions', [QuestionController::class, 'topicsWithQuestionsBySubject']);
+    Route::get('/subjects/{subjectId}/grades/{gradeId}/topics', [TopicController::class, 'topicsBySubjectAndGrade']);
+    Route::get('/subjects/{subjectId}/grades/{gradeId}/units', [TopicController::class, 'topicsBySubjectGrade']);
+    Route::get('/grade-levels', [GradeLevelController::class, 'index']);
+    Route::get('/grade-subjects/{gradeId}/{subjectId}/topics', [TopicController::class, 'topicsByGradeAndSubject']);
+    Route::get('/topics', [TopicController::class, 'index']);
+    Route::get('/topics-by-subject', [TopicController::class, 'topicsBySubject']);
+    Route::get('/questions/all', [QuestionController::class, 'allQuestions']);
+    Route::get('/questions/search', [QuestionController::class, 'search']);
+    Route::get('/questions/{id}', [QuestionController::class, 'show']);
+    Route::post('/questions/{id}/approve-for-assessment', [QuestionController::class, 'approveForAssessment']);
+    Route::post('/questions/{id}/reject-for-assessment', [QuestionController::class, 'rejectForAssessment']);
+    Route::get('/questions/assessment-pool/objective/{learningObjectiveId}', [QuestionController::class, 'assessmentQuestionsByObjective']);
+    Route::get('/reports/questions-per-subject', [HomeController::class, 'questionsPerSubject']);
+
+    Route::get('/topics/{id}/question-count', [QuestionController::class, 'getQuestionCount']);
+    Route::get('/topics/{topic}/questions', [QuestionController::class, 'byTopic']);
+    Route::get('/topics/{topic}/questions/no-pagination', [QuestionController::class, 'byTopicNoPagination']);
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | School Client & Student Lookup
+    |--------------------------------------------------------------------------
+    */
+
+    Route::get('/grade-levels/{gradeId}/subjects', [SubjectController::class, 'subjectsByGrade']);
+    Route::get('/schools', [SchoolController::class, 'index']);
+    Route::get('/schools/{school}', [SchoolController::class, 'show']);
+    Route::post('/schools', [SchoolController::class, 'store']);
+    Route::match(['put', 'patch'], '/schools/{id}', [SchoolController::class, 'update']);
+    Route::get('/students', [AuthController::class, 'getStudents']);
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | Subject, Grade Subject & Topic Management
+    |--------------------------------------------------------------------------
+    */
+
+    Route::get('/grade-subjects', [GradeSubjectController::class, 'index']);
+    Route::post('/grade-subjects', [GradeSubjectController::class, 'store']);
+    Route::get('/grade-subjects/{gradeSubject}', [GradeSubjectController::class, 'show']);
+    Route::put('/grade-subjects/{gradeSubject}', [GradeSubjectController::class, 'update']);
+    Route::delete('/grade-subjects/{gradeSubject}', [GradeSubjectController::class, 'destroy']);
+
+    Route::post('/subjects', [SubjectController::class, 'createSubject']);
+    Route::put('/subjects/{id}', [SubjectController::class, 'update']);
+
+    Route::post('/topics', [TopicController::class, 'store']);
+    Route::put('/topics/{topic}', [TopicController::class, 'update']);
+    Route::delete('/topics/{id}', [TopicController::class, 'destroy']);
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | Approved Course Materials
+    |--------------------------------------------------------------------------
+    */
+
+    Route::get('/course-materials', [CourseMaterialController::class, 'index']);
+    Route::get('/course-materials/{courseMaterial}/view', [CourseMaterialController::class, 'viewOriginal']);
+    Route::get('/course-materials/{courseMaterial}/download', [CourseMaterialController::class, 'downloadOriginal']);
+    Route::post('/course-materials', [CourseMaterialController::class, 'store']);
+    Route::post('/course-materials/{courseMaterial}/approve', [CourseMaterialController::class, 'approve']);
+    Route::get('/course-materials/{courseMaterial}/supplement', [\App\Http\Controllers\CourseMaterialSupplementController::class, 'show']);
+    Route::put('/course-materials/{courseMaterial}/supplement', [\App\Http\Controllers\CourseMaterialSupplementController::class, 'save']);
+    Route::post('/course-materials/{courseMaterial}/approve-supplement', [\App\Http\Controllers\CourseMaterialSupplementController::class, 'approve']);
+    Route::post('/course-materials/{courseMaterial}/supporting-sources', [CourseMaterialSupportingSourceController::class, 'store']);
+    Route::post('/course-material-supporting-sources/{supportingSource}/refresh', [CourseMaterialSupportingSourceController::class, 'refresh']);
+    Route::delete('/course-material-supporting-sources/{supportingSource}', [CourseMaterialSupportingSourceController::class, 'destroy']);
+    Route::delete('/course-materials/{courseMaterial}', [CourseMaterialController::class, 'destroy']);
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | Learning Periods
+    |--------------------------------------------------------------------------
+    |
+    | Teachers define the content students should focus on during
+    | a specific learning period.
+    |
+    */
+
+    Route::get('/learning-periods', [LearningPeriodController::class, 'index']);
+    Route::post('/learning-periods', [LearningPeriodController::class, 'store']);
+    Route::post('/learning-periods/batch', [LearningPeriodController::class, 'batchStore']);
+    Route::get('/learning-periods/{learningPeriod}', [LearningPeriodController::class, 'show']);
+    Route::put('/learning-periods/{learningPeriod}', [LearningPeriodController::class, 'update']);
+    Route::post('/learning-periods/{learningPeriod}/publish', [LearningPeriodController::class, 'publish']);
+    Route::post('/learning-periods/{learningPeriod}/unpublish', [LearningPeriodController::class, 'unpublish']);
+    Route::delete('/learning-periods/{learningPeriod}', [LearningPeriodController::class, 'destroy']);
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | Learning Period Topics
+    |--------------------------------------------------------------------------
+    */
+
+    Route::get('/learning-periods/{learningPeriod}/topics', [LearningPeriodController::class, 'topics']);
+    Route::post('/learning-periods/{learningPeriod}/topics', [LearningPeriodController::class, 'addTopic']);
+    Route::put('/learning-periods/{learningPeriod}/topics/{learningPeriodTopic}', [LearningPeriodController::class, 'updateTopic']);
+    Route::delete('/learning-periods/{learningPeriod}/topics/{learningPeriodTopic}', [LearningPeriodController::class, 'removeTopic']);
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | AI Tutor Engine
+    |--------------------------------------------------------------------------
+    */
+
+    /*
+    | Student learning periods
+    */
+
+    Route::get('/tutor/groups/{group}/learning-periods', [TutorController::class, 'learningPeriods']);
+    Route::get('/tutor/groups/{group}/learning-periods/current', [TutorController::class, 'currentLearningPeriods']);
+
+
+    /*
+    | Student tutor navigation
+    */
+
+    Route::get('/tutor/groups', [TutorController::class, 'groups']);
+    Route::get('/tutor/groups/{group}/subjects', [TutorController::class, 'subjects']);
+    Route::get('/tutor/groups/{group}/subjects/{gradeSubject}/units', [TutorController::class, 'units']);
+    Route::get('/tutor/groups/{group}/subjects/{gradeSubject}/units/{unit}/topics', [TutorController::class, 'topics']);
+    Route::get('/tutor/groups/{group}/subjects/{gradeSubject}/units/{unit}/topics/{topic}/objectives', [TutorController::class, 'objectives']);
+
+
+    /*
+    | Tutor Sessions
+    |
+    | Student selects a learning period/topic.
+    | The backend automatically attaches all active objectives.
+    */
+
+    Route::post('/tutor/sessions', [TutorController::class, 'createSession']);
+    Route::get('/tutor/sessions', [TutorController::class, 'sessions']);
+    Route::get('/tutor/sessions/{tutorSession}', [TutorController::class, 'showSession']);
+    Route::post('/tutor/sessions/{tutorSession}/messages', [TutorController::class, 'message']);
+    // English-only writing workspace: additive; does not alter tutor progress or messages.
+    Route::get('/tutor/sessions/{tutorSession}/english-writing', [EnglishWritingController::class, 'index']);
+    Route::post('/tutor/sessions/{tutorSession}/english-writing', [EnglishWritingController::class, 'store'])->middleware('throttle:8,1');
+    Route::get('/tutor/messages/{tutorMessage}/attachments/{index}', [TutorController::class, 'messageAttachment'])->whereNumber('index');
+    Route::post('/tutor/sessions/{tutorSession}/end', [TutorController::class, 'endSession']);
+    Route::post('/tutor/sessions/{tutorSession}/continue', [TutorController::class, 'continueLearning']);
+    Route::post('/tutor/sessions/{tutorSession}/move-on', [TutorController::class, 'moveOnTopic']);
+    Route::post('/tutor/sessions/{tutorSession}/checkpoints/{checkpointMessage}/answer', [TutorController::class, 'answerCheckpoint']);
+    Route::post('/tutor/sessions/{tutorSession}/checkpoints/{checkpointMessage}/skip', [TutorController::class, 'skipCheckpoint']);
+    Route::post(
+        '/tutor/sessions/{tutorSession}/next-objective',
+        [TutorController::class, 'nextObjective']
+    );
+    /*
+    |--------------------------------------------------------------------------
+    | Legacy Tutor Endpoint
+    |--------------------------------------------------------------------------
+    */
+
+    Route::post('/tutor/ask', [TutorController::class, 'ask']);
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | Question Bank
+    |--------------------------------------------------------------------------
+    */
+
+    Route::post('/questions', [QuestionController::class, 'store']);
+    Route::put('/questions/{id}', [QuestionController::class, 'update']);
+    Route::delete('/questions/{id}', [QuestionController::class, 'destroy']);
+    Route::get('/my-questions', [QuestionController::class, 'myQuestions']);
+    Route::post('/questions/ai-assist', [QuestionController::class, 'aiAssist']);
+    Route::post('/questions/ai-generate', [QuestionController::class, 'generateAIQuestions']);
+    Route::post('/questions/ai-generate/store', [QuestionController::class, 'storeAIQuestions']);
+    Route::get('/questions/by-topics', [AssessmentBuilderController::class, 'questionsByTopics']);
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | Practice Papers
+    |--------------------------------------------------------------------------
+    */
+
+    Route::get('/practice-papers', [PracticePaperController::class, 'index']);
+    Route::get('/practice-papers/{practicePaper}', [PracticePaperController::class, 'show']);
+    Route::get('/practice-papers/{practicePaper}/view', [PracticePaperController::class, 'view']);
+    Route::post('/practice-papers', [PracticePaperController::class, 'store']);
+    Route::post('/practice-papers/{practicePaper}', [PracticePaperController::class, 'update']);
+    Route::delete('/practice-papers/{practicePaper}', [PracticePaperController::class, 'destroy']);
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | Assessment Builder
+    |--------------------------------------------------------------------------
+    */
+
+    Route::post('/create-assessments', [AssessmentBuilderController::class, 'store']);
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | Modern Assessment Builder
+    |--------------------------------------------------------------------------
+    */
+
+    Route::post('/assessment-builder', [ModernAssessmentBuilderController::class, 'store']);
+    Route::get('/assessment-builder/question-pool', [ModernAssessmentBuilderController::class, 'questionPool']);
+    Route::get('/assessment-builder/{assessment}', [ModernAssessmentBuilderController::class, 'show']);
+    Route::put('/assessment-builder/{assessment}', [ModernAssessmentBuilderController::class, 'update']);
+    Route::put('/assessment-builder/{assessment}/scope', [ModernAssessmentBuilderController::class, 'updateScope']);
+    Route::put('/assessment-builder/{assessment}/blueprint', [ModernAssessmentBuilderController::class, 'updateBlueprint']);
+    Route::post('/assessment-builder/{assessment}/publish', [ModernAssessmentBuilderController::class, 'publish']);
+    Route::post('/assessment-builder/{assessment}/questions', [ModernAssessmentBuilderController::class, 'addQuestions']);
+    Route::delete('/assessment-builder/{assessment}/questions/{question}', [ModernAssessmentBuilderController::class, 'removeQuestion']);
+    Route::put('/assessment-builder/{assessment}/questions/reorder', [ModernAssessmentBuilderController::class, 'reorderQuestions']);
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | Teacher Assessment Management
+    |--------------------------------------------------------------------------
+    */
+
+    Route::post('/assessments', [AssessmentController::class, 'createAssessment']);
+    Route::post('/assessments/assign', [AssessmentController::class, 'assign']);
+    Route::post('/assessments/start-practice', [AssessmentController::class, 'startPractice']);
+    Route::post('/assessments/practice-for-topic', [AssessmentController::class, 'createPracticeForTopic']);
+    Route::get('/assessments/created', [AssessmentController::class, 'listCreatedAssessments']);
+    Route::get('/assessments/{id}/details', [AssessmentController::class, 'show']);
+    Route::get('/assessments/{id}/questions-for-practice', [AssessmentController::class, 'questionsForPractice']);
+    Route::get('/assessments/{assessment}/questions', [AssessmentController::class, 'getAssessmentQuestions']);
+    Route::get('/assessments/{id}/pdf/student', [PaperGeneratorController::class, 'generatePdf']);
+    Route::put('/assessments/{id}/title', [AssessmentController::class, 'updateTitle']);
+    Route::put('/assessments/{id}/reorder', [AssessmentController::class, 'reorderQuestions']);
+    Route::put('/assessments/{id}/instructions', [AssessmentController::class, 'updateInstructions']);
+    Route::put('/assessments/{id}/settings', [AssessmentController::class, 'updateSettings']);
+    Route::post('/assessments/{id}/archive', [AssessmentController::class, 'archive']);
+    Route::post('/assessments/{id}/restore', [AssessmentController::class, 'restore']);
+    Route::post('/assessments/{id}/questions', [AssessmentController::class, 'addQuestions']);
+    Route::post('/assessments/{assessment}/assign', [AssessmentController::class, 'assign']);
+    Route::post('/assessments/{id}/assign-group', [AssessmentController::class, 'assignGroup']);
+    Route::delete('/assessments/{id}', [AssessmentController::class, 'destroy']);
+    Route::delete('/assessments/{assessment}/questions/{question}', [AssessmentController::class, 'removeQuestion']);
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | Assessment Sections
+    |--------------------------------------------------------------------------
+    */
+
+    Route::get('/assessments/{id}/sections', [AssessmentSectionController::class, 'index']);
+    Route::post('/assessments/{id}/sections', [AssessmentSectionController::class, 'store']);
+    Route::put('/assessment-sections/{id}', [AssessmentSectionController::class, 'update']);
+    Route::delete('/assessment-sections/{id}', [AssessmentSectionController::class, 'destroy']);
+    Route::post('/assessment-sections/{id}/questions', [AssessmentSectionController::class, 'addSectionQuestions']);
+    Route::post('/assessment-sections/{sectionId}/questions/insert', [AssessmentSectionController::class, 'insertQuestionsIntoSection']);
+    Route::post('/assessment-sections/{section}/questions/reorder', [AssessmentSectionController::class, 'reorderSectionQuestions']);
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | Student Assessment Practice & Results
+    |--------------------------------------------------------------------------
+    */
+
+    Route::get('/student/practice-assessments', [AssessmentController::class, 'practice']);
+    Route::get('/student/assigned-assessments', [AssessmentController::class, 'assignedAssessments']);
+    Route::get('/student/results', [StudentResultsController::class, 'index']);
+    Route::get('/student/assessment-results/{id}', [AssessmentController::class, 'showResults']);
+    Route::get('/student/statistics', [HomeController::class, 'statistics']);
+    Route::get('/student/learning-periods/{learningPeriod}/formative', [StudentFormativeAssessmentController::class, 'show']);
+    Route::get('/student/learning-periods/{learningPeriod}/learner-formative', [StudentLearnerFormativeController::class, 'show']);
+    Route::post('/student/learning-periods/{learningPeriod}/learner-formative/prepare', [StudentLearnerFormativeController::class, 'prepare']);
+    Route::get('/student/learner-formative-attempts/{attempt}/questions', [StudentLearnerFormativeController::class, 'questions']);
+    Route::post('/student/learner-formative-attempts/{attempt}/submit', [StudentLearnerFormativeController::class, 'submit']);
+    Route::post('/assessments/submit-answers', [StudentAnswerController::class, 'storeStudentAnswers']);
+    Route::post('/assessments/update-short-answer-confidence', [StudentAnswerController::class, 'updateShortAnswerConfidence']);
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | Groups / Classes
+    |--------------------------------------------------------------------------
+    */
+
+    Route::get('/groups', [GroupController::class, 'index']);
+    Route::post('/groups', [GroupController::class, 'store']);
+    Route::get('/my-groups', [GroupController::class, 'myGroups']);
+    Route::post('/groups/join', [ClassInvitationController::class, 'join']);
+    Route::post('/class-invitations/{classCode}/join', [ClassInvitationController::class, 'join']);
+    Route::get('/groups/{id}', [GroupController::class, 'show']);
+    Route::put('/groups/{id}', [GroupController::class, 'update']);
+    Route::delete('/groups/{id}', [GroupController::class, 'destroy']);
+    Route::get('/groups/{id}/eligible-students', [GroupController::class, 'eligibleStudents']);
+    Route::post('/groups/{id}/students', [GroupController::class, 'addStudents']);
+    Route::delete('/groups/{id}/students/{studentId}', [GroupController::class, 'removeStudent']);
+    Route::get('/groups/{group}/assignments', [GroupController::class, 'assignments']);
+    Route::get('/groups/{group}/assignments/{assessment}/submissions', [GroupController::class, 'assignmentSubmissions']);
+
+
+    Route::get('/student/groups/{id}', [GroupController::class, 'studentShow']);
+    Route::get('/student/groups/{id}/assignments', [GroupController::class, 'studentAssignments']);
+    /*
+    |--------------------------------------------------------------------------
+    | Student Assessment Runtime
+    |--------------------------------------------------------------------------
+    */
+
+    Route::get('/student/my-assessments', [StudentAssessmentController::class, 'assessmentHub']);
+    Route::get('/assessments', [StudentAssessmentController::class, 'myAssessments']);
+    Route::get('/assessments/{studentAssessment}', [StudentAssessmentController::class, 'show']);
+    Route::post('/assessments/{assessment}/start', [StudentAssessmentController::class, 'startAssessment']);
+    Route::get('/assessments/{assessment}/draft', [StudentAssessmentController::class, 'getDraft']);
+    Route::put('/assessments/{assessment}/draft', [StudentAssessmentController::class, 'saveDraft']);
+    Route::post('/answers', [StudentAssessmentController::class, 'saveAnswer']);
+    Route::post('/assessments/{studentAssessment}/submit', [StudentAssessmentController::class, 'submit']);
+    Route::post('/assessments/{studentAssessment}/finalize', [StudentAssessmentController::class, 'finalize']);
+    Route::put('/answers/{answer}', [StudentAssessmentController::class, 'reviewAnswer']);
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | Units
+    |--------------------------------------------------------------------------
+    */
+
+    Route::get('/grade-subjects/{gradeSubject}/units', [UnitController::class, 'index']);
+    Route::post('/grade-subjects/{gradeSubject}/units', [UnitController::class, 'store']);
+    Route::get('/units/{unit}', [UnitController::class, 'show']);
+    Route::put('/units/{unit}', [UnitController::class, 'update']);
+    Route::delete('/units/{unit}', [UnitController::class, 'destroy']);
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | Topics under Units
+    |--------------------------------------------------------------------------
+    */
+
+    Route::get('/units/{unit}/topics', [TopicController::class, 'topicsByUnit']);
+    Route::post('/units/{unit}/topics', [TopicController::class, 'storeForUnit']);
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | Learning Objectives
+    |--------------------------------------------------------------------------
+    */
+
+    Route::get('/topics/{topic}/learning-objectives', [LearningObjectiveController::class, 'index']);
+    Route::post('/topics/{topic}/learning-objectives', [LearningObjectiveController::class, 'store']);
+    Route::get('/learning-objectives/{learningObjective}', [LearningObjectiveController::class, 'show']);
+    Route::put('/learning-objectives/{learningObjective}', [LearningObjectiveController::class, 'update']);
+    Route::delete('/learning-objectives/{learningObjective}', [LearningObjectiveController::class, 'destroy']);
+    Route::get('/questions/by-learning-objective/{learningObjectiveId}', [QuestionController::class, 'byLearningObjective']);
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | Curriculum Analysis & Course Material Processing
+    |--------------------------------------------------------------------------
+    */
+
+    Route::post('/course-materials/{courseMaterial}/analyze-curriculum', [CurriculumAnalysisController::class, 'analyze']);
+    Route::get('/curriculum-analyses/{curriculumAnalysis}', [CurriculumAnalysisController::class, 'show']);
+    Route::post('/curriculum-analyses/{curriculumAnalysis}/refine', [CurriculumAnalysisController::class, 'refine']);
+    Route::put('/curriculum-analyses/{curriculumAnalysis}', [CurriculumAnalysisController::class, 'update']);
+    Route::post('/curriculum-analyses/{curriculumAnalysis}/approve', [CurriculumAnalysisController::class, 'approve']);
+    Route::get('/curriculum-analyses/{curriculumAnalysis}/coverage', [ObjectiveCoverageController::class, 'index']);
+    Route::post('/curriculum-analyses/{curriculumAnalysis}/coverage/check-all', [ObjectiveCoverageController::class, 'checkAll']);
+    Route::post('/curriculum-analyses/{curriculumAnalysis}/coverage/{learningObjective}/recheck', [ObjectiveCoverageController::class, 'recheck']);
+    Route::get('/curriculum-analyses/{curriculumAnalysis}/coverage/{learningObjective}/content', [ObjectiveCoverageController::class, 'content']);
+    Route::post('/curriculum-analyses/{curriculumAnalysis}/coverage/{learningObjective}/content/generate', [ObjectiveCoverageController::class, 'generateContent']);
+    Route::put('/curriculum-analyses/{curriculumAnalysis}/coverage/{learningObjective}/content', [ObjectiveCoverageController::class, 'saveContent']);
+    Route::post('/course-materials/{courseMaterial}/extract', [CourseMaterialController::class, 'extract']);
+    Route::post('/course-materials/{courseMaterial}/analyze-content', [CourseMaterialController::class, 'analyzeContent']);
+    Route::post('/course-materials/{courseMaterial}/reanalyze',[CourseMaterialController::class, 'reanalyze']);
+    Route::get('/course-materials/processing-status', [CourseMaterialController::class, 'processingStatuses']);
+    Route::get('/course-materials/{courseMaterial}/processing-status', [CourseMaterialController::class, 'processingStatus']);
+
+
+    Route::get('/student/practice/context', [StudentPracticeController::class, 'context']);
+    Route::post('/student/practice/prepare', [StudentPracticeController::class, 'prepare']);
+    Route::get('/student/practice/topics/{topic}/questions', [StudentPracticeController::class, 'questions']);
+    Route::post('/student/practice/attempts', [StudentPracticeController::class, 'startAttempt']);
+    Route::post('/student/practice/attempts/{practiceAttempt}/answers', [StudentPracticeController::class, 'saveAttemptAnswer']);
+    Route::post('/student/practice/attempts/{practiceAttempt}/complete', [StudentPracticeController::class, 'completeAttempt']);
+    Route::get('/student/practice/history', [StudentPracticeController::class, 'history']);
+    Route::get('/student/practice/attempts/{practiceAttempt}', [StudentPracticeController::class, 'reviewAttempt']);
+
+
+    Route::get('/student/support/threads', [LearningSupportController::class, 'studentThreads']);
+    Route::post('/student/support/threads/{thread}/messages', [LearningSupportController::class, 'addMessage']);
+
+    Route::get('/teacher/tutor-history', [TeacherTutorHistoryController::class, 'index']);
+    Route::get('/teacher/tutor-history/{tutorSession}', [TeacherTutorHistoryController::class, 'show']);
+    Route::post('/teacher/tutor-history/{tutorSession}/analyze', [TeacherTutorHistoryController::class, 'analyze'])->middleware('throttle:6,1');
+    // Phase 1C: English writing draft history and teacher reviews (existing teacher authorization applies).
+    Route::get('/teacher/tutor-history/{tutorSession}/writing', [TeacherTutorHistoryController::class, 'writing']);
+    Route::put('/teacher/tutor-history/{tutorSession}/writing/{draft}/review', [TeacherTutorHistoryController::class, 'reviewWriting'])->middleware('throttle:12,1');
+
+    Route::get('/teacher/support/needs-review', [LearningSupportController::class, 'teacherNeedsReview']);
+    Route::get('/teacher/support/threads', [LearningSupportController::class, 'teacherThreads']);
+    Route::post('/teacher/support/threads', [LearningSupportController::class, 'createThread']);
+    Route::post('/teacher/support/threads/{thread}/messages', [LearningSupportController::class, 'addMessage']);
+    Route::post('/teacher/support/threads/{thread}/check-ins', [LearningSupportController::class, 'scheduleCheckIn']);
+    Route::patch('/teacher/support/check-ins/{checkIn}', [LearningSupportController::class, 'updateCheckIn']);
+
+    Route::prefix('teacher/learning-activity')->group(function () {
+        Route::get('/', [TeacherLearningActivityController::class, 'index']);
+        Route::get('/students/{student}', [TeacherLearningActivityController::class, 'student']);
+    });
+
+    Route::get('/teacher/material-gaps', [TeacherMaterialGapController::class, 'index']);
+    Route::put('/teacher/material-gaps/{objective}/note', [TeacherMaterialGapController::class, 'saveNote']);
+    Route::post('/teacher/material-gaps/{objective}/retry', [TeacherMaterialGapController::class, 'retry']);
+
+    Route::prefix('teacher/progress')->group(function () {
+
+        Route::get('/', [TeacherProgressController::class, 'dashboard']);
+        Route::get('/subjects', [TeacherProgressController::class, 'subjects']);
+        Route::get('/learning-periods', [TeacherProgressController::class, 'learningPeriods']);
+        Route::get('/students', [TeacherProgressController::class, 'students']);
+        Route::get('/activity', [TeacherProgressController::class, 'activity']);
+        Route::get('/learning-periods/{learningPeriod}', [TeacherProgressController::class, 'learningPeriod']);
+        Route::get('/students/{student}', [TeacherProgressController::class, 'student']);
+    });
+
+    Route::prefix('teacher/gradebook')->group(function () {
+        Route::get('/', [TeacherGradebookController::class, 'index']);
+        Route::get('/export', [TeacherGradebookController::class, 'export']);
+        Route::get('/review-queue', [TeacherGradebookController::class, 'reviewQueue']);
+        Route::get('/formative-review', [TeacherGradebookController::class, 'formativeReview']);
+        Route::put('/formative-answers/{answer}', [TeacherGradebookController::class, 'reviewFormativeAnswer']);
+        Route::put('/assigned-answers/{answer}', [TeacherGradebookController::class, 'reviewAssignedAnswer']);
+        Route::post('/assigned-assessments/{attempt}/publish', [TeacherGradebookController::class, 'publishAssignedResults']);
+        Route::get('/assigned-assessments/{assessment}/publication-status', [TeacherGradebookController::class, 'assignedPublicationStatus']);
+        Route::post('/assigned-assessments/{assessment}/publish-all', [TeacherGradebookController::class, 'publishAllAssignedResults']);
+        Route::get('/students/{student}', [TeacherGradebookController::class, 'student']);
+        Route::put('/answers/{answer}', [TeacherGradebookController::class, 'reviewAnswer']);
+    });
+
+    Route::prefix('teacher/questionnaire-imports')->group(function () {
+        Route::get('/', [QuestionnaireImportController::class, 'index']);
+        Route::post('/', [QuestionnaireImportController::class, 'store']);
+        Route::get('/{questionnaireImport}', [QuestionnaireImportController::class, 'show']);
+        Route::post('/{questionnaireImport}/reprocess', [QuestionnaireImportController::class, 'reprocess']);
+        Route::put('/{questionnaireImport}/items/{item}', [QuestionnaireImportController::class, 'updateItem']);
+        Route::post('/{questionnaireImport}/approve', [QuestionnaireImportController::class, 'approve']);
+        Route::delete('/{questionnaireImport}', [QuestionnaireImportController::class, 'destroy']);
+    });
+});

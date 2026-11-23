@@ -15,6 +15,13 @@ use Illuminate\Support\Facades\DB;
 
 class TeacherGradebookService
 {
+    public function canManageAssessment(User $teacher, Assessment $assessment): bool
+    {
+        $this->ensureTeacherOrAdmin($teacher);
+        $accessible = $this->accessibleGroups($teacher)->pluck('id');
+        return $assessment->groups()->whereIn('groups.id', $accessible)->exists();
+    }
+
     public function overview(User $teacher, array $filters = []): array
     {
         $this->ensureTeacherOrAdmin($teacher);
@@ -246,7 +253,9 @@ class TeacherGradebookService
         $assessments = $query->get();
 
         return $assessments->flatMap(function (Assessment $assessment) {
+            $excluded = app(\App\Services\AssessmentQuestionExclusionService::class)->excludedIds((int) $assessment->id);
             $questionMax = $assessment->assessmentQuestions
+                ->reject(fn ($aq) => in_array((int) $aq->question_id, $excluded, true))
                 ->sum(fn ($aq) => (float) ($aq->question?->marks ?? 0));
 
             return $assessment->groups->map(function ($group) use ($assessment, $questionMax) {
@@ -523,6 +532,8 @@ class TeacherGradebookService
             ->orderByDesc('assigned_at')
             ->get()
             ->map(function (StudentAssessment $attempt) {
+                $excludedQuestionIds = app(\App\Services\AssessmentQuestionExclusionService::class)
+                    ->excludedIds((int) $attempt->assessment_id);
                 $fallbackMax = $attempt->assessment?->assessmentQuestions
                     ?->sum(fn ($aq) => (float) ($aq->question?->marks ?? 0)) ?? 0;
 
@@ -551,7 +562,7 @@ class TeacherGradebookService
                     'assigned_at' => optional($attempt->assigned_at)->toDateTimeString(),
                     'completed_at' => optional($attempt->completed_at)->toDateTimeString(),
                     'classes' => $attempt->assessment?->groups?->pluck('group_name')->values()->all() ?? [],
-                    'answers' => $attempt->studentAnswers->map(function (StudentAnswer $answer) {
+                    'answers' => $attempt->studentAnswers->map(function (StudentAnswer $answer) use ($excludedQuestionIds) {
                         $question = $answer->question;
 
                         $reviews = $answer->markReviews ?? collect();
@@ -560,6 +571,7 @@ class TeacherGradebookService
                         return [
                             'id' => $answer->id,
                             'question_id' => $answer->question_id,
+                            'excluded' => in_array((int) $answer->question_id, $excludedQuestionIds, true),
                             'question_type' => $question?->question_type,
                             'question' => $question?->question,
                             'question_image_url' => $question?->question_image_url,
@@ -664,6 +676,9 @@ class TeacherGradebookService
                 }
             });
 
+        // Excluded responses should not be presented as work still requiring a mark.
+        $excludedPairs = DB::table('assessment_question_exclusions')
+            ->where('is_excluded', true)->get()->groupBy('assessment_id');
         return $query
             ->with([
                 'question:id,question_type,question,marks,question_image,learning_objective_id',
@@ -678,6 +693,8 @@ class TeacherGradebookService
             ->orderBy('student_assessment_id')
             ->orderBy('id')
             ->get()
+            ->filter(fn (StudentAnswer $answer) => !($excludedPairs->get($answer->studentAssessment?->assessment_id, collect())
+                ->contains('question_id', $answer->question_id)))
             ->map(function (StudentAnswer $answer) {
                 $question = $answer->question;
                 $attempt = $answer->studentAssessment;
@@ -754,17 +771,11 @@ class TeacherGradebookService
 
         // The final score is not released until every pending question is marked,
         // including short answers assessed in the formative review workspace.
-        $remaining = $attempt->studentAnswers()->whereNull('points_earned')->count();
-
-        $score = (float) $attempt->studentAnswers()->sum('points_earned');
-        $maxScore = (float) $attempt->assessment->assessmentQuestions
-            ->sum(fn ($aq) => (float) ($aq->question?->marks ?? 0));
-
-        $attempt->update([
-            'score' => $remaining === 0 ? $score : null,
-            'max_score' => $maxScore,
-            'status' => $remaining === 0 ? 'graded' : 'under_review',
-        ]);
+        $excluded = app(\App\Services\AssessmentQuestionExclusionService::class)->excludedIds((int) $attempt->assessment_id);
+        $remaining = $attempt->studentAnswers()->whereNull('points_earned')
+            ->whereNotIn('question_id', $excluded)->count();
+        $attempt->update(['status' => $remaining === 0 ? 'graded' : 'under_review']);
+        app(\App\Services\AssessmentQuestionExclusionService::class)->recalculate($attempt);
 
         return [
             'answer_id' => $answer->id,
@@ -813,6 +824,9 @@ class TeacherGradebookService
             );
         }
 
+        $excludedByAssessment = DB::table('assessment_question_exclusions')
+            ->where('is_excluded', true)->get()->groupBy('assessment_id');
+
         return $query
             ->with([
                 'student:id,name,email',
@@ -829,15 +843,18 @@ class TeacherGradebookService
             ->orderByDesc('completed_at')
             ->orderByDesc('id')
             ->get()
-            ->map(function (StudentAssessment $attempt) {
+            ->map(function (StudentAssessment $attempt) use ($excludedByAssessment) {
+                $excludedIds = ($excludedByAssessment->get($attempt->assessment_id) ?? collect())->keyBy('question_id');
                 $answers = $attempt->studentAnswers
                     ->sortBy('id')
-                    ->map(function (StudentAnswer $answer) {
+                    ->map(function (StudentAnswer $answer) use ($excludedIds) {
                         $question = $answer->question;
                         $reviews = $answer->markReviews ?? collect();
                         $firstReview = $reviews->first();
 
                         return [
+                            'excluded' => $excludedIds->has($answer->question_id),
+                            'exclusion_reason' => $excludedIds->get($answer->question_id)?->reason,
                             'answer_id' => $answer->id,
                             'question_id' => $answer->question_id,
                             'question_type' => $question?->question_type,
@@ -887,7 +904,7 @@ class TeacherGradebookService
                     'max_score' => (float) ($attempt->max_score ?? 0),
                     'completed_at' => optional($attempt->completed_at)->toDateTimeString(),
                     'answers' => $answers->all(),
-                    'pending_review_count' => $answers->filter(fn ($item) => $item['current_points'] === null)->count(),
+                    'pending_review_count' => $answers->filter(fn ($item) => !$item['excluded'] && $item['current_points'] === null)->count(),
                     'reviewed_answers' => $answers->where('review_count', '>', 0)->count(),
                     'answer_count' => $answers->count(),
                 ];
@@ -940,7 +957,7 @@ class TeacherGradebookService
             // A previously published legacy assessment stays published when corrected.
             // Unpublished assessments remain under review until an explicit publish action.
             if ($attempt->status === 'graded') {
-                $attempt->update(['score' => round((float) $attempt->studentAnswers()->sum('points_earned'), 2)]);
+                app(\App\Services\AssessmentQuestionExclusionService::class)->recalculate($attempt);
             }
 
             return [
@@ -970,10 +987,12 @@ class TeacherGradebookService
 
             $answers = $attempt->studentAnswers()->get();
             abort_if($answers->isEmpty(), 422, 'No submitted answers to publish.');
-            $ungraded = $answers->filter(fn ($answer) => $answer->points_earned === null)->count();
+            $excluded = app(\App\Services\AssessmentQuestionExclusionService::class)->excludedIds((int) $attempt->assessment_id);
+            $ungraded = $answers->filter(fn ($answer) => !in_array((int) $answer->question_id, $excluded, true) && $answer->points_earned === null)->count();
             abort_if($ungraded > 0, 422, "Grade the {$ungraded} unmarked response(s) before publishing. Automatically graded answers do not require confirmation.");
-            $score = round((float) $answers->sum('points_earned'), 2);
-            $attempt->update(['score' => $score, 'status' => 'graded']);
+            $attempt->update(['status' => 'graded']);
+            app(\App\Services\AssessmentQuestionExclusionService::class)->recalculate($attempt);
+            $score = (float) $attempt->fresh()->score;
             return ['student_assessment_id' => $attempt->id, 'assessment_status' => 'graded', 'assessment_score' => $score, 'assessment_max_score' => (float) $attempt->max_score];
         });
     }
@@ -996,11 +1015,12 @@ class TeacherGradebookService
             ->where('assessment_id', $assessment->id)
             ->whereIn('student_id', $studentIds)
             ->whereIn('status', ['under_review', 'graded'])
-            ->with('studentAnswers:id,student_assessment_id,points_earned')
+            ->with('studentAnswers:id,student_assessment_id,question_id,points_earned')
             ->get();
         $pending = $attempts->where('status', 'under_review');
+        $excluded = app(\App\Services\AssessmentQuestionExclusionService::class)->excludedIds((int) $assessment->id);
         $ready = $pending->filter(fn ($a) => $a->studentAnswers->isNotEmpty() &&
-            $a->studentAnswers->every(fn ($answer) => $answer->points_earned !== null));
+            $a->studentAnswers->every(fn ($answer) => in_array((int) $answer->question_id, $excluded, true) || $answer->points_earned !== null));
         return [
             'assessment_id' => $assessment->id,
             'submitted' => $attempts->count(),
@@ -1030,12 +1050,10 @@ class TeacherGradebookService
             abort_if($attempts->count() !== $status['awaiting_publication'], 409, 'Submissions changed. Refresh and retry.');
             foreach ($attempts as $attempt) {
                 $answers = $attempt->studentAnswers()->get();
-                abort_if($answers->isEmpty() || $answers->contains(fn ($a) => $a->points_earned === null),
+                abort_if($answers->isEmpty() || $answers->contains(fn ($a) => !in_array((int) $a->question_id, app(\App\Services\AssessmentQuestionExclusionService::class)->excludedIds((int) $assessment->id), true) && $a->points_earned === null),
                     409, 'One or more submissions are no longer ready for publication.');
-                $attempt->update([
-                    'score' => round((float) $answers->sum('points_earned'), 2),
-                    'status' => 'graded',
-                ]);
+                $attempt->update(['status' => 'graded']);
+                app(\App\Services\AssessmentQuestionExclusionService::class)->recalculate($attempt);
             }
             return ['assessment_id' => $assessment->id, 'published' => $attempts->count()];
         });
@@ -1114,16 +1132,11 @@ class TeacherGradebookService
                 'teacher_feedback' => $feedback ? trim($feedback) : null,
             ]);
 
-            $answers = $attempt->studentAnswers()->with('question:id,marks')->get();
-            $score = (float) $answers->sum(fn ($item) => (float) ($item->points_earned ?? 0));
-            $maxScore = (float) $answers->sum(fn ($item) => (float) ($item->question?->marks ?? 0));
-
-            $pending = $answers->contains(fn ($item) => $item->points_earned === null);
-            $attempt->update([
-                'score' => $pending ? null : round($score, 2),
-                'max_score' => round($maxScore, 2),
-                'status' => $pending ? 'under_review' : 'graded',
-            ]);
+            $excluded = app(\App\Services\AssessmentQuestionExclusionService::class)->excludedIds((int) $attempt->assessment_id);
+            $answers = $attempt->studentAnswers()->get();
+            $pending = $answers->contains(fn ($item) => !in_array((int) $item->question_id, $excluded, true) && $item->points_earned === null);
+            $attempt->update(['status' => $pending ? 'under_review' : 'graded']);
+            app(\App\Services\AssessmentQuestionExclusionService::class)->recalculate($attempt);
         });
 
         $attempt->refresh();
