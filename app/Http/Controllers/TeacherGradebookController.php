@@ -47,6 +47,49 @@ class TeacherGradebookController extends Controller
         ]);
     }
 
+    /** Assessment-wide question management; never tied to a student submission. */
+    public function assessmentQuestions(
+        Request $request,
+        \App\Models\Assessment $assessment
+    ) {
+        $user = $request->user();
+        abort_unless($user && in_array($user->role, ['teacher', 'admin'], true), 403);
+        abort_unless($this->gradebook->canManageAssessment($user, $assessment), 403,
+            'You cannot manage this assessment.');
+
+        // Fixed question set for assigned assessments; include personalized
+        // questions found in actual student attempts for formative assessments.
+        $questionIds = \Illuminate\Support\Facades\DB::table('assessment_questions')
+            ->where('assessment_id', $assessment->id)->pluck('question_id');
+        $attemptIds = \App\Models\StudentAssessment::query()
+            ->where('assessment_id', $assessment->id)->select('id');
+        $fromAttempts = \Illuminate\Support\Facades\DB::table('student_answers')
+            ->whereIn('student_assessment_id', $attemptIds)
+            ->distinct()->pluck('question_id');
+        $ids = $questionIds->merge($fromAttempts)->map(fn ($id) => (int) $id)
+            ->unique()->values()->all();
+        $records = \Illuminate\Support\Facades\DB::table('questions')
+            ->whereIn('id', $ids)->get(['id', 'question', 'question_type', 'marks']);
+        $excluded = \Illuminate\Support\Facades\DB::table('assessment_question_exclusions')
+            ->where('assessment_id', $assessment->id)->get()->keyBy('question_id');
+        return response()->json(['data' => [
+            'assessment_id' => $assessment->id,
+            'questions' => $records->map(function ($question) use ($excluded) {
+                $setting = $excluded->get($question->id);
+                return [
+                    'id' => (int) $question->id,
+                    'question' => $question->question,
+                    'question_type' => $question->question_type,
+                    'marks' => (float) $question->marks,
+                    'excluded' => (bool) ($setting->is_excluded ?? false),
+                    'reason' => $setting->reason ?? null,
+                ];
+            })->values(),
+            'affected_attempts' => \App\Models\StudentAssessment::query()
+                ->where('assessment_id', $assessment->id)->count(),
+        ]]);
+    }
+
     public function setQuestionExclusion(
         Request $request,
         \App\Models\Assessment $assessment,
