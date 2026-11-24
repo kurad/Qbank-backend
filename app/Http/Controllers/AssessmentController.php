@@ -466,7 +466,7 @@ class AssessmentController extends Controller
         }
 
         // Replace the questions relation in the returned assessment with normalized structure
-        $assessment->questions = collect($normalizedQuestions);
+        $assessment->setRelation('questions', collect($normalizedQuestions));
 
         return response()->json([
             'assessment' => $assessment,

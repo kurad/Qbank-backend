@@ -241,6 +241,7 @@
             vertical-align: top;
             border-bottom: 1px solid #eee;
         }
+        @include('pdf.partials.stimulus-styles')
     </style>
 </head>
 
@@ -314,19 +315,6 @@
     return min(120, max(20, $mm));
     };
 
-    // Break total space into chunks to prevent wasted gaps
-    $spaceChunks = function ($totalMm) {
-    $chunkMm = 24; // about ~3-4 writing lines
-    $chunks = [];
-    $remaining = (int) $totalMm;
-
-    while ($remaining > 0) {
-    $h = min($chunkMm, $remaining);
-    $chunks[] = $h;
-    $remaining -= $h;
-    }
-    return $chunks;
-    };
     @endphp
 
     {{-- Questions --}}
@@ -352,6 +340,7 @@
         <div class="question-text">
             <span class="question-number">{{ $loop->iteration }}.</span>
             <span>{!! $q['clean_html'] !!}</span>
+            @include('pdf.partials.stimulus-blocks', ['stimulus' => $q['stimulus'] ?? []])
 
             @if(!empty($q['image_base64']))
             <div><img class="question-image" src="{{ $q['image_base64'] }}" alt=""></div>
@@ -362,6 +351,7 @@
         <div class="question-text" style="margin-left:15px; margin-top:4px; font-weight: normal;">
             <span class="question-number">({{ chr(96 + $loop->iteration) }})</span>
             <span>{!! $sub['clean_html'] !!}</span>
+            @include('pdf.partials.stimulus-blocks', ['stimulus' => $sub['stimulus'] ?? []])
 
             @if(isset($sub['marks']))
             <span class="marks">[{{ $sub['marks'] }} mark{{ ((int)($sub['marks'] ?? 0)) > 1 ? 's' : '' }}]</span>
@@ -413,15 +403,11 @@
 
         @elseif(($sub['type'] ?? null) === 'short_answer')
         @php
-        $totalMm = $calcSpaceMm($q['marks'] ?? 1);
-        $chunks = $spaceChunks($totalMm);
+        $totalMm = $calcSpaceMm($sub['marks'] ?? 1);
         @endphp
         <div class="work-block">
             <div class="work-label">Working space &amp; answer:</div>
-            @foreach($chunks as $mm)
-            @php $height = $mm.'mm'; @endphp
-            <div class="work-space-chunk" style="height: {{ $height }};"></div>
-            @endforeach
+            <div class="work-space-chunk" style="height: {{ $totalMm }}mm;"></div>
         </div>
 
         @else
@@ -436,6 +422,7 @@
         <div class="question-text">
             <span class="question-number">{{ $loop->iteration }}.</span>
             <span>{!! $q['clean_html'] !!}</span>
+            @include('pdf.partials.stimulus-blocks', ['stimulus' => $q['stimulus'] ?? []])
 
             @if(isset($q['marks']))
             <span class="marks">[{{ $q['marks'] }} mark{{ ((int)($q['marks'] ?? 0)) > 1 ? 's' : '' }}]</span>
@@ -513,6 +500,7 @@
         <div class="question-text">
             <span class="question-number">{{ $loop->iteration }}.</span>
             <span>{!! $q['clean_html'] !!}</span>
+            @include('pdf.partials.stimulus-blocks', ['stimulus' => $q['stimulus'] ?? []])
             @if(!empty($q['image_base64']))
             <div><img class="question-image" src="{{ $q['image_base64'] }}" alt=""></div>
             @endif
@@ -522,6 +510,7 @@
         <div class="question-text" style="margin-left:15px; margin-top:4px; font-weight: normal;">
             <span class="question-number">({{ chr(96 + $loop->iteration) }})</span>
             <span>{!! $sub['clean_html'] !!}</span>
+            @include('pdf.partials.stimulus-blocks', ['stimulus' => $sub['stimulus'] ?? []])
 
             @if(isset($sub['marks']))
             <span class="marks">[{{ $sub['marks'] }} mark{{ ((int)($sub['marks'] ?? 0)) > 1 ? 's' : '' }}]</span>
@@ -573,14 +562,10 @@
         @elseif(($sub['type'] ?? null) === 'short_answer')
         @php
         $totalMm = $calcSpaceMm($sub['marks'] ?? 1);
-        $chunks = $spaceChunks($totalMm);
         @endphp
         <div class="work-block" style="margin-left:15px;">
             <div class="work-label">Working space &amp; answer:</div>
-            @foreach($chunks as $mm)
-            @php $height = $mm.'mm'; @endphp
-            <div class="work-space-chunk" style="height: {{ $height }};"></div>
-            @endforeach
+            <div class="work-space-chunk" style="height: {{ $totalMm }}mm;"></div>
         </div>
 
         @else
@@ -594,6 +579,7 @@
         <div class="question-text">
             <span class="question-number">{{ $loop->iteration }}.</span>
             <span>{!! $q['clean_html'] !!}</span>
+            @include('pdf.partials.stimulus-blocks', ['stimulus' => $q['stimulus'] ?? []])
 
             @if(isset($q['marks']))
             <span class="marks">[{{ $q['marks'] }} mark{{ ((int)($q['marks'] ?? 0)) > 1 ? 's' : '' }}]</span>

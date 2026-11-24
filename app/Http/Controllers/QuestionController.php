@@ -47,7 +47,7 @@ class QuestionController extends Controller
                     'question_type' => 'parent',
                     'options' => null,
                     'correct_answer' => null,
-                    'marks' => null,
+                    'marks' => 0, // Parent container: marks are assigned only to its children.
                     'multiple_answers' => false,
                     'is_required' => false,
                     'is_math' => false,
@@ -140,7 +140,7 @@ class QuestionController extends Controller
             if ($hasSub) {
                 $validated['options'] = null;
                 $validated['correct_answer'] = null;
-                $validated['marks'] = null;
+                $validated['marks'] = 0; // Parent is not an independently graded question.
             }
 
             /*
@@ -830,7 +830,7 @@ class QuestionController extends Controller
                     'question_type' => 'parent',
                     'options' => null,
                     'correct_answer' => null,
-                    'marks' => null,
+                    'marks' => 0, // Parent container: marks are assigned only to its children.
                 ]);
             }
 
@@ -926,7 +926,7 @@ class QuestionController extends Controller
              * Parent.
              */
             if ($hasSub) {
-                $validated['marks'] = null;
+                $validated['marks'] = 0; // Parent is not an independently graded question.
                 $validated['options'] = null;
                 $validated['correct_answer'] = null;
             } else {

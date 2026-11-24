@@ -124,6 +124,7 @@
         .katex-display .katex {
             display: inline-block;
         }
+        @include('pdf.partials.stimulus-styles')
     </style>
 </head>
 
@@ -175,6 +176,7 @@
             <div>
                 <strong>{{ $loop->iteration }}.</strong>
                 <span>{!! $q['clean_html'] !!}</span>
+                @include('pdf.partials.stimulus-blocks', ['stimulus' => $q['stimulus'] ?? []])
 
                 @if($q['image_base64'])
                 <br>
@@ -194,6 +196,7 @@
             <div>
                 <strong>({{ chr(97 + $i) }})</strong>
                 <span>{!! $sub['clean_html'] !!}</span>
+                @include('pdf.partials.stimulus-blocks', ['stimulus' => $sub['stimulus'] ?? []])
 
                 @if($sub['image_base64'])
                 <br>
@@ -206,7 +209,8 @@
                     @foreach($sub['options'] as $x => $op)
                     <div class="option">
                         <strong>{{ chr(65 + $x) }}.</strong>
-                        <span>{!! is_array($op) ? ($op['text'] ?? '') : $op !!}</span>
+                        <span>{!! is_array($op) ? ($op['text'] ?? '') : e($op) !!}</span>
+                        @if(is_array($op) && !empty($op['image_base64']))<img src="{{ $op['image_base64'] }}" style="max-width:180px;max-height:95px;" />@endif
                     </div>
                     @endforeach
                 </div>
@@ -260,14 +264,15 @@
         @foreach($q['options'] as $i => $opt)
         <div class="option">
             <strong>{{ chr(65 + $i) }}.</strong>
-            <span>{!! is_array($opt) ? ($opt['text'] ?? '') : $opt !!}</span>
+            <span>{!! is_array($opt) ? ($opt['text'] ?? '') : e($opt) !!}</span>
+            @if(is_array($opt) && !empty($opt['image_base64']))<img src="{{ $opt['image_base64'] }}" style="max-width:180px;max-height:95px;" />@endif
         </div>
         @endforeach
     </div>
     @endif
 
     {{-- MAIN SHORT ANSWER --}}
-    @if(($q['type'] ?? null) === 'short_answer')
+    @if(empty($q['sub_questions']) && ($q['type'] ?? null) === 'short_answer')
     @for($i = 0; $i < 4; $i++)
         <div class="answer-space">
         </div>

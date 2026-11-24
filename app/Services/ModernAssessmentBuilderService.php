@@ -79,6 +79,7 @@ class ModernAssessmentBuilderService
 
             'assessmentQuestions.question.topic.unit',
             'assessmentQuestions.question.learningObjective',
+            'assessmentQuestions.question.subQuestions',
         ]);
     }
 

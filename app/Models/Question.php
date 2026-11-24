@@ -252,6 +252,13 @@ class Question extends Model
         return $this->belongsTo(Question::class, 'parent_question_id');
     }
 
+    // Compatibility with AssessmentAssigner: both names resolve to the same
+    // parent relation; existing records and API responses are unchanged.
+    public function parentQuestion()
+    {
+        return $this->parent();
+    }
+
     public function subQuestions()
     {
         return $this->hasMany(Question::class, 'parent_question_id')->orderBy('id');

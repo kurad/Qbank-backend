@@ -34,7 +34,9 @@ class PaperGeneratorController extends Controller
     {
         $assessment = Assessment::with([
             'questions.question.parent',
+            'questions.question.subQuestions',
             'sections.questions.parent',
+            'sections.questions.subQuestions',
             'topics.gradeSubject.subject',
             'creator.school',
         ])->findOrFail($id);
@@ -100,7 +102,7 @@ class PaperGeneratorController extends Controller
                 $sectionInstruction = MathRenderer::processHtmlWithLatex($section->instruction ?? '');
 
                 $formattedQuestions = $this->formatQuestions(
-                    $section->questions->sortBy('order'),
+                    $section->questions->sortBy(fn ($question) => $question->pivot->ordering ?? 0),
                     $totalMarks
                 );
 
@@ -146,6 +148,7 @@ class PaperGeneratorController extends Controller
     {
         $assessment = Assessment::with([
             'questions.question.parent',
+            'questions.question.subQuestions',
             'topics.gradeSubject.subject',
             'creator.school',
         ])->findOrFail($id);
@@ -268,8 +271,6 @@ class PaperGeneratorController extends Controller
             }
 
 
-            // Sub-questions (children)
-            $q['sub_questions'] = [];
 
             // Sub-questions
             $subQuestions = [];
@@ -295,6 +296,7 @@ class PaperGeneratorController extends Controller
                     }
 
                     $subQuestions[] = [
+                        'stimulus'     => $this->formatStimulus($sub['stimulus'] ?? []),
                         'clean_html'   => $sub['clean_html'],
                         'image_base64' => $sub['image_base64'],
                         'options'      => $sub['options'] ?? [],
@@ -306,11 +308,9 @@ class PaperGeneratorController extends Controller
                 }
             }
 
-            if (($sub['type'] ?? null) === 'short_answer') {
-                $sub['options'] = [];
-            }
             $out[] = [
                 'clean_html'    => $q['clean_html'],
+                'stimulus'      => $this->formatStimulus($q['stimulus'] ?? []),
                 'image_base64'  => $q['image_base64'],
                 'options'       => $q['options'] ?? [],
                 'type'          => $q['type'] ?? null,
@@ -318,7 +318,10 @@ class PaperGeneratorController extends Controller
                 'sub_questions' => $subQuestions,
             ];
 
-            $totalMarks += (int) ($q['marks'] ?? 0);
+            // A parent is shared context only; all assessable marks live on its children.
+            if (empty($subQuestions)) {
+                $totalMarks += (int) ($q['marks'] ?? 0);
+            }
         }
 
         return $out;
@@ -355,7 +358,9 @@ class PaperGeneratorController extends Controller
 
         // Sub-questions (if your model supplies them)
         $subRaw = [];
-        if (isset($question->sub_questions)) {
+        if (isset($question->subQuestions)) {
+            $subRaw = $question->subQuestions;
+        } elseif (isset($question->sub_questions)) {
             $subRaw = $question->sub_questions;
         }
 
@@ -400,6 +405,7 @@ class PaperGeneratorController extends Controller
 
         return [
             'raw_html'     => $rawHtml,
+            'stimulus'     => $question->stimulus ?? [],
             'type'         => $type,
             'marks'        => $marks,
             'options'      => $options,
@@ -435,8 +441,9 @@ class PaperGeneratorController extends Controller
                 $opt['right'] = MathRenderer::processHtmlWithLatex((string) ($opt['right'] ?? ''));
             }
 
-            if (!empty($opt['image']) && empty($opt['image_base64'])) {
-                $resolved = $this->resolveImagePath((string) $opt['image']);
+            $imageReference = $opt['image'] ?? $opt['image_url'] ?? $opt['path'] ?? null;
+            if (!empty($imageReference) && empty($opt['image_base64'])) {
+                $resolved = $this->resolveImagePath((string) $imageReference);
                 $opt['image_base64'] = $this->embedImageAsBase64($resolved, null);
             }
         };
@@ -626,7 +633,7 @@ class PaperGeneratorController extends Controller
             }
             if (is_array($opt)) {
                 $t = trim((string) ($opt['text'] ?? $opt['value'] ?? ''));
-                return $t !== '';
+                return $t !== '' || !empty($opt['image']) || !empty($opt['image_url']) || !empty($opt['path']);
             }
             return false;
         });
@@ -706,22 +713,60 @@ class PaperGeneratorController extends Controller
         }
     }
 
+    /** Resolve only local public-storage or public files; never fetch arbitrary remote URLs. */
     private function resolveImagePath(?string $imagePath): ?string
     {
-        if (empty($imagePath)) return null;
+        if (!$imagePath) return null;
+        if (str_starts_with($imagePath, 'data:image/')) return $imagePath;
 
-        $relative = ltrim($imagePath, '/');
+        $pathPart = parse_url($imagePath, PHP_URL_PATH);
+        if (!is_string($pathPart)) return null;
+        $pathPart = rawurldecode($pathPart);
+        $pathPart = preg_replace('~^/+~', '', $pathPart);
+        $relative = preg_replace('~^(?:storage/)+~', '', $pathPart);
+        if (str_contains($relative, '..') || str_contains($relative, "\\")) return null;
+        // If a full URL is supplied, only use its local path; no remote HTTP requests.
+        foreach ([
+            storage_path('app/public/' . $relative),
+            public_path('storage/' . $relative),
+            public_path($pathPart),
+        ] as $candidate) {
+            if (is_file($candidate)) return $candidate;
+        }
+        return null;
+    }
 
-        $directPublicPath = public_path($relative);
-        if (file_exists($directPublicPath)) return $directPublicPath;
+    /** Convert saved question stimulus (code, tables and images) for offline PDF use. */
+    private function formatStimulus($raw): array
+    {
+        if (is_string($raw)) $raw = json_decode($raw, true) ?: [];
+        if ($raw instanceof \Illuminate\Support\Collection) $raw = $raw->all();
+        if (!is_array($raw)) return [];
 
-        $storagePublicPath = public_path('storage/' . $relative);
-        if (file_exists($storagePublicPath)) return $storagePublicPath;
-
-        $storagePath = storage_path('app/public/' . $relative);
-        if (file_exists($storagePath)) return $storagePath;
-
-        return $imagePath;
+        $blocks = [];
+        foreach ($raw as $block) {
+            if (!is_array($block)) continue;
+            $type = strtolower((string) ($block['type'] ?? ''));
+            if ($type === 'code') {
+                $blocks[] = [
+                    'type' => 'code', 'title' => $block['title'] ?? null,
+                    'language' => $block['language'] ?? 'text',
+                    'content' => (string) ($block['content'] ?? ''),
+                ];
+            } elseif ($type === 'table') {
+                $blocks[] = [
+                    'type' => 'table', 'title' => $block['title'] ?? null,
+                    'columns' => $block['columns'] ?? [], 'rows' => $block['rows'] ?? [],
+                ];
+            } elseif ($type === 'image') {
+                $reference = $block['path'] ?? $block['image'] ?? $block['image_url'] ?? null;
+                $blocks[] = [
+                    'type' => 'image', 'title' => $block['title'] ?? null,
+                    'image_base64' => $this->embedImageAsBase64($this->resolveImagePath($reference), null),
+                ];
+            }
+        }
+        return $blocks;
     }
 
     private function embedImageAsBase64(?string $path, ?string $existingBase64): ?string
@@ -729,12 +774,16 @@ class PaperGeneratorController extends Controller
         if (!empty($existingBase64)) return $existingBase64;
         if (empty($path)) return null;
 
+        if (str_starts_with($path, 'data:image/')) return $path;
         if (!file_exists($path)) {
             $path = $this->resolveImagePath($path);
             if (empty($path) || !file_exists($path)) return null;
         }
 
         $mime = mime_content_type($path) ?: 'image/png';
+        // Avoid embedding unsafe formats and huge attachments into assessment PDFs.
+        if (!in_array($mime, ['image/jpeg', 'image/png', 'image/gif', 'image/webp'], true)) return null;
+        if (@filesize($path) > 8 * 1024 * 1024) return null;
         $data = base64_encode(@file_get_contents($path));
 
         return $data ? ('data:' . $mime . ';base64,' . $data) : null;
