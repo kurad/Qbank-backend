@@ -308,6 +308,11 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     Route::get('/tutor/groups/{group}/subjects/{gradeSubject}/units/{unit}/topics', [TutorController::class, 'topics']);
     Route::get('/tutor/groups/{group}/subjects/{gradeSubject}/units/{unit}/topics/{topic}/objectives', [TutorController::class, 'objectives']);
 
+    // Read or generate the student's saved revision handout for a covered topic.
+    // These endpoints do not create or modify Tutor chat sessions.
+    Route::get('/tutor/learning-periods/{learningPeriod}/topics/{topic}/revision-notes', [TutorController::class, 'revisionNotes']);
+    Route::post('/tutor/learning-periods/{learningPeriod}/topics/{topic}/revision-notes', [TutorController::class, 'prepareRevisionNotes'])->middleware('throttle:4,1');
+
 
     /*
     | Tutor Sessions
