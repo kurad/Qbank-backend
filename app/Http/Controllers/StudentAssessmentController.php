@@ -266,6 +266,7 @@ class StudentAssessmentController extends Controller
         $attempts = LearnerFormativeAttempt::query()
             ->where('student_id', $student->id)
             ->whereNotNull('student_assessment_id')
+            ->withCount('questions')
             ->with(['learningPeriod:id,title,group_id,grade_subject_id',
                     'learningPeriod.group:id,group_name,class_code'])
             ->orderByDesc('id')
@@ -314,7 +315,9 @@ class StudentAssessmentController extends Controller
                     'progress' => $attempt->progress,
                     'stage' => $attempt->stage,
                     'message' => $attempt->message,
-                    'question_count' => $attempt->question_count,
+                    'question_count' => (int) $attempt->question_count,
+                    'saved_question_count' => (int) $attempt->questions_count,
+                    'has_questions' => (int) $attempt->questions_count > 0,
                     'error_message' => $attempt->error_message,
                     'learning_period_id' => $attempt->learning_period_id,
                     'learning_period' => $attempt->learningPeriod?->title,

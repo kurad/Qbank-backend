@@ -6,6 +6,7 @@ use App\Models\GradeSubject;
 use App\Models\Group;
 use App\Models\LearningPeriod;
 use App\Models\LearningPeriodTopic;
+use App\Models\StudentTopicLearningState;
 use App\Models\Topic;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -631,6 +632,88 @@ class LearningPeriodController extends Controller
         return response()->json([
             'data' => $topics,
         ]);
+    }
+
+    /**
+     * Return topics from earlier periods that still need coverage
+     * by at least one student in this group.
+     */
+    public function carryForwardOptions(
+        Request $request,
+        LearningPeriod $learningPeriod
+    ) {
+        $group = $this->resolveGroup($learningPeriod);
+        $this->ensureCanManage($request, $group);
+
+        abort_if(
+            $learningPeriod->isPublished(),
+            422,
+            'Only draft learning periods can receive carried-forward topics.'
+        );
+
+        $studentIds = $group->students()->pluck('users.id');
+        $studentCount = $studentIds->count();
+
+        if ($studentCount === 0) {
+            return response()->json(['data' => []]);
+        }
+
+        $alreadyAssigned = $learningPeriod->topics()
+            ->pluck('topic_id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+
+        $previousPeriods = LearningPeriod::query()
+            ->where('group_id', $learningPeriod->group_id)
+            ->where('grade_subject_id', $learningPeriod->grade_subject_id)
+            ->where('id', '!=', $learningPeriod->id)
+            ->where('status', 'published')
+            ->whereDate('end_date', '<', $learningPeriod->start_date)
+            ->with(['topics' => function ($query) {
+                $query->with(['topic:id,topic_name,unit_id', 'unit:id,name']);
+            }])
+            ->orderByDesc('end_date')
+            ->get();
+
+        $candidates = collect();
+
+        foreach ($previousPeriods as $previousPeriod) {
+            foreach ($previousPeriod->topics as $assignment) {
+                $topicId = (int) $assignment->topic_id;
+
+                if (in_array($topicId, $alreadyAssigned, true) || $candidates->has($topicId)) {
+                    continue;
+                }
+
+                $coveredCount = StudentTopicLearningState::query()
+                    ->where('learning_period_id', $previousPeriod->id)
+                    ->where('topic_id', $topicId)
+                    ->whereIn('student_id', $studentIds)
+                    ->where('progression_status', 'covered')
+                    ->distinct('student_id')
+                    ->count('student_id');
+
+                $uncoveredCount = max(0, $studentCount - $coveredCount);
+
+                if ($uncoveredCount < 1) {
+                    continue;
+                }
+
+                $candidates->put($topicId, [
+                    'topic_id' => $topicId,
+                    'topic_name' => $assignment->topic?->topic_name,
+                    'unit_id' => $assignment->unit_id,
+                    'unit_name' => $assignment->unit?->name,
+                    'source_period_id' => $previousPeriod->id,
+                    'source_period_title' => $previousPeriod->title,
+                    'student_count' => $studentCount,
+                    'covered_count' => $coveredCount,
+                    'uncovered_count' => $uncoveredCount,
+                ]);
+            }
+        }
+
+        return response()->json(['data' => $candidates->values()]);
     }
 
     /**

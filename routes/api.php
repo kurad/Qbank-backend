@@ -279,6 +279,7 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     */
 
     Route::get('/learning-periods/{learningPeriod}/topics', [LearningPeriodController::class, 'topics']);
+    Route::get('/learning-periods/{learningPeriod}/carry-forward-options', [LearningPeriodController::class, 'carryForwardOptions']);
     Route::post('/learning-periods/{learningPeriod}/topics', [LearningPeriodController::class, 'addTopic']);
     Route::put('/learning-periods/{learningPeriod}/topics/{learningPeriodTopic}', [LearningPeriodController::class, 'updateTopic']);
     Route::delete('/learning-periods/{learningPeriod}/topics/{learningPeriodTopic}', [LearningPeriodController::class, 'removeTopic']);
@@ -307,11 +308,6 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     Route::get('/tutor/groups/{group}/subjects/{gradeSubject}/units', [TutorController::class, 'units']);
     Route::get('/tutor/groups/{group}/subjects/{gradeSubject}/units/{unit}/topics', [TutorController::class, 'topics']);
     Route::get('/tutor/groups/{group}/subjects/{gradeSubject}/units/{unit}/topics/{topic}/objectives', [TutorController::class, 'objectives']);
-
-    // Read or generate the student's saved revision handout for a covered topic.
-    // These endpoints do not create or modify Tutor chat sessions.
-    Route::get('/tutor/learning-periods/{learningPeriod}/topics/{topic}/revision-notes', [TutorController::class, 'revisionNotes']);
-    Route::post('/tutor/learning-periods/{learningPeriod}/topics/{topic}/revision-notes', [TutorController::class, 'prepareRevisionNotes'])->middleware('throttle:4,1');
 
 
     /*
