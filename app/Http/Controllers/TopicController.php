@@ -154,11 +154,28 @@ class TopicController extends Controller
     {
         $this->authorize('update', $topic);
 
+        // Archived topics belong to a superseded curriculum version. Without
+        // this guard the status field below could reactivate one.
+        if ($topic->status === 'archived') {
+            return response()->json([
+                'message' => 'This topic belongs to an archived curriculum version and cannot be edited.',
+            ], 422);
+        }
+
         $validated = $request->validate([
             'topic_name' => ['required', 'string', 'max:255'],
             'order' => ['nullable', 'integer', 'min:0'],
             'status' => ['nullable', 'in:active,inactive'],
         ]);
+
+        if ($duplicate = $this->duplicateTopicName(
+            $topic->unit_id,
+            $topic->grade_subject_id,
+            $validated['topic_name'],
+            $topic->id
+        )) {
+            return $duplicate;
+        }
 
         $topic->update([
             'topic_name' => $validated['topic_name'],
@@ -189,11 +206,24 @@ class TopicController extends Controller
             'status' => ['nullable', 'in:active,inactive'],
         ]);
 
+        if ($duplicate = $this->duplicateTopicName(
+            $unit->id,
+            $unit->grade_subject_id,
+            $validated['topic_name']
+        )) {
+            return $duplicate;
+        }
+
+        $nextOrder = ((int) Topic::query()
+            ->where('unit_id', $unit->id)
+            ->where('status', 'active')
+            ->max('order')) + 1;
+
         $topic = Topic::create([
             'grade_subject_id' => $unit->grade_subject_id,
             'unit_id' => $unit->id,
             'topic_name' => $validated['topic_name'],
-            'order' => $validated['order'] ?? 0,
+            'order' => $validated['order'] ?? $nextOrder,
             'status' => $validated['status'] ?? 'active',
             'created_by' => auth()->id(),
         ]);
@@ -263,11 +293,14 @@ class TopicController extends Controller
                 $query->where('topic_name', '!=', 'Imported Questions')
                     ->orWhereNotNull('created_by');
             })
+            // Same definition as GET /topics/{id}/question-count: top-level
+            // questions only (sub-questions belong to their parent question).
+            ->withCount(['questions' => fn ($query) => $query->whereNull('parent_question_id')])
             ->with([
                 'unit',
                 'gradeSubject.subject',
                 'gradeSubject.gradeLevel',
-                'learningObjectives',
+                'learningObjectives' => fn ($query) => $query->where('status', '!=', 'archived'),
             ])
             ->orderBy('order')
             ->orderBy('id')
@@ -282,9 +315,19 @@ class TopicController extends Controller
     /**
      * Topics by subject.
      */
-    public function topicsBySubject($subjectId)
+    public function topicsBySubject($subjectId = null)
     {
         $user = auth()->user();
+
+        // GET /topics-by-subject passes the subject as ?subject_id=...; only
+        // GET /subjects/{id}/topics supplies it as a route parameter.
+        $subjectId ??= request()->input('subject_id');
+
+        if (!$subjectId) {
+            return response()->json([
+                'message' => 'A subject is required.',
+            ], 422);
+        }
 
         $query = Topic::whereHas('gradeSubject', function ($q) use ($subjectId, $user) {
             $q->where('subject_id', $subjectId);
@@ -402,6 +445,31 @@ class TopicController extends Controller
             ->get();
 
         return response()->json($topics);
+    }
+
+    /**
+     * A topic name must be unique (case-insensitive) among the ACTIVE topics
+     * of a unit, because approving a curriculum refuses duplicates.
+     */
+    private function duplicateTopicName(
+        $unitId,
+        $gradeSubjectId,
+        string $name,
+        ?int $ignoreTopicId = null
+    ) {
+        $exists = Topic::query()
+            ->where('grade_subject_id', $gradeSubjectId)
+            ->where('unit_id', $unitId)
+            ->where('status', 'active')
+            ->when($ignoreTopicId, fn ($q) => $q->where('id', '!=', $ignoreTopicId))
+            ->whereRaw('LOWER(TRIM(topic_name)) = ?', [mb_strtolower(trim($name))])
+            ->exists();
+
+        return $exists
+            ? response()->json([
+                'message' => "A topic named '" . trim($name) . "' already exists in this unit.",
+            ], 422)
+            : null;
     }
 
     /**

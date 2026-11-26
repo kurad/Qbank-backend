@@ -2,7 +2,6 @@
 
 namespace App\Services;
 
-use App\Jobs\PrepareLearningPeriodFormativeAssessment;
 use App\Models\LearningPeriod;
 use App\Models\TutorSession;
 use App\Models\TutorSessionObjective;
@@ -886,9 +885,12 @@ class TutorSessionService
                 (int) $session->learning_period_id
             )
         ) {
-            PrepareLearningPeriodFormativeAssessment::dispatch(
+            // Start preparing the learner's own assessment in the background
+            // (never throws; not-yet-eligible is a normal outcome).
+            app(LearnerFormativeService::class)->warmPreparation(
+                $student,
                 (int) $session->learning_period_id
-            )->afterResponse();
+            );
         }
 
         return $this->freshSession($session);
@@ -1036,9 +1038,12 @@ class TutorSessionService
                 (int) $session->learning_period_id
             )
         ) {
-            PrepareLearningPeriodFormativeAssessment::dispatch(
+            // Start preparing the learner's own assessment in the background
+            // (never throws; not-yet-eligible is a normal outcome).
+            app(LearnerFormativeService::class)->warmPreparation(
+                $student,
                 (int) $session->learning_period_id
-            )->afterResponse();
+            );
         }
 
         return $session->fresh();

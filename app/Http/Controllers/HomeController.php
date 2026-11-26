@@ -14,7 +14,7 @@ use App\Models\TutorResponseEvaluation;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
-use App\Services\LearningPeriodFormativeService;
+use App\Services\LearnerFormativeService;
 use App\Services\TutorSessionService;
 
 class HomeController extends Controller
@@ -25,7 +25,7 @@ class HomeController extends Controller
      * GET /student/statistics
      */
     public function statistics(
-        LearningPeriodFormativeService $formativeService,
+        LearnerFormativeService $formativeService,
         TutorSessionService $tutorSessionsService
     )
     {

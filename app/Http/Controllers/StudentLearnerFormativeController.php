@@ -55,6 +55,16 @@ class StudentLearnerFormativeController extends Controller
         $student = $request->user();
         abort_unless($student && $student->role === 'student', 403);
         abort_unless((int) $attempt->student_id === (int) $student->id, 403);
+
+        // A repeated submit (double click, lost response, retry after a
+        // network drop) must not turn a finished assessment into an error.
+        if ($attempt->status === 'completed' && $attempt->student_assessment_id) {
+            return response()->json([
+                'message' => 'Assessment already submitted.',
+                'student_assessment_id' => $attempt->student_assessment_id,
+            ]);
+        }
+
         abort_unless(in_array($attempt->status, ['ready', 'in_progress'], true), 409, 'This assessment cannot be submitted in its current state.');
         abort_unless($attempt->assessment_id, 409, 'Assessment preparation is incomplete.');
 
@@ -65,7 +75,11 @@ class StudentLearnerFormativeController extends Controller
             'answers.*.confidence_score' => ['nullable', 'integer', 'min:0', 'max:3'],
         ]);
 
-        $allowedQuestionIds = $attempt->questions()->pluck('question_id');
+        // Only questions that still exist can be answered; a question deleted
+        // after preparation must not make the assessment impossible to submit.
+        $allowedQuestionIds = $attempt->questions()
+            ->whereHas('question')
+            ->pluck('question_id');
         $submittedQuestionIds = collect($request->input('answers', []))
             ->pluck('question_id')
             ->map(fn ($id) => (int) $id)

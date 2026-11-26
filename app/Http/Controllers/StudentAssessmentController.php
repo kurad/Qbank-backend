@@ -36,8 +36,7 @@ class StudentAssessmentController extends Controller
             ->where('assessment_id', $assessmentId)->first();
         $isOwnPractice = $assessment->type === 'practice'
             && (int) $assessment->creator_id === (int) $studentId;
-        $isGroupAssignment = $assessment->groups()
-            ->whereIn('groups.id', $student->groups()->pluck('groups.id'))->exists();
+        $isGroupAssignment = $assessment->isAvailableToStudent((int) $studentId);
         abort_unless($existing || $isOwnPractice || $isGroupAssignment, 403,
             'This assessment is not assigned to you.');
         if ($existing && in_array($existing->status, ['completed', 'graded', 'under_review'], true)) {
@@ -172,9 +171,11 @@ class StudentAssessmentController extends Controller
             ->whereNull('points_earned')
             ->exists();
 
+        $assessment->loadMissing('assessment');
         $assessment->update([
             'status' => $needsReview ? 'under_review' : 'graded',
             'completed_at' => now(),
+            'is_late' => (bool) $assessment->assessment?->isLateAt(now()),
             'score' => $needsReview ? null : $assessment->studentAnswers()->sum('points_earned'),
         ]);
         app(\App\Services\AssessmentQuestionExclusionService::class)->recalculate($assessment);
@@ -266,7 +267,6 @@ class StudentAssessmentController extends Controller
         $attempts = LearnerFormativeAttempt::query()
             ->where('student_id', $student->id)
             ->whereNotNull('student_assessment_id')
-            ->withCount('questions')
             ->with(['learningPeriod:id,title,group_id,grade_subject_id',
                     'learningPeriod.group:id,group_name,class_code'])
             ->orderByDesc('id')
@@ -299,6 +299,11 @@ class StudentAssessmentController extends Controller
                 'assigned_at' => $item?->assigned_at?->toIso8601String()
                     ?? $assessment->created_at?->toIso8601String(),
                 'completed_at' => $item?->completed_at?->toIso8601String(),
+                'due_date' => $assessment->lateAfter() ? $assessment->due_date : null,
+                'is_late' => (bool) $item?->is_late,
+                'is_overdue' => $assessment->lateAfter() !== null
+                    && now()->greaterThan($assessment->lateAfter())
+                    && !in_array($item?->status, ['completed', 'graded', 'under_review'], true),
                 'score' => $item?->status === 'under_review' ? null : $item?->score,
                 'max_score' => $item?->max_score,
                 'teacher' => $assessment->type === 'practice' ? null : $assessment->creator?->name,
@@ -315,9 +320,7 @@ class StudentAssessmentController extends Controller
                     'progress' => $attempt->progress,
                     'stage' => $attempt->stage,
                     'message' => $attempt->message,
-                    'question_count' => (int) $attempt->question_count,
-                    'saved_question_count' => (int) $attempt->questions_count,
-                    'has_questions' => (int) $attempt->questions_count > 0,
+                    'question_count' => $attempt->question_count,
                     'error_message' => $attempt->error_message,
                     'learning_period_id' => $attempt->learning_period_id,
                     'learning_period' => $attempt->learningPeriod?->title,
@@ -345,7 +348,11 @@ class StudentAssessmentController extends Controller
                         ->orWhere('purpose', '!=', 'learner_personalized_formative');
                 })
                 ->where('creator_id', '!=', $student->id)
-                ->whereHas('groups', fn ($query) => $query->whereIn('groups.id', $groupIds))
+                // Whole-class assignments only; assessments given to selected
+                // students reach them through their own student_assessments row.
+                ->whereHas('groups', fn ($query) => $query
+                    ->whereIn('groups.id', $groupIds)
+                    ->where('assessment_groups.audience', 'all'))
                 ->when(count($known) > 0, fn ($query) => $query->whereNotIn('id', $known))
                 ->with($relations)->get();
             foreach ($groupAssessments as $assessment) {

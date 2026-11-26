@@ -307,13 +307,41 @@ class GroupController extends Controller
         $assessments = $group->assessments()
             ->withCount('studentAssessments')
             ->when($user->role === 'student', function ($query) use ($user) {
+                // Whole-class assignments, plus ones given to this student.
+                $query->where(function ($q) use ($user) {
+                    $q->where('assessment_groups.audience', 'all')
+                        ->orWhereHas('studentAssessments', fn ($a) => $a->where('student_id', $user->id));
+                });
                 // Only expose the authenticated learner's own attempt.
                 $query->with(['studentAssessments' => function ($attempts) use ($user) {
                     $attempts->where('student_id', $user->id);
                 }]);
             })
+            ->when($user->role !== 'student', fn ($query) => $query->with('studentAssessments'))
             ->latest('assessment_groups.created_at')
             ->get();
+
+        if ($user->role !== 'student') {
+            $memberIds = $group->students()->pluck('users.id')->map(fn ($id) => (int) $id);
+
+            $assessments->each(function ($assessment) use ($memberIds) {
+                $attempts = $assessment->studentAssessments
+                    ->filter(fn ($a) => $memberIds->contains((int) $a->student_id));
+                $selected = $assessment->pivot?->audience === 'selected';
+                $recipients = $selected ? $attempts->count() : $memberIds->count();
+                $done = ['under_review', 'graded', 'completed'];
+
+                $assessment->setAttribute('audience', $assessment->pivot?->audience ?? 'all');
+                $assessment->setAttribute('stats', [
+                    'recipients' => $recipients,
+                    'not_submitted' => max(0, $recipients - $attempts->whereIn('status', $done)->count()),
+                    'pending' => $attempts->where('status', 'under_review')->count(),
+                    'submitted' => $attempts->where('status', 'graded')->count(),
+                    'late' => $attempts->whereIn('status', $done)->where('is_late', true)->count(),
+                ]);
+                $assessment->unsetRelation('studentAssessments');
+            });
+        }
 
         if ($user->role === 'student') {
             $assessments->each(function ($assessment) {
@@ -336,18 +364,28 @@ class GroupController extends Controller
 
         abort_unless($group->assessments()->where('assessments.id', $assessment->id)->exists(), 404);
 
+        $pivot = $group->assessments()->where('assessments.id', $assessment->id)->first()?->pivot;
         $students = $group->students()->orderBy('name')->get();
 
-        $result = $students->map(function ($student) use ($assessment, $group) {
+        // Assigned to selected students only: list just those students.
+        if (($pivot?->audience ?? 'all') === 'selected') {
+            $recipientIds = StudentAssessment::query()
+                ->where('assessment_id', $assessment->id)
+                ->pluck('student_id')
+                ->map(fn ($id) => (int) $id);
+            $students = $students->filter(fn ($s) => $recipientIds->contains((int) $s->id))->values();
+        }
+
+        $result = $students->map(function ($student) use ($assessment) {
             $studentAssessment = StudentAssessment::query()
                 ->where('assessment_id', $assessment->id)
                 ->where('student_id', $student->id)
-                ->where(function ($q) use ($group) {
-                    $q->where('group_id', $group->id)->orWhereNull('group_id');
-                })
-                ->with(['answers.question'])
+                ->with(['studentAnswers.question'])
                 ->latest('id')
                 ->first();
+
+            // The screen reads `answers`; the relation is `studentAnswers`.
+            $studentAssessment?->setAttribute('answers', $studentAssessment->studentAnswers);
 
             return [
                 'student' => $student,
@@ -435,6 +473,12 @@ class GroupController extends Controller
         $assignments = Assessment::query()
             ->whereHas('groups', function ($query) use ($group) {
                 $query->where('groups.id', $group->id);
+            })
+            ->where(function ($query) use ($group, $user) {
+                $query->whereHas('groups', fn ($g) => $g
+                    ->where('groups.id', $group->id)
+                    ->where('assessment_groups.audience', 'all'))
+                    ->orWhereHas('studentAssessments', fn ($a) => $a->where('student_id', $user->id));
             })
             ->with([
                 'creator:id,name',

@@ -14,6 +14,7 @@ class CurriculumAnalysisObjective extends Model
         'code',
         'objective',
         'description',
+        'source_excerpt',
         'order',
         'status',
     ];

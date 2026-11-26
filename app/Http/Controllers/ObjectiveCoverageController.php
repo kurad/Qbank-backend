@@ -26,9 +26,12 @@ class ObjectiveCoverageController extends CurriculumAnalysisController
         $records=$objectives->map(function ($objective) use ($checks,$service) {
             $record=$checks->get($objective->id);
             $stale=$record && $record->content_hash && $record->content_hash !== $service->evidence($objective)['hash'];
+            // A 'checking' row whose worker died would otherwise spin forever.
+            $timedOut=$record && ($record->status ?? null)==='checking' && $record->updated_at
+                && \Illuminate\Support\Carbon::parse($record->updated_at)->lt(now()->subMinutes(10));
             return ['id'=>$objective->id,'topic'=>$objective->topic?->topic_name,'objective'=>$objective->objective,
-                'status'=>$stale?'stale':($record->status ?? 'unchecked'),
-                'reason'=>$record->reason ?? null,'missing_focus'=>json_decode($record->missing_focus ?? '[]',true),
+                'status'=>$timedOut?'failed':($stale?'stale':($record->status ?? 'unchecked')),
+                'reason'=>$timedOut?'Verification timed out. Please retry.':($record->reason ?? null),'missing_focus'=>json_decode($record->missing_focus ?? '[]',true),
                 'checked_at'=>$record->checked_at ?? null];
         });
         $batch=DB::table('objective_coverage_batches')->where('curriculum_analysis_id',$curriculumAnalysis->id)->latest('id')->first();
@@ -39,7 +42,10 @@ class ObjectiveCoverageController extends CurriculumAnalysisController
     {
         $this->guard($curriculumAnalysis);
         $busy=DB::table('objective_coverage_batches')->where('curriculum_analysis_id',$curriculumAnalysis->id)
-            ->whereIn('status',['queued','running'])->exists();
+            ->whereIn('status',['queued','running'])
+            // A batch whose worker was killed never reaches 'completed'/'failed';
+            // ignore it after 30 minutes so verification can be started again.
+            ->where('updated_at','>',now()->subMinutes(30))->exists();
         abort_if($busy,409,'A verification is already running.');
         $batch=DB::table('objective_coverage_batches')->insertGetId([
             'curriculum_analysis_id'=>$curriculumAnalysis->id,'requested_by'=>auth()->id(),

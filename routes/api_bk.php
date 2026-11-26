@@ -279,6 +279,7 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     */
 
     Route::get('/learning-periods/{learningPeriod}/topics', [LearningPeriodController::class, 'topics']);
+    Route::get('/learning-periods/{learningPeriod}/carry-forward-options', [LearningPeriodController::class, 'carryForwardOptions']);
     Route::post('/learning-periods/{learningPeriod}/topics', [LearningPeriodController::class, 'addTopic']);
     Route::put('/learning-periods/{learningPeriod}/topics/{learningPeriodTopic}', [LearningPeriodController::class, 'updateTopic']);
     Route::delete('/learning-periods/{learningPeriod}/topics/{learningPeriodTopic}', [LearningPeriodController::class, 'removeTopic']);
@@ -555,6 +556,7 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     Route::post('/curriculum-analyses/{curriculumAnalysis}/coverage/check-all', [ObjectiveCoverageController::class, 'checkAll']);
     Route::post('/curriculum-analyses/{curriculumAnalysis}/coverage/{learningObjective}/recheck', [ObjectiveCoverageController::class, 'recheck']);
     Route::get('/curriculum-analyses/{curriculumAnalysis}/coverage/{learningObjective}/content', [ObjectiveCoverageController::class, 'content']);
+    Route::post('/curriculum-analyses/{curriculumAnalysis}/coverage/{learningObjective}/content/generate', [ObjectiveCoverageController::class, 'generateContent']);
     Route::put('/curriculum-analyses/{curriculumAnalysis}/coverage/{learningObjective}/content', [ObjectiveCoverageController::class, 'saveContent']);
     Route::post('/course-materials/{courseMaterial}/extract', [CourseMaterialController::class, 'extract']);
     Route::post('/course-materials/{courseMaterial}/analyze-content', [CourseMaterialController::class, 'analyzeContent']);
@@ -615,6 +617,8 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
         Route::get('/export', [TeacherGradebookController::class, 'export']);
         Route::get('/review-queue', [TeacherGradebookController::class, 'reviewQueue']);
         Route::get('/formative-review', [TeacherGradebookController::class, 'formativeReview']);
+        Route::get('/assessments/{assessment}/questions/exclusions', [TeacherGradebookController::class, 'assessmentQuestions']);
+        Route::put('/assessments/{assessment}/questions/{questionId}/exclusion', [TeacherGradebookController::class, 'setQuestionExclusion']);
         Route::put('/formative-answers/{answer}', [TeacherGradebookController::class, 'reviewFormativeAnswer']);
         Route::put('/assigned-answers/{answer}', [TeacherGradebookController::class, 'reviewAssignedAnswer']);
         Route::post('/assigned-assessments/{attempt}/publish', [TeacherGradebookController::class, 'publishAssignedResults']);

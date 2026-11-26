@@ -20,11 +20,11 @@ class CheckCurriculumObjectiveCoverage implements ShouldQueue
     {
         $analysis = CurriculumAnalysis::find($this->analysisId);
         if (!$analysis || $analysis->status !== 'approved') return;
-        DB::table('objective_coverage_batches')->where('id', $this->batchId)->update(['status'=>'running','updated_at'=>now()]);
+        DB::table('objective_coverage_batches')->where('id', $this->batchId)->update(['status'=>'running','processed'=>0,'updated_at'=>now()]);
         $objectives = $service->objectives($analysis);
         foreach ($objectives as $objective) {
             $service->verify($objective);
-            DB::table('objective_coverage_batches')->where('id', $this->batchId)->increment('processed');
+            DB::table('objective_coverage_batches')->where('id', $this->batchId)->increment('processed', 1, ['updated_at'=>now()]);
         }
         DB::table('objective_coverage_batches')->where('id', $this->batchId)->update(['status'=>'completed','finished_at'=>now(),'updated_at'=>now()]);
     }

@@ -117,7 +117,55 @@ class Assessment extends Model
             'assessment_groups',
             'assessment_id',
             'group_id'
-        );
+        )->withPivot('audience');
+    }
+
+    /**
+     * The moment after which a submission counts as late, or null when this
+     * assessment has no deadline to enforce. Only teacher-set online
+     * assignments are tracked (offline assessments default their due date to
+     * "now", and practice / system formative work has no deadline).
+     * A date without a time of day means "end of that day".
+     */
+    public function lateAfter(): ?\Illuminate\Support\Carbon
+    {
+        if (
+            !$this->due_date
+            || $this->delivery_mode !== 'online'
+            || !in_array($this->type, ['quiz', 'homework', 'exam'], true)
+            || $this->is_system_generated
+            || $this->purpose !== null
+        ) {
+            return null;
+        }
+
+        $due = \Illuminate\Support\Carbon::parse($this->due_date);
+
+        return $due->format('H:i:s') === '00:00:00' ? $due->endOfDay() : $due;
+    }
+
+    public function isLateAt(\DateTimeInterface $when): bool
+    {
+        $after = $this->lateAfter();
+
+        return $after !== null && \Illuminate\Support\Carbon::instance($when)->greaterThan($after);
+    }
+
+    /**
+     * May this student open and submit the assessment?
+     * Yes if it was given to them individually (they hold a record), or it
+     * was assigned to the whole of a class they belong to.
+     */
+    public function isAvailableToStudent(int $studentId): bool
+    {
+        if ($this->studentAssessments()->where('student_id', $studentId)->exists()) {
+            return true;
+        }
+
+        return $this->groups()
+            ->wherePivot('audience', 'all')
+            ->whereHas('students', fn ($q) => $q->where('users.id', $studentId))
+            ->exists();
     }
     public function students()
     {

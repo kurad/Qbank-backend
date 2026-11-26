@@ -2,12 +2,13 @@
 
 namespace App\Services;
 
+use App\Exceptions\FormativePreparationException;
+use App\Exceptions\FormativeTimeBudgetExceeded;
 use App\Jobs\PrepareLearnerFormativeAttempt;
 use App\Models\Assessment;
 use App\Models\LearnerFormativeAttempt;
 use App\Models\LearnerFormativeQuestion;
 use App\Models\LearningPeriod;
-use App\Models\KnowledgeChunk;
 use App\Models\Question;
 use App\Models\StudentAssessment;
 use App\Models\TutorSession;
@@ -15,15 +16,17 @@ use App\Models\TutorSessionObjective;
 use App\Models\User;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
-use App\Services\AI\AIGateway;
 use RuntimeException;
+use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
+use Throwable;
 
 class LearnerFormativeService
 {
     public function __construct(
         protected StudentTopicLearningService $topicLearning,
-        protected AIGateway $ai
+        protected FormativeQuestionGenerator $generator
     ) {}
 
     private const QUESTIONS_PER_OBJECTIVE = 10;
@@ -37,6 +40,15 @@ class LearnerFormativeService
         'short_answer',
         'matching',
     ];
+
+    /**
+     * A preparing attempt whose job has not reported progress for this long
+     * is assumed to have lost its worker and is picked up again.
+     */
+    private const STALE_PREPARING_MINUTES = 6;
+
+    /** Smallest share of the intended questions an assessment may be built with. */
+    private const MIN_FILL_RATIO = 0.5;
 
     public function statusForStudent(User $student, LearningPeriod $period): array
     {
@@ -61,31 +73,43 @@ class LearnerFormativeService
             ];
         }
 
-        // A covered period is not automatically assessable. A learner can
-        // legitimately finish a topic with one or more material gaps. Build
-        // the same objective plan used by preparation before showing the
-        // Begin Assessment action so the UI never advertises an assessment
-        // that has no fair, supported learning goals to assess.
-        $period->loadMissing([
-            'topics.topic.learningObjectives',
-            'topics.unit',
-        ]);
-
-        if ($this->objectiveQuestionPlan($period, $student)->isEmpty()) {
-            return [
-                'required' => true,
-                'eligible' => false,
-                'ready' => false,
-                'status' => 'material_gap',
-                'progress' => 0,
-                'message' => 'Your assessment is not available yet because the approved learning material does not currently support any assessable learning goals. Your teacher needs to review the material first.',
-            ];
-        }
-
         $attempt = LearnerFormativeAttempt::query()
             ->where('student_id', $student->id)
             ->where('learning_period_id', $period->id)
             ->first();
+
+        // An attempt that is already being built / taken / finished does not
+        // depend on the objective plan; skipping it keeps the 2-second status
+        // polling cheap and stops a later material change from locking out a
+        // learner who already has their questions.
+        $inFlight = $attempt && in_array(
+            $attempt->status,
+            ['preparing', 'ready', 'in_progress', 'completed'],
+            true
+        );
+
+        if (!$inFlight) {
+            // A covered period is not automatically assessable. A learner can
+            // legitimately finish a topic with one or more material gaps. Build
+            // the same objective plan used by preparation before showing the
+            // Begin Assessment action so the UI never advertises an assessment
+            // that has no fair, supported learning goals to assess.
+            $period->loadMissing([
+                'topics.topic.learningObjectives',
+                'topics.unit',
+            ]);
+
+            if ($this->objectiveQuestionPlan($period, $student)->isEmpty()) {
+                return [
+                    'required' => true,
+                    'eligible' => false,
+                    'ready' => false,
+                    'status' => 'material_gap',
+                    'progress' => 0,
+                    'message' => 'Your assessment is not available yet because the approved learning material does not currently support any assessable learning goals. Your teacher needs to review the material first.',
+                ];
+            }
+        }
 
         if (!$attempt) {
             return [
@@ -96,6 +120,10 @@ class LearnerFormativeService
                 'progress' => 0,
                 'message' => 'You have covered all topics. Your next step is the assessment.',
             ];
+        }
+
+        if ($attempt->status === 'preparing') {
+            $this->resumeIfStale($attempt);
         }
 
         $this->syncCompletionFromStudentAssessment($attempt);
@@ -130,6 +158,7 @@ class LearnerFormativeService
             'max_score' => $studentAssessment?->max_score,
             'percentage' => $percentage,
             'message' => $attempt->message,
+            // error_message only ever holds text written for the student.
             'error' => $attempt->status === 'failed' ? $attempt->error_message : null,
         ];
     }
@@ -170,6 +199,13 @@ class LearnerFormativeService
             return $attempt;
         }
 
+        // Already being prepared: do not reset its progress or queue it twice.
+        if ($attempt->status === 'preparing') {
+            $this->resumeIfStale($attempt);
+
+            return $attempt->fresh();
+        }
+
         $attempt->update([
             'status' => 'preparing',
             'progress' => 5,
@@ -183,22 +219,80 @@ class LearnerFormativeService
         return $attempt->fresh();
     }
 
-    public function prepareAttempt(LearnerFormativeAttempt $attempt): void
+    /**
+     * Begin preparing in the background as soon as a learner has covered the
+     * whole period, so the assessment is usually ready when they arrive.
+     * Never throws: not being eligible yet is an expected outcome.
+     */
+    public function warmPreparation(User $student, int $learningPeriodId): void
+    {
+        try {
+            $period = LearningPeriod::query()->find($learningPeriodId);
+
+            if (!$period || !$period->require_formative_assessment) {
+                return;
+            }
+
+            $this->beginPreparation($student, $period);
+        } catch (HttpExceptionInterface $e) {
+            // Not eligible / nothing assessable yet.
+        } catch (Throwable $e) {
+            Log::warning('Could not start formative preparation.', [
+                'student_id' => $student->id,
+                'learning_period_id' => $learningPeriodId,
+                'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * If a "preparing" attempt has made no progress for several minutes its
+     * worker died (deploy, crash, timeout). Queue it again. The claim is an
+     * atomic UPDATE so concurrent polls queue it at most once.
+     */
+    protected function resumeIfStale(LearnerFormativeAttempt $attempt): void
+    {
+        $cutoff = now()->subMinutes(self::STALE_PREPARING_MINUTES);
+
+        $claimed = LearnerFormativeAttempt::query()
+            ->whereKey($attempt->id)
+            ->where('status', 'preparing')
+            ->where('updated_at', '<', $cutoff)
+            ->update([
+                'message' => 'Resuming your assessment preparation...',
+                'updated_at' => now(),
+            ]);
+
+        if ($claimed) {
+            PrepareLearnerFormativeAttempt::dispatch($attempt->id)->afterResponse();
+        }
+    }
+
+    /**
+     * @param int|null $deadline unix time after which no NEW objective is started
+     *                           (the job then releases itself; stored questions are reused)
+     */
+    public function prepareAttempt(LearnerFormativeAttempt $attempt, ?int $deadline = null): void
     {
         $attempt->loadMissing(['student', 'learningPeriod']);
 
         $student = $attempt->student;
         $period = $attempt->learningPeriod;
+
+        if (!$student || !$period) {
+            throw new FormativePreparationException(
+                'Your assessment could not be found. Please tell your teacher.'
+            );
+        }
+
         if (!$period->require_formative_assessment) {
             return;
         }
 
-        if (!$student || !$period) {
-            throw new RuntimeException('Learner assessment context is missing.');
-        }
-
         if (!$this->studentCoveredPeriod($student, $period)) {
-            throw new RuntimeException('The learner has not yet completed all topics in this learning period.');
+            throw new FormativePreparationException(
+                'Complete all topics in this learning period before beginning the assessment.'
+            );
         }
 
         $period->loadMissing([
@@ -209,30 +303,47 @@ class LearnerFormativeService
         ]);
 
         if ($period->topics->isEmpty()) {
-            throw new RuntimeException('The learning period has no topics to assess.');
+            throw new FormativePreparationException(
+                'This learning period has no topics to assess. Please tell your teacher.'
+            );
         }
 
         $this->setProgress($attempt, 15, 'checking_pool', 'Reviewing available questions...');
 
-        $selected = collect();
-        $shortages = [];
-
-        $objectivePlan = $this->objectiveQuestionPlan($period, $student);
+        $objectivePlan = $this->objectiveQuestionPlan($period, $student)
+            ->filter(fn ($plan) => (int) $plan['question_count'] > 0)
+            ->values();
 
         if ($objectivePlan->isEmpty()) {
-            throw new RuntimeException('No supported learning goals are available for this learning period.');
+            throw new FormativePreparationException(
+                'The approved learning material does not currently support any assessable learning goals. Your teacher needs to review the material first.'
+            );
         }
 
-        foreach ($objectivePlan as $plan) {
+        $intended = (int) $objectivePlan->sum('question_count');
+        $selected = collect();
+        $leftovers = [];
+        $shortfalls = [];
+        $total = $objectivePlan->count();
+
+        foreach ($objectivePlan as $position => $plan) {
+            if ($deadline !== null && time() > $deadline) {
+                throw new FormativeTimeBudgetExceeded();
+            }
+
             $objective = $plan['objective'];
             $topic = $plan['topic'];
             $required = (int) $plan['question_count'];
+            $seed = $attempt->seed . ':objective:' . $objective->id;
 
-            if ($required <= 0) {
-                continue;
-            }
+            $this->setProgress(
+                $attempt,
+                15 + (int) floor(40 * $position / max(1, $total)),
+                'checking_pool',
+                'Preparing questions for "' . ($topic->topic_name ?? 'your topic') . '"...'
+            );
 
-            $pool = Question::query()
+            $bank = Question::query()
                 ->where('topic_id', $topic->id)
                 ->where('learning_objective_id', $objective->id)
                 ->whereNull('parent_question_id')
@@ -242,62 +353,118 @@ class LearnerFormativeService
                 ->with('learningObjective:id,topic_id,code,objective,status')
                 ->get();
 
-            $objectiveSelected = $this->selectObjectiveQuestions(
-                $pool,
-                $required,
-                $attempt->seed . ':objective:' . $objective->id
-            );
+            $chosen = $this->selectObjectiveQuestions($bank, $required, $seed);
+            $pool = collect();
+            $missing = $required - $chosen->count();
 
-            // If the permanent Question Bank does not yet contain enough
-            // approved questions for this learning goal, generate only the
-            // missing questions from the approved curriculum material. These
-            // temporary questions are attached directly to this learner's
-            // formative attempt and stay outside the permanent Question Bank.
-            $missing = max(0, $required - $objectiveSelected->count());
+            // Questions generated earlier for this objective (by this or any
+            // other learner's preparation) are reused before asking the AI.
+            if ($missing > 0) {
+                $pool = $this->generator->reusablePool($objective)
+                    ->reject(fn ($q) => $chosen->contains('id', $q->id))
+                    ->values();
+
+                $chosen = $chosen
+                    ->concat($this->selectObjectiveQuestions($pool, $missing, $seed . ':pool'))
+                    ->values();
+
+                $missing = $required - $chosen->count();
+            }
 
             if ($missing > 0) {
-                $generated = $this->generateGroundedQuestionsForObjective(
+                $this->setProgress(
                     $attempt,
-                    $period,
-                    $plan['assignment'] ?? null,
-                    $objective,
-                    $missing,
-                    $objectiveSelected->count()
+                    15 + (int) floor(40 * ($position + 0.5) / max(1, $total)),
+                    'generating',
+                    'Writing questions for "' . ($topic->topic_name ?? 'your topic') . '"...'
                 );
 
-                $objectiveSelected = $objectiveSelected->concat($generated)->values();
+                try {
+                    $generated = $this->generator->generate(
+                        $period,
+                        $topic,
+                        (string) ($plan['assignment']->unit?->name ?? ''),
+                        $objective,
+                        $missing,
+                        $chosen->pluck('id')->all(),
+                        $bank->concat($pool)->pluck('question')->all(),
+                        [
+                            '_usage_user_id' => $attempt->student_id,
+                            '_usage_school_id' => $student->school_id ?? null,
+                            '_usage_role' => 'student',
+                            '_usage_learning_period_id' => $period->id,
+                            '_usage_subject_id' => $period->gradeSubject?->subject_id,
+                            '_usage_unit_id' => $plan['assignment']->unit_id ?? null,
+                            '_usage_topic_id' => $topic->id,
+                            '_usage_learning_objective_id' => $objective->id,
+                        ]
+                    );
+
+                    $chosen = $chosen->concat($generated)->values();
+                } catch (FormativePreparationException $e) {
+                    // No approved material for this goal (or storage problem).
+                    // A storage problem would hit every goal, so only an
+                    // ungrounded goal is skipped; anything else is re-thrown.
+                    if (!$this->generator->hasEvidence($objective, $topic)) {
+                        Log::warning('Formative objective skipped: no approved material.', [
+                            'learning_objective_id' => $objective->id,
+                            'attempt_id' => $attempt->id,
+                        ]);
+                    } else {
+                        throw $e;
+                    }
+                }
             }
 
-            if ($objectiveSelected->count() < $required) {
-                $shortages[] = [
-                    'objective' => $objective->code ?: ('Objective ' . $objective->id),
-                    'topic' => $topic->topic_name ?? ('Topic ' . $topic->id),
-                    'available' => $objectiveSelected->count(),
-                    'required' => $required,
-                ];
+            $chosen = $chosen->take($required)->values();
+
+            if ($chosen->count() < $required) {
+                $shortfalls[] = ($objective->code ?: 'Objective ' . $objective->id)
+                    . ' (' . $chosen->count() . '/' . $required . ')';
             }
 
-            $selected = $selected->concat($objectiveSelected->take($required));
+            $selected = $selected->concat($chosen);
+            $leftovers[] = $bank->concat($pool)
+                ->reject(fn ($q) => $chosen->contains('id', $q->id))
+                ->values();
         }
 
-        if (!empty($shortages)) {
-            $details = collect($shortages)
-                ->map(fn ($item) => $item['topic'] . ' / ' . $item['objective'] . ' (' . $item['available'] . '/' . $item['required'] . ')')
-                ->implode(', ');
+        $selected = $selected->unique('id')->values();
 
-            throw new RuntimeException(
-                'There are not enough approved assessment questions for: ' . $details . '. Add more approved questions mapped to those learning goals and try again.'
-            );
+        // Cover a shortfall from other goals' unused approved questions
+        // (no AI involved), taken round-robin so no goal dominates.
+        if ($selected->count() < $intended) {
+            $selected = $this->backfill($selected, $leftovers, $intended, $attempt->seed);
         }
 
         if ($selected->isEmpty()) {
-            throw new RuntimeException('No approved assessment questions are available for this learning period.');
+            throw new FormativePreparationException(
+                'No assessment questions could be prepared from the approved material yet. Your teacher needs to review the material first.'
+            );
         }
 
-        $this->setProgress($attempt, 55, 'building_form', 'Building your unique question set...');
+        if ($selected->count() < (int) ceil($intended * self::MIN_FILL_RATIO)) {
+            // Likely transient (the AI answered badly or was overloaded):
+            // let the job retry; progress made so far is reused.
+            throw new RuntimeException(
+                'Only ' . $selected->count() . ' of ' . $intended . ' questions could be prepared. Short: ' .
+                implode(', ', $shortfalls)
+            );
+        }
+
+        if ($selected->count() < $intended) {
+            Log::warning('Formative assessment built with fewer questions than planned.', [
+                'attempt_id' => $attempt->id,
+                'planned' => $intended,
+                'built' => $selected->count(),
+                'short' => $shortfalls,
+            ]);
+        }
+
+        $this->setProgress($attempt, 60, 'building_form', 'Building your unique question set...');
 
         $ordered = $this->deterministicOrder(
-            $selected->unique('id')->values(),
+            $selected,
             $attempt->seed . ':form-order'
         );
 
@@ -352,6 +519,48 @@ class LearnerFormativeService
         ]);
     }
 
+    /**
+     * @param Collection<int, Collection> $leftovers per-objective unused questions
+     */
+    protected function backfill(Collection $selected, array $leftovers, int $target, string $seed): Collection
+    {
+        $queues = array_map(
+            fn (Collection $pool) => $this->deterministicOrder($pool, $seed . ':backfill')->all(),
+            $leftovers
+        );
+
+        $taken = $selected->pluck('id')->all();
+
+        while (count($taken) < $target) {
+            $progressed = false;
+
+            foreach ($queues as $i => $queue) {
+                if (count($taken) >= $target) {
+                    break;
+                }
+
+                while ($queue) {
+                    $candidate = array_shift($queue);
+
+                    if (!in_array($candidate->id, $taken, true)) {
+                        $selected->push($candidate);
+                        $taken[] = $candidate->id;
+                        $progressed = true;
+                        break;
+                    }
+                }
+
+                $queues[$i] = $queue;
+            }
+
+            if (!$progressed) {
+                break;
+            }
+        }
+
+        return $selected->values();
+    }
+
     public function questionsForAttempt(User $student, LearnerFormativeAttempt $attempt): array
     {
         abort_unless((int) $attempt->student_id === (int) $student->id, 403);
@@ -365,6 +574,34 @@ class LearnerFormativeService
 
         if (!$attempt->assessment) {
             throw new RuntimeException('Assessment container is missing.');
+        }
+
+        // A question can be deleted after the assessment was prepared (a
+        // teacher cleaning the bank). Drop such links so the learner is never
+        // asked to answer - or blocked from submitting - a question that no
+        // longer exists.
+        $orphanLinkIds = $attempt->questions
+            ->filter(fn (LearnerFormativeQuestion $item) => !$item->question)
+            ->pluck('id');
+
+        if ($orphanLinkIds->isNotEmpty()) {
+            LearnerFormativeQuestion::query()->whereIn('id', $orphanLinkIds)->delete();
+            $attempt->unsetRelation('questions');
+            $attempt->load('questions.question');
+            $attempt->update(['question_count' => $attempt->questions->count()]);
+        }
+
+        if ($attempt->questions->isEmpty()) {
+            // Nothing left to ask: send the learner back to prepare it again.
+            $attempt->update([
+                'status' => 'failed',
+                'progress' => 0,
+                'stage' => 'failed',
+                'message' => 'Your assessment needs to be prepared again. Press Try again.',
+                'error_message' => 'Your assessment needs to be prepared again. Press Try again.',
+            ]);
+
+            abort(409, 'Your assessment needs to be prepared again. Please go back to your learning period and press Try again.');
         }
 
         if ($attempt->status === 'ready') {
@@ -669,179 +906,4 @@ class LearnerFormativeService
             'message' => $message,
         ]);
     }
-    protected function generateGroundedQuestionsForObjective(
-        LearnerFormativeAttempt $attempt,
-        LearningPeriod $period,
-        $assignment,
-        $objective,
-        int $count,
-        int $existingCount = 0
-    ): Collection {
-        $topic = $assignment?->topic;
-
-        if (!$topic) {
-            throw new RuntimeException('Assessment topic context is missing.');
-        }
-
-        $materialText = KnowledgeChunk::query()
-            ->where('topic_id', $topic->id)
-            ->whereNotNull('content')
-            ->orderBy('chunk_index')
-            ->limit(8)
-            ->pluck('content')
-            ->implode("\n\n");
-
-        $objectiveText = trim(
-            ($objective->code ? $objective->code . ': ' : '') .
-            ($objective->objective ?? $objective->description ?? '')
-        );
-
-        if (trim($materialText) === '' && trim($objectiveText) === '') {
-            throw new RuntimeException(
-                'Insufficient approved curriculum material to prepare assessment questions for topic: ' .
-                ($topic->topic_name ?? $topic->id)
-            );
-        }
-
-        $subject = $period->gradeSubject?->subject?->name ?? 'Subject';
-        $unit = $assignment?->unit?->name ?? '';
-        $topicName = $topic->topic_name ?? 'Topic';
-
-        $prompt = <<<PROMPT
-Create exactly {$count} additional formative assessment questions for one learner, all targeting the SINGLE learning objective below.
-
-SUBJECT: {$subject}
-UNIT: {$unit}
-TOPIC: {$topicName}
-
-TARGET LEARNING OBJECTIVE:
-{$objectiveText}
-
-APPROVED TEACHER/CURRICULUM MATERIAL:
-{$materialText}
-
-STRICT RULES:
-- Use ONLY facts supported by the learning objective and approved curriculum material above.
-- Do not introduce outside facts.
-- Questions must be objectively auto-gradable.
-- Allowed types: mcq, true_false, fill_blank, short_answer.
-- {$existingCount} question(s) for this objective are already available; make the additional questions different but equivalent in scope.
-- For MCQ provide exactly four plausible options and one unambiguous correct answer.
-- correct_answer must always be an array of accepted answer strings.
-- Use 1 mark per question.
-- Give a short explanation grounded in the supplied material.
-PROMPT;
-
-        $schema = [
-            'type' => 'object',
-            'properties' => [
-                'questions' => [
-                    'type' => 'array',
-                    'items' => [
-                        'type' => 'object',
-                        'properties' => [
-                            'question' => ['type' => 'string'],
-                            'question_type' => ['type' => 'string'],
-                            'difficulty_level' => ['type' => 'string'],
-                            'options' => [
-                                'type' => 'array',
-                                'items' => ['type' => 'string'],
-                            ],
-                            'correct_answer' => [
-                                'type' => 'array',
-                                'items' => ['type' => 'string'],
-                            ],
-                            'explanation' => ['type' => 'string'],
-                        ],
-                        'required' => [
-                            'question',
-                            'question_type',
-                            'correct_answer',
-                            'explanation',
-                        ],
-                    ],
-                ],
-            ],
-            'required' => ['questions'],
-        ];
-
-        $response = $this->ai->json(
-            [
-                [
-                    'role' => 'system',
-                    'content' => 'You create grounded formative questions from supplied curriculum evidence only.',
-                ],
-                [
-                    'role' => 'user',
-                    'content' => $prompt,
-                ],
-            ],
-            $schema,
-            [
-                'temperature' => 0.35,
-                'max_tokens' => min(12000, max(5000, $count * 700)),
-                '_usage_feature' => 'Learner Formative Assessment Generation',
-                '_usage_user_id' => $attempt->student_id,
-                '_usage_school_id' => $attempt->student?->school_id,
-                '_usage_role' => 'student',
-                '_usage_learning_period_id' => $period->id,
-                '_usage_subject_id' => $period->gradeSubject?->subject_id,
-                '_usage_unit_id' => $assignment?->unit_id,
-                '_usage_topic_id' => $topic->id,
-                '_usage_learning_objective_id' => $objective->id,
-            ]
-        );
-
-        $items = collect($response['questions'] ?? [])->take($count);
-
-        if ($items->count() < $count) {
-            throw new RuntimeException(
-                'AI did not return enough grounded questions for topic: ' . $topicName
-            );
-        }
-
-        return $items->map(function ($item) use ($topic, $objective, $period) {
-            $type = strtolower(trim($item['question_type'] ?? 'mcq'));
-
-            if (!in_array($type, ['mcq', 'true_false', 'fill_blank', 'short_answer'], true)) {
-                $type = 'mcq';
-            }
-
-            $options = $item['options'] ?? [];
-            $correct = $item['correct_answer'] ?? [];
-
-            if (!is_array($correct)) {
-                $correct = [$correct];
-            }
-
-            if ($type === 'true_false') {
-                $options = ['True', 'False'];
-            }
-
-            if ($type !== 'mcq' && $type !== 'true_false') {
-                $options = [];
-            }
-
-            return Question::create([
-                'topic_id' => $topic->id,
-                'learning_objective_id' => $objective?->id,
-                'question_type' => $type,
-                'question' => trim((string) ($item['question'] ?? '')),
-                'options' => array_values($options),
-                'correct_answer' => array_values($correct),
-                'marks' => 1,
-                'difficulty_level' => $item['difficulty_level'] ?? 'medium',
-                'is_math' => false,
-                'is_chemistry' => false,
-                'multiple_answers' => false,
-                'is_required' => true,
-                'explanation' => $item['explanation'] ?? null,
-                'created_by' => $period->created_by,
-                'source' => 'ai_mastery',
-                'status' => 'draft',
-                'is_assessment_eligible' => false,
-            ]);
-        })->values();
-    }
-
 }

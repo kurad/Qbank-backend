@@ -406,6 +406,7 @@ class TeacherGradebookService
                     'max_score' => round($maxScore, 2),
                     'percentage' => $percentage,
                     'completed_at' => optional($attempt->completed_at)->toDateTimeString(),
+                    'is_late' => (bool) $attempt->is_late,
                 ];
 
                 if ($percentage !== null && in_array($attempt->status, ['graded', 'completed'], true)) {
@@ -561,6 +562,7 @@ class TeacherGradebookService
                     'percentage' => $attempt->status === 'under_review' ? null : $percentage,
                     'assigned_at' => optional($attempt->assigned_at)->toDateTimeString(),
                     'completed_at' => optional($attempt->completed_at)->toDateTimeString(),
+                    'is_late' => (bool) $attempt->is_late,
                     'classes' => $attempt->assessment?->groups?->pluck('group_name')->values()->all() ?? [],
                     'answers' => $attempt->studentAnswers->map(function (StudentAnswer $answer) use ($excludedQuestionIds) {
                         $question = $answer->question;
@@ -903,6 +905,7 @@ class TeacherGradebookService
                     'score' => $attempt->score === null ? null : (float) $attempt->score,
                     'max_score' => (float) ($attempt->max_score ?? 0),
                     'completed_at' => optional($attempt->completed_at)->toDateTimeString(),
+                    'is_late' => (bool) $attempt->is_late,
                     'answers' => $answers->all(),
                     'pending_review_count' => $answers->filter(fn ($item) => !$item['excluded'] && $item['current_points'] === null)->count(),
                     'reviewed_answers' => $answers->where('review_count', '>', 0)->count(),

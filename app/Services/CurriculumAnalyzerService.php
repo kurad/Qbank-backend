@@ -2,16 +2,34 @@
 
 namespace App\Services;
 
+use App\Exceptions\CurriculumException;
 use App\Models\CourseMaterial;
 use App\Models\CurriculumAnalysis;
+use App\Models\Topic;
 use App\Services\AI\AIGateway;
+use App\Support\TextTerms;
 use Illuminate\Support\Facades\DB;
-use RuntimeException;
+use Illuminate\Support\Facades\Log;
+use Throwable;
 
 class CurriculumAnalyzerService
 {
+    /**
+     * How much of the extracted text is sent to the AI. Anything beyond this
+     * is NOT analysed; the analysis records that it was truncated so the
+     * teacher is told (see curriculum_analyses.source_truncated).
+     */
+    public const MAX_SOURCE_CHARS = 120000;
+
+    /** A "processing" analysis older than this is assumed to have died. */
+    public const STALE_PROCESSING_MINUTES = 15;
+
+    /** Cap on how many refused objectives are stored for the teacher to read. */
+    private const MAX_DROPPED_RECORDED = 60;
+
     public function __construct(
-        protected AIGateway $ai
+        protected AIGateway $ai,
+        protected ObjectiveContentSufficiencyService $sufficiency
     ) {}
 
     /**
@@ -29,6 +47,11 @@ class CurriculumAnalyzerService
      * GradeSubject / Teaching Area
      *     ↓
      * Teacher + School
+     *
+     * Only objectives whose content the material can actually teach are
+     * created (see ObjectiveContentSufficiencyService).
+     *
+     * @throws CurriculumException for any problem that is safe to show the teacher
      */
     public function analyze(
         CourseMaterial $material,
@@ -39,18 +62,18 @@ class CurriculumAnalyzerService
     ): CurriculumAnalysis {
 
         $material->loadMissing([
-            'unit.gradeSubject',
+            'unit.gradeSubject.gradeLevel',
             'subject',
         ]);
 
         if ($material->scope !== 'unit') {
-            throw new RuntimeException(
+            throw new CurriculumException(
                 'Only unit-level materials can be analyzed as curriculum.'
             );
         }
 
         if (!$material->unit_id || !$material->unit) {
-            throw new RuntimeException(
+            throw new CurriculumException(
                 'This course material is not associated with a valid unit.'
             );
         }
@@ -60,7 +83,7 @@ class CurriculumAnalyzerService
         $gradeSubject = $unit->gradeSubject;
 
         if (!$gradeSubject) {
-            throw new RuntimeException(
+            throw new CurriculumException(
                 'This unit is not associated with a valid teaching area.'
             );
         }
@@ -79,19 +102,19 @@ class CurriculumAnalyzerService
             $gradeSubjectSchoolId === $userSchoolId;
 
         if (!$allowed) {
-            throw new RuntimeException(
+            throw new CurriculumException(
                 'This course material does not belong to your school.'
             );
         }
 
         if (!$material->subject_id || !$material->subject) {
-            throw new RuntimeException(
+            throw new CurriculumException(
                 'This course material is not associated with a valid subject.'
             );
         }
 
         if ((int) $material->subject_id !== (int) $gradeSubject->subject_id) {
-            throw new RuntimeException(
+            throw new CurriculumException(
                 'The course material subject does not match the teaching area.'
             );
         }
@@ -100,7 +123,7 @@ class CurriculumAnalyzerService
             !$material->extracted_text ||
             trim($material->extracted_text) === ''
         ) {
-            throw new RuntimeException(
+            throw new CurriculumException(
                 'This course material does not contain extracted text.'
             );
         }
@@ -116,9 +139,28 @@ class CurriculumAnalyzerService
                 ->first();
 
             if ($existing) {
-                return $existing->load([
-                    'topics.objectives',
-                ]);
+                /*
+                 * An analysis stuck in "processing" (the request or worker
+                 * died mid-way) would otherwise be returned forever and the
+                 * material could never be analysed again.
+                 */
+                $stale = $existing->status === 'processing'
+                    && $existing->updated_at
+                    && $existing->updated_at->lt(
+                        now()->subMinutes(self::STALE_PROCESSING_MINUTES)
+                    );
+
+                if ($stale) {
+                    $existing->update([
+                        'status' => 'failed',
+                        'analysis_error' =>
+                            'The previous analysis did not finish. A new one was started.',
+                    ]);
+                } else {
+                    return $existing->load([
+                        'topics.objectives',
+                    ]);
+                }
             }
         }
 
@@ -141,12 +183,21 @@ class CurriculumAnalyzerService
         try {
             /*
             |--------------------------------------------------------------------------
+            | Source text (and whether it had to be cut)
+            |--------------------------------------------------------------------------
+            */
+
+            $source = $this->prepareSource((string) $material->extracted_text);
+
+            /*
+            |--------------------------------------------------------------------------
             | Build curriculum prompt
             |--------------------------------------------------------------------------
             */
 
             $prompt = $this->buildCurriculumPrompt(
                 $material,
+                $source['text'],
                 $instruction,
                 $parentAnalysisId
             );
@@ -166,91 +217,9 @@ class CurriculumAnalyzerService
                 ],
             ];
 
-            $schema = [
-                'type' => 'OBJECT',
-
-                'properties' => [
-                    'topics' => [
-                        'type' => 'ARRAY',
-
-                        'items' => [
-                            'type' => 'OBJECT',
-
-                            'properties' => [
-                                'name' => [
-                                    'type' => 'STRING',
-                                ],
-
-                                'description' => [
-                                    'type' => 'STRING',
-                                    'nullable' => true,
-                                ],
-
-                                'order' => [
-                                    'type' => 'INTEGER',
-                                ],
-
-                                'learning_objectives' => [
-                                    'type' => 'ARRAY',
-
-                                    'items' => [
-                                        'type' => 'OBJECT',
-
-                                        'properties' => [
-                                            'code' => [
-                                                'type' => 'STRING',
-                                                'nullable' => true,
-                                            ],
-
-                                            'objective' => [
-                                                'type' => 'STRING',
-                                            ],
-
-                                            'description' => [
-                                                'type' => 'STRING',
-                                                'nullable' => true,
-                                            ],
-
-                                            'order' => [
-                                                'type' => 'INTEGER',
-                                            ],
-                                        ],
-
-                                        'required' => [
-                                            'objective',
-                                            'order',
-                                        ],
-                                    ],
-                                ],
-                            ],
-
-                            'required' => [
-                                'name',
-                                'order',
-                                'learning_objectives',
-                            ],
-                        ],
-                    ],
-                ],
-
-                'required' => [
-                    'topics',
-                ],
-            ];
-
-            /*
-            |--------------------------------------------------------------------------
-            | Ask AI for structured curriculum JSON
-            |--------------------------------------------------------------------------
-            |
-            | Routing:
-            | Gemini → Groq fallback
-            |
-            */
-
             $result = $this->ai->curriculumJson(
                 $messages,
-                $schema,
+                $this->responseSchema(),
                 [
                     'temperature' => 0.2,
                     'max_tokens' => 8000,
@@ -268,9 +237,35 @@ class CurriculumAnalyzerService
             );
 
             if (empty($topics)) {
-                throw new RuntimeException(
+                throw new CurriculumException(
                     'The AI did not identify any curriculum topics from this material.'
                 );
+            }
+
+            /*
+            |--------------------------------------------------------------------------
+            | Content-sufficiency gate
+            |--------------------------------------------------------------------------
+            |
+            | Only keep objectives the material has enough content to teach.
+            |
+            */
+
+            [$topics, $dropped] = $this->applyContentGate(
+                $source['text'],
+                $topics
+            );
+
+            if (empty($topics)) {
+                $analysis->update([
+                    'dropped_objectives' => $dropped,
+                ]);
+
+                throw (new CurriculumException(
+                    'The material does not contain enough teachable content to create learning objectives. ' .
+                    'Upload fuller teaching material (explanations and examples, not just headings or lists) ' .
+                    'and analyse it again.'
+                ))->withContext(['dropped_objectives' => $dropped]);
             }
 
             /*
@@ -281,7 +276,9 @@ class CurriculumAnalyzerService
 
             DB::transaction(function () use (
                 $analysis,
-                $topics
+                $topics,
+                $dropped,
+                $source
             ) {
                 foreach ($topics as $topicIndex => $topicData) {
                     $topic = $analysis->topics()->create([
@@ -291,9 +288,7 @@ class CurriculumAnalyzerService
                         $topicData['description']
                             ?? null,
 
-                        'order' =>
-                        $topicData['order']
-                            ?? ($topicIndex + 1),
+                        'order' => $topicIndex + 1,
 
                         'status' => 'proposed',
                     ]);
@@ -314,40 +309,58 @@ class CurriculumAnalyzerService
                             $objectiveData['description']
                                 ?? null,
 
-                            'order' =>
-                            $objectiveData['order']
-                                ?? ($objectiveIndex + 1),
+                            'source_excerpt' =>
+                            $objectiveData['source_excerpt']
+                                ?? null,
+
+                            'order' => $objectiveIndex + 1,
 
                             'status' => 'proposed',
                         ]);
                     }
                 }
 
-                /*
-                |--------------------------------------------------------------------------
-                | Mark analysis as ready
-                |--------------------------------------------------------------------------
-                */
-
                 $analysis->update([
                     'status' => 'ready',
                     'analyzed_at' => now(),
                     'analysis_error' => null,
+                    'source_truncated' => $source['truncated'],
+                    'source_chars_total' => $source['total'],
+                    'source_chars_used' => $source['used'],
+                    'dropped_objectives' => $dropped ?: null,
                 ]);
             });
-        } catch (\Throwable $e) {
+        } catch (Throwable $e) {
             /*
             |--------------------------------------------------------------------------
             | Mark analysis as failed
             |--------------------------------------------------------------------------
+            |
+            | analysis_error is returned to the browser, so it only ever holds a
+            | message that is safe to show. The real exception is logged.
+            |
             */
+
+            $safe = $e instanceof CurriculumException
+                ? $e
+                : new CurriculumException(
+                    'The AI service could not complete the analysis. Please try again.',
+                    0,
+                    $e
+                );
+
+            Log::error('Curriculum analysis failed.', [
+                'analysis_id' => $analysis->id,
+                'course_material_id' => $material->id,
+                'exception' => $e,
+            ]);
 
             $analysis->update([
                 'status' => 'failed',
-                'analysis_error' => $e->getMessage(),
+                'analysis_error' => $safe->getMessage(),
             ]);
 
-            throw $e;
+            throw $safe;
         }
 
         /*
@@ -362,28 +375,175 @@ class CurriculumAnalyzerService
     }
 
     /**
-     * Build the curriculum organization prompt.
+     * Trim the source to what is sent to the AI, preferring to cut at a
+     * paragraph boundary, and report whether anything was left out.
+     *
+     * @return array{text:string, truncated:bool, total:int, used:int}
      */
+    protected function prepareSource(string $extractedText): array
+    {
+        $text = trim($extractedText);
+        $total = mb_strlen($text);
+
+        if ($total <= self::MAX_SOURCE_CHARS) {
+            return ['text' => $text, 'truncated' => false, 'total' => $total, 'used' => $total];
+        }
+
+        $cut = mb_substr($text, 0, self::MAX_SOURCE_CHARS);
+        $lastBreak = mb_strrpos($cut, "\n\n");
+
+        if ($lastBreak !== false && $lastBreak > self::MAX_SOURCE_CHARS * 0.9) {
+            $cut = mb_substr($cut, 0, $lastBreak);
+        }
+
+        $cut = trim($cut);
+
+        return ['text' => $cut, 'truncated' => true, 'total' => $total, 'used' => mb_strlen($cut)];
+    }
+
+    /**
+     * JSON schema for the topic/objective structure.
+     */
+    protected function responseSchema(): array
+    {
+        return [
+            'type' => 'OBJECT',
+
+            'properties' => [
+                'topics' => [
+                    'type' => 'ARRAY',
+
+                    'items' => [
+                        'type' => 'OBJECT',
+
+                        'properties' => [
+                            'name' => [
+                                'type' => 'STRING',
+                            ],
+
+                            'description' => [
+                                'type' => 'STRING',
+                                'nullable' => true,
+                            ],
+
+                            'order' => [
+                                'type' => 'INTEGER',
+                            ],
+
+                            'learning_objectives' => [
+                                'type' => 'ARRAY',
+
+                                'items' => [
+                                    'type' => 'OBJECT',
+
+                                    'properties' => [
+                                        'code' => [
+                                            'type' => 'STRING',
+                                            'nullable' => true,
+                                        ],
+
+                                        'objective' => [
+                                            'type' => 'STRING',
+                                        ],
+
+                                        'description' => [
+                                            'type' => 'STRING',
+                                            'nullable' => true,
+                                        ],
+
+                                        'source_excerpt' => [
+                                            'type' => 'STRING',
+                                        ],
+
+                                        'order' => [
+                                            'type' => 'INTEGER',
+                                        ],
+                                    ],
+
+                                    'required' => [
+                                        'objective',
+                                        'source_excerpt',
+                                        'order',
+                                    ],
+                                ],
+                            ],
+                        ],
+
+                        'required' => [
+                            'name',
+                            'order',
+                            'learning_objectives',
+                        ],
+                    ],
+                ],
+            ],
+
+            'required' => [
+                'topics',
+            ],
+        ];
+    }
+
     /**
      * Build the curriculum organization prompt.
      */
     protected function buildCurriculumPrompt(
         CourseMaterial $material,
+        string $materialText,
         ?string $instruction = null,
         ?int $parentAnalysisId = null
     ): string {
         $material->loadMissing([
-            'unit',
+            'unit.gradeSubject.gradeLevel',
             'subject',
         ]);
 
-        $materialText = trim(
-            mb_substr(
-                $material->extracted_text,
-                0,
-                60000
-            )
-        );
+        $gradeName = trim((string) (
+            $material->unit?->gradeSubject?->gradeLevel?->grade_name ?? ''
+        ));
+
+        $gradeLine = $gradeName !== '' ? $gradeName : 'Not specified';
+
+        /*
+        |--------------------------------------------------------------------------
+        | Topics already in this unit (first analysis only)
+        |--------------------------------------------------------------------------
+        |
+        | Approval refuses a topic whose name already exists as an active topic
+        | in the unit, so tell the AI not to propose duplicates. A revision
+        | replaces its parent, so it does not need this list.
+        |
+        */
+
+        $existingTopicsSection = '';
+
+        if (!$parentAnalysisId) {
+            $existingNames = Topic::query()
+                ->where('unit_id', $material->unit_id)
+                ->where('status', 'active')
+                ->orderBy('order')
+                ->pluck('topic_name')
+                ->filter()
+                ->values()
+                ->all();
+
+            if ($existingNames) {
+                $list = implode("\n", array_map(
+                    fn ($name) => '- ' . $name,
+                    array_slice($existingNames, 0, 60)
+                ));
+
+                $existingTopicsSection = <<<TEXT
+
+TOPICS ALREADY IN THIS UNIT:
+{$list}
+
+Do not propose a topic with the same name as one above. If this material
+covers one of them, use a more specific name that describes what this
+material adds.
+TEXT;
+            }
+        }
 
         /*
     |--------------------------------------------------------------------------
@@ -479,8 +639,13 @@ For example, if the teacher asks for a specific number of
 topics, produce that number of coherent topics where the
 source material supports it.
 
-Do not simply shorten or rename the previous analysis.
-Reorganize the curriculum structure when necessary.
+Keep every part of the previous structure that the instruction
+does not ask you to change (names, wording and order), and
+reorganize only what the instruction requires. Do not rewrite
+unaffected topics or objectives.
+
+An instruction can never override the evidence rules below: if the
+teacher asks for content the material does not teach, leave it out.
 
 The teacher will review the result before it becomes the
 official curriculum.
@@ -496,8 +661,12 @@ into a logical curriculum structure.
 SUBJECT:
 {$material->subject->name}
 
+GRADE LEVEL:
+{$gradeLine}
+
 UNIT:
 {$material->unit->name}
+{$existingTopicsSection}
 
 SOURCE MATERIAL:
 {$materialText}
@@ -527,20 +696,46 @@ RULES:
 
 6. Arrange topics in a logical teaching sequence.
 
-7. Learning objectives should describe observable student learning.
+7. Each learning objective must describe ONE observable skill or
+   piece of understanding, starting with a measurable verb
+   (for example: define, calculate, compare, classify, solve,
+   construct, interpret, describe, label). Do not use vague verbs
+   such as "understand", "know", "learn" or "appreciate".
+   Pitch the depth for the GRADE LEVEL above.
 
 8. Be conservative when the source material is ambiguous.
 
 9. Do not add unrelated curriculum content simply because it is
    common knowledge for this subject.
 
-10. When revising a previous analysis, create a NEW curriculum
-    structure rather than copying the previous structure unchanged.
+10. When revising a previous analysis, keep the parts the teacher
+    did not ask to change, and reorganize only what the
+    instruction requires.
 
 11. The proposed structure will be reviewed by the teacher before
     becoming part of the official curriculum.
 
-12. Return ONLY valid JSON.
+12. Granularity: prefer roughly 3 to 12 topics for a unit, and
+    about 2 to 6 objectives per topic. A topic must be a coherent
+    theme, not a single sentence of the material. Do not split one
+    idea into several near-identical objectives.
+
+13. EVIDENCE (mandatory): every objective must include
+    "source_excerpt", an EXACT, word-for-word quotation copied from
+    the SOURCE MATERIAL above (about 25 to 120 words, one or two
+    consecutive passages) that explains or demonstrates what the
+    objective asks the student to do. Never paraphrase, summarize
+    or combine distant passages in source_excerpt.
+
+14. ONLY propose an objective if the source material actually
+    contains enough to TEACH it: an explanation, definition, rule,
+    procedure or worked example. A topic that is only named in a
+    heading, a contents list or a single passing sentence is NOT
+    enough: leave that objective out entirely. It is better to
+    return fewer objectives than to include one the material cannot
+    teach.
+
+15. Return ONLY valid JSON.
 
 REQUIRED JSON STRUCTURE:
 
@@ -555,6 +750,7 @@ REQUIRED JSON STRUCTURE:
                     "code": null,
                     "objective": "Student should be able to ...",
                     "description": null,
+                    "source_excerpt": "Exact quotation from the source material",
                     "order": 1
                 }
             ]
@@ -573,22 +769,22 @@ PROMPT;
 
     /**
      * Normalize and validate AI-generated topics.
+     *
+     * - Topic and objective order always follow the array position; the
+     *   AI's own "order" numbers are not trusted.
+     * - Topics that share a name are merged (approval would otherwise fail
+     *   on the duplicate), and repeated objectives are dropped.
      */
     protected function normaliseTopics(
         array $topics
     ): array {
         $normalized = [];
+        $topicPositionByName = [];
 
-        foreach ($topics as $topicIndex => $topic) {
+        foreach ($topics as $topic) {
             if (!is_array($topic)) {
                 continue;
             }
-
-            /*
-            |--------------------------------------------------------------------------
-            | Topic name
-            |--------------------------------------------------------------------------
-            */
 
             $name = trim(
                 (string) (
@@ -597,17 +793,11 @@ PROMPT;
                 )
             );
 
+            $name = mb_substr($name, 0, 255);
+
             if ($name === '') {
                 continue;
             }
-
-            /*
-            |--------------------------------------------------------------------------
-            | Learning objectives
-            |--------------------------------------------------------------------------
-            */
-
-            $objectives = [];
 
             $rawObjectives =
                 $topic['learning_objectives']
@@ -617,91 +807,238 @@ PROMPT;
                 $rawObjectives = [];
             }
 
-            foreach (
-                $rawObjectives as $objectiveIndex => $objective
-            ) {
-                if (!is_array($objective)) {
-                    continue;
-                }
-
-                $objectiveText = trim(
-                    (string) (
-                        $objective['objective']
-                        ?? ''
-                    )
-                );
-
-                if ($objectiveText === '') {
-                    continue;
-                }
-
-                $objectives[] = [
-                    'code' =>
-                    !empty($objective['code'])
-                        ? trim(
-                            (string)
-                            $objective['code']
-                        )
-                        : null,
-
-                    'objective' =>
-                    $objectiveText,
-
-                    'description' =>
-                    !empty($objective['description'])
-                        ? trim(
-                            (string)
-                            $objective['description']
-                        )
-                        : null,
-
-                    'order' =>
-                    isset($objective['order'])
-                        ? (int)
-                        $objective['order']
-                        : ($objectiveIndex + 1),
-                ];
-            }
+            $objectives = $this->normaliseObjectives($rawObjectives);
 
             /*
-            |--------------------------------------------------------------------------
             | A topic without learning objectives
             | is not useful for our curriculum structure.
-            |--------------------------------------------------------------------------
             */
 
             if (empty($objectives)) {
                 continue;
             }
 
-            /*
-            |--------------------------------------------------------------------------
-            | Add normalized topic
-            |--------------------------------------------------------------------------
-            */
+            $nameKey = mb_strtolower($name);
+
+            if (isset($topicPositionByName[$nameKey])) {
+                $position = $topicPositionByName[$nameKey];
+
+                $normalized[$position]['learning_objectives'] = $this->mergeObjectives(
+                    $normalized[$position]['learning_objectives'],
+                    $objectives
+                );
+
+                continue;
+            }
+
+            $topicPositionByName[$nameKey] = count($normalized);
 
             $normalized[] = [
                 'name' => $name,
 
                 'description' =>
                 !empty($topic['description'])
-                    ? trim(
-                        (string)
-                        $topic['description']
-                    )
+                    ? trim((string) $topic['description'])
                     : null,
 
-                'order' =>
-                isset($topic['order'])
-                    ? (int)
-                    $topic['order']
-                    : ($topicIndex + 1),
-
-                'learning_objectives' =>
-                $objectives,
+                'learning_objectives' => $objectives,
             ];
         }
 
+        foreach ($normalized as $topicIndex => $topic) {
+            $normalized[$topicIndex]['order'] = $topicIndex + 1;
+
+            foreach ($topic['learning_objectives'] as $objectiveIndex => $objective) {
+                $normalized[$topicIndex]['learning_objectives'][$objectiveIndex]['order'] = $objectiveIndex + 1;
+            }
+        }
+
         return $normalized;
+    }
+
+    /**
+     * @return array<int, array{code:?string, objective:string, description:?string, source_excerpt:?string}>
+     */
+    protected function normaliseObjectives(array $rawObjectives): array
+    {
+        $objectives = [];
+        $seen = [];
+
+        foreach ($rawObjectives as $objective) {
+            if (!is_array($objective)) {
+                continue;
+            }
+
+            $objectiveText = trim(
+                (string) (
+                    $objective['objective']
+                    ?? ''
+                )
+            );
+
+            if ($objectiveText === '') {
+                continue;
+            }
+
+            $key = TextTerms::normalise($objectiveText);
+
+            if (isset($seen[$key])) {
+                continue;
+            }
+
+            $seen[$key] = true;
+
+            $objectives[] = [
+                'code' =>
+                !empty($objective['code'])
+                    ? mb_substr(trim((string) $objective['code']), 0, 100)
+                    : null,
+
+                'objective' => $objectiveText,
+
+                'description' =>
+                !empty($objective['description'])
+                    ? trim((string) $objective['description'])
+                    : null,
+
+                'source_excerpt' =>
+                !empty($objective['source_excerpt'])
+                    ? trim((string) $objective['source_excerpt'])
+                    : null,
+            ];
+        }
+
+        return $objectives;
+    }
+
+    protected function mergeObjectives(array $existing, array $incoming): array
+    {
+        $seen = [];
+
+        foreach ($existing as $objective) {
+            $seen[TextTerms::normalise($objective['objective'])] = true;
+        }
+
+        foreach ($incoming as $objective) {
+            $key = TextTerms::normalise($objective['objective']);
+
+            if (!isset($seen[$key])) {
+                $seen[$key] = true;
+                $existing[] = $objective;
+            }
+        }
+
+        return $existing;
+    }
+
+    /**
+     * Keep only objectives the source material can actually teach.
+     *
+     * @param  array $topics normalised topics
+     * @return array{0: array, 1: array} [kept topics, dropped objective records]
+     */
+    protected function applyContentGate(
+        string $sourceText,
+        array $topics
+    ): array {
+        $index = $this->sufficiency->index($sourceText);
+
+        $dropped = [];
+        $toJudge = [];
+
+        // Layer 1: the quoted passage must really exist in the material.
+        foreach ($topics as $topicIndex => $topic) {
+            foreach ($topic['learning_objectives'] as $objectiveIndex => $objective) {
+                $check = $this->sufficiency->checkExcerpt(
+                    $index,
+                    $objective['source_excerpt'] ?? null
+                );
+
+                if (!$check['ok']) {
+                    $dropped[] = $this->droppedRecord($topic, $objective, $check['reason'], []);
+                    $topics[$topicIndex]['learning_objectives'][$objectiveIndex] = null;
+                    continue;
+                }
+
+                $toJudge["{$topicIndex}:{$objectiveIndex}"] = [
+                    'topic' => $topic['name'],
+                    'objective' => $objective['objective'],
+                    'description' => $objective['description'] ?? null,
+                    'evidence' => $this->sufficiency->evidenceFor(
+                        $index,
+                        $objective['objective'],
+                        $objective['description'] ?? null,
+                        $objective['source_excerpt']
+                    ),
+                ];
+            }
+        }
+
+        // Layer 2: a strict, separate judge decides whether it is enough to teach.
+        if ($toJudge) {
+            $verdicts = $this->sufficiency->assess($toJudge);
+
+            foreach ($verdicts as $key => $verdict) {
+                [$topicIndex, $objectiveIndex] = array_map('intval', explode(':', (string) $key));
+
+                if ($verdict['sufficient']) {
+                    continue;
+                }
+
+                $objective = $topics[$topicIndex]['learning_objectives'][$objectiveIndex];
+
+                $dropped[] = $this->droppedRecord(
+                    $topics[$topicIndex],
+                    $objective,
+                    $verdict['reason'] !== ''
+                        ? $verdict['reason']
+                        : 'The material does not contain enough content to teach this objective.',
+                    $verdict['missing']
+                );
+
+                $topics[$topicIndex]['learning_objectives'][$objectiveIndex] = null;
+            }
+        }
+
+        // Rebuild: drop refused objectives, then topics left with none.
+        $kept = [];
+
+        foreach ($topics as $topic) {
+            $objectives = array_values(array_filter(
+                $topic['learning_objectives'],
+                fn ($objective) => $objective !== null
+            ));
+
+            if (!$objectives) {
+                continue;
+            }
+
+            $topic['learning_objectives'] = $objectives;
+            $kept[] = $topic;
+        }
+
+        foreach ($kept as $topicIndex => $topic) {
+            $kept[$topicIndex]['order'] = $topicIndex + 1;
+
+            foreach ($topic['learning_objectives'] as $objectiveIndex => $objective) {
+                $kept[$topicIndex]['learning_objectives'][$objectiveIndex]['order'] = $objectiveIndex + 1;
+            }
+        }
+
+        return [$kept, array_slice($dropped, 0, self::MAX_DROPPED_RECORDED)];
+    }
+
+    protected function droppedRecord(array $topic, array $objective, string $reason, array $missing): array
+    {
+        return [
+            'topic' => mb_substr((string) $topic['name'], 0, 255),
+            'objective' => mb_substr((string) $objective['objective'], 0, 400),
+            'reason' => mb_substr($reason, 0, 300),
+            'missing' => array_slice(
+                array_map(fn ($m) => mb_substr((string) $m, 0, 160), $missing),
+                0,
+                5
+            ),
+        ];
     }
 }

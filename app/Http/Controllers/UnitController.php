@@ -17,7 +17,7 @@ class UnitController extends Controller
         $this->authorize('view', $gradeSubject);
 
         $units = $gradeSubject->units()
-            ->withCount('topics')
+            ->withCount(['topics' => fn ($query) => $query->where('status', '!=', 'archived')])
             ->when(
                 $request->has('status'),
                 fn($query) => $query->where('status', $request->status)
@@ -76,7 +76,7 @@ class UnitController extends Controller
         $unit->load([
             'gradeSubject.subject',
             'gradeSubject.gradeLevel',
-            'topics',
+            'topics' => fn ($query) => $query->where('status', '!=', 'archived'),
         ]);
 
         return response()->json([

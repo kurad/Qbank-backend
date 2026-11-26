@@ -19,12 +19,20 @@ class CurriculumAnalysis extends Model
         'instruction',
         'parent_analysis_id',
         'analysis_error',
+        'source_truncated',
+        'source_chars_total',
+        'source_chars_used',
+        'dropped_objectives',
         'analyzed_at',
         'reviewed_by',
         'reviewed_at',
     ];
 
     protected $casts = [
+        'source_truncated' => 'boolean',
+        'source_chars_total' => 'integer',
+        'source_chars_used' => 'integer',
+        'dropped_objectives' => 'array',
         'analyzed_at' => 'datetime',
         'reviewed_at' => 'datetime',
     ];

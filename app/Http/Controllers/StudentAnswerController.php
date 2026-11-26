@@ -241,11 +241,8 @@ class StudentAnswerController extends Controller
 
         // 2) Authorization (skip for practice)
         if (!$isPractice) {
-            $allowed = $assessment->groups->contains(function ($group) use ($studentId) {
-                return $group->students->contains('id', $studentId);
-            });
-
-            if (!$allowed) {
+            // Assigned to the student individually, or to their whole class.
+            if (!$assessment->isAvailableToStudent((int) $studentId)) {
                 return response()->json(['error' => 'Unauthorized'], 403);
             }
         }
@@ -479,6 +476,8 @@ class StudentAnswerController extends Controller
             'max_score' => round($maxScore, 2),
             'status' => $isPractice ? 'completed' : ($assessment->type !== 'formative' ? 'under_review' : ($pendingReviewCount > 0 ? 'under_review' : 'graded')),
             'completed_at' => now(),
+            // Fixed at the moment of submission.
+            'is_late' => !$isPractice && $assessment->isLateAt(now()),
         ]);
 
         // Completed attempts must no longer expose editable drafts.
@@ -494,6 +493,7 @@ class StudentAnswerController extends Controller
             'pending_review_count' => $pendingReviewCount,
             'status' => $isPractice ? 'completed' : ($assessment->type !== 'formative' ? 'under_review' : ($pendingReviewCount > 0 ? 'under_review' : 'graded')),
             'completed_at' => $studentAssessment->completed_at,
+            'is_late' => (bool) $studentAssessment->is_late,
             'student_assessment_id' => $studentAssessment->id,
         ]);
     }

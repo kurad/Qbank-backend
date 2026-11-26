@@ -11,6 +11,9 @@ class ObjectiveCoverageService
 {
     public function __construct(private AIGateway $ai) {}
 
+    /** @var array<string, \Illuminate\Support\Collection> chunk rows memoised per request / job run */
+    private array $chunkCache = [];
+
     public function objectives(CurriculumAnalysis $analysis)
     {
         return LearningObjective::query()->whereHas('topic', function ($q) use ($analysis) {
@@ -26,7 +29,8 @@ class ObjectiveCoverageService
         // Use unit/topic-scoped approved materials and approved supplements explicitly mapped to this goal.
         $mappedIds = DB::table('course_material_objective_supports')
             ->where('learning_objective_id', $objective->id)->pluck('course_material_id')->all();
-        $chunks = DB::table('knowledge_chunks as kc')
+        $cacheKey = md5(json_encode([$unitId, $topic->id, $mappedIds]));
+        $chunks = $this->chunkCache[$cacheKey] ??= DB::table('knowledge_chunks as kc')
             ->join('course_materials as cm', 'cm.id', '=', 'kc.course_material_id')
             ->where('kc.status', 'ready')->where('cm.status', 'approved')
             ->whereIn('cm.processing_status', ['ready', 'completed'])
@@ -42,7 +46,9 @@ class ObjectiveCoverageService
             ->orderBy('kc.course_material_id')->orderBy('kc.chunk_index')
             ->select('kc.content', 'kc.course_material_id', 'kc.updated_at')->get();
         $query = strtolower(trim($objective->code.' '.$objective->objective.' '.$objective->description));
-        $terms = array_values(array_unique(array_filter(preg_split('/[^\\pL\\pN]+/u', $query), fn($t) => mb_strlen($t) >= 4)));
+        // Shared helper: drops filler such as "student/should/able" and keeps short
+        // technical terms (DNA, pH) that a plain length filter discarded.
+        $terms = \App\Support\TextTerms::terms($query);
         $ranked = $chunks->map(function ($row) use ($terms) {
             $content = mb_strtolower($row->content);
             $row->score = array_sum(array_map(fn ($term) => mb_substr_count($content, $term), $terms));

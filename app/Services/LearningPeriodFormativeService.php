@@ -2,7 +2,6 @@
 
 namespace App\Services;
 
-use App\Jobs\PrepareLearningPeriodFormativeAssessment;
 use App\Models\Assessment;
 use App\Models\KnowledgeChunk;
 use App\Models\LearningPeriod;
@@ -72,20 +71,16 @@ class LearningPeriodFormativeService
 
         if ($ready && !$assessment) {
             /*
-             * Fallback trigger. Normally this job is dispatched immediately
-             * when the learner completes the final topic. If that event was
-             * missed, queue it here without blocking this request.
+             * The shared class-wide assessment is no longer generated
+             * automatically: each learner's own assessment is prepared by
+             * LearnerFormativeService. This legacy status never queues work.
              */
-            PrepareLearningPeriodFormativeAssessment::dispatch(
-                $period->id
-            )->afterResponse();
-
             return [
                 'required' => true,
                 'ready' => true,
-                'status' => 'preparing',
+                'status' => 'eligible',
                 'message' =>
-                    'Your required formative assessment is being prepared automatically.',
+                    'Open your AI Tutor learning period to start your required formative assessment.',
             ];
         }
 

@@ -229,7 +229,7 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
 
     Route::post('/topics', [TopicController::class, 'store']);
     Route::put('/topics/{topic}', [TopicController::class, 'update']);
-    Route::delete('/topics/{id}', [TopicController::class, 'destroy']);
+    Route::delete('/topics/{topic}', [TopicController::class, 'destroy']);
 
 
     /*
@@ -279,7 +279,6 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     */
 
     Route::get('/learning-periods/{learningPeriod}/topics', [LearningPeriodController::class, 'topics']);
-    Route::get('/learning-periods/{learningPeriod}/carry-forward-options', [LearningPeriodController::class, 'carryForwardOptions']);
     Route::post('/learning-periods/{learningPeriod}/topics', [LearningPeriodController::class, 'addTopic']);
     Route::put('/learning-periods/{learningPeriod}/topics/{learningPeriodTopic}', [LearningPeriodController::class, 'updateTopic']);
     Route::delete('/learning-periods/{learningPeriod}/topics/{learningPeriodTopic}', [LearningPeriodController::class, 'removeTopic']);
@@ -535,6 +534,7 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
 
     Route::get('/topics/{topic}/learning-objectives', [LearningObjectiveController::class, 'index']);
     Route::post('/topics/{topic}/learning-objectives', [LearningObjectiveController::class, 'store']);
+    Route::put('/topics/{topic}/learning-objectives/reorder', [LearningObjectiveController::class, 'reorder']);
     Route::get('/learning-objectives/{learningObjective}', [LearningObjectiveController::class, 'show']);
     Route::put('/learning-objectives/{learningObjective}', [LearningObjectiveController::class, 'update']);
     Route::delete('/learning-objectives/{learningObjective}', [LearningObjectiveController::class, 'destroy']);
@@ -552,6 +552,7 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     Route::post('/curriculum-analyses/{curriculumAnalysis}/refine', [CurriculumAnalysisController::class, 'refine']);
     Route::put('/curriculum-analyses/{curriculumAnalysis}', [CurriculumAnalysisController::class, 'update']);
     Route::post('/curriculum-analyses/{curriculumAnalysis}/approve', [CurriculumAnalysisController::class, 'approve']);
+    Route::get('/curriculum-analyses/{curriculumAnalysis}/approval-impact', [CurriculumAnalysisController::class, 'approvalImpact']);
     Route::get('/curriculum-analyses/{curriculumAnalysis}/coverage', [ObjectiveCoverageController::class, 'index']);
     Route::post('/curriculum-analyses/{curriculumAnalysis}/coverage/check-all', [ObjectiveCoverageController::class, 'checkAll']);
     Route::post('/curriculum-analyses/{curriculumAnalysis}/coverage/{learningObjective}/recheck', [ObjectiveCoverageController::class, 'recheck']);

@@ -793,6 +793,26 @@ class AssessmentController extends Controller
         $assessmentId = $request->assessment_id;
         $assignedCount = 0;
 
+        $target = Assessment::findOrFail($assessmentId);
+        $user = $request->user();
+        abort_unless(
+            $user->role === 'admin' || (int) $target->creator_id === (int) $user->id,
+            403,
+            'Only the assessment creator can assign this assessment.'
+        );
+
+        if ($request->filled('student_id')) {
+            // A teacher may only hand an assessment to students in their own classes.
+            abort_unless(
+                $user->role === 'admin' || \App\Models\Group::query()
+                    ->where('created_by', $user->id)
+                    ->whereHas('students', fn ($q) => $q->where('users.id', $request->student_id))
+                    ->exists(),
+                403,
+                'That student is not in one of your classes.'
+            );
+        }
+
         if ($request->filled('student_id')) {
             $success = $assigner->assignToStudent($request->student_id, $assessmentId);
 
@@ -818,10 +838,22 @@ class AssessmentController extends Controller
         ], 422);
     }
 
+    /**
+     * Assign an assessment to a class: the whole class (default) or only the
+     * chosen students (`student_ids`).
+     *
+     *  - Calling it again with more `student_ids` adds students, which is how
+     *    a student who missed it gets it later.
+     *  - A class that already has the assessment for everyone cannot be
+     *    narrowed; a selected-students assignment becomes whole-class when no
+     *    `student_ids` are sent.
+     */
     public function assignGroup(Request $request, $assessmentId)
     {
         $validated = $request->validate([
             'group_id' => 'required|exists:groups,id',
+            'student_ids' => 'nullable|array|min:1',
+            'student_ids.*' => 'integer|distinct',
         ]);
 
         $assessment = Assessment::findOrFail($assessmentId);
@@ -833,13 +865,65 @@ class AssessmentController extends Controller
         abort_unless((int) $group->created_by === (int) Auth::id(), 403,
             'You can only assign an assessment to a class you manage.');
 
-        // Attach group to the assessment
-        // Using syncWithoutDetaching in case you want to keep other groups attached
-        $assessment->groups()->syncWithoutDetaching([$validated['group_id']]);
+        $studentIds = collect($validated['student_ids'] ?? [])->map(fn ($id) => (int) $id)->values();
 
+        if ($studentIds->isNotEmpty()) {
+            $members = $group->students()->whereIn('users.id', $studentIds)->pluck('users.id')->map(fn ($id) => (int) $id);
 
+            if ($members->count() !== $studentIds->count()) {
+                return response()->json([
+                    'message' => 'Some of the selected students are not in this class.',
+                ], 422);
+            }
+        }
 
-        return response()->json(['message' => 'Assessment assigned successfully']);
+        $existing = $assessment->groups()->where('groups.id', $group->id)->first();
+        $currentAudience = $existing?->pivot?->audience;
+
+        DB::transaction(function () use ($assessment, $group, $studentIds, $existing, $currentAudience) {
+            if ($studentIds->isEmpty()) {
+                // Whole class.
+                if ($existing) {
+                    $assessment->groups()->updateExistingPivot($group->id, ['audience' => 'all']);
+                } else {
+                    $assessment->groups()->attach($group->id, ['audience' => 'all']);
+                }
+
+                return;
+            }
+
+            if (!$existing) {
+                $assessment->groups()->attach($group->id, ['audience' => 'selected']);
+            }
+
+            // Already open to the whole class: nothing to add or narrow.
+            if ($currentAudience === 'all') {
+                return;
+            }
+
+            foreach ($studentIds as $studentId) {
+                StudentAssessment::firstOrCreate(
+                    ['student_id' => $studentId, 'assessment_id' => $assessment->id],
+                    [
+                        'assigned_by' => Auth::id(),
+                        'assigned_at' => now(),
+                        'status' => 'pending',
+                    ]
+                );
+            }
+        });
+
+        if ($studentIds->isNotEmpty() && $currentAudience === 'all') {
+            return response()->json([
+                'message' => 'This assessment is already assigned to the whole class.',
+            ]);
+        }
+
+        return response()->json([
+            'message' => $studentIds->isEmpty()
+                ? 'Assessment assigned to the whole class.'
+                : 'Assessment assigned to ' . $studentIds->count() . ' selected student(s).',
+        ]);
     }
 
 
@@ -1186,9 +1270,18 @@ class AssessmentController extends Controller
             'creator:id,name',
             'groups:id,group_name,class_code'
         ])
-            // Only assessments assigned to the student's groups
+            // Assessments given to the student's whole class, or to the student
+            // individually (a record of their own).
             ->whereHas('groups', function ($query) use ($groupIds) {
                 $query->whereIn('groups.id', $groupIds);
+            })
+            ->where(function ($query) use ($groupIds, $student) {
+                $query->whereHas('groups', function ($groups) use ($groupIds) {
+                    $groups->whereIn('groups.id', $groupIds)
+                        ->where('assessment_groups.audience', 'all');
+                })->orWhereHas('studentAssessments', function ($attempts) use ($student) {
+                    $attempts->where('student_id', $student->id);
+                });
             })
             // Exclude assessments created by the student themselves
             ->where('creator_id', '!=', $student->id)
