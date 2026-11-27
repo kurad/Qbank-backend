@@ -2424,7 +2424,7 @@ TEXT;
                 'mcq' => 'Each question must have exactly 4 distinct options and exactly one correct answer. Distractors must be plausible and test the same concept; avoid obviously silly, unrelated, grammatically mismatched, or noticeably shorter/longer distractors. Return options as an array of strings and correct_answer as the correct option string.',
                 'true_false' => 'Write statements that test genuine understanding rather than trivial wording tricks. Return options as ["True", "False"] and correct_answer as either "True" or "False".',
                 'short_answer' => 'Ask for a concise constructed response that demonstrates the requested cognitive level. Return options as an empty array and correct_answer as the expected answer or key answer points.',
-                'matching' => 'Use one coherent relationship for all pairs, with plausible alternatives and no one-to-one clues from wording or length. Return options as an object with left and right arrays. Return correct_answer as an array of objects containing left_index and right_index.',
+                'matching' => 'Use one coherent relationship for all pairs, with no one-to-one clues from wording or length. Write 4 to 6 pairs. The question text is only a short instruction (for example "Match each rule to the type of integrity it enforces."): NEVER put the items to be matched inside the question text and never refer to items the learner cannot see. Put every item to be matched in options.left (each self-contained, such as a concrete rule or scenario) and every answer in options.right (short, parallel labels). You may add one or two extra plausible answers to options.right that match nothing, as distractors. Every left item must have exactly one correct right item, and no two right items may be identical or interchangeable. Return options as an object with left and right arrays. Return correct_answer as an array of objects containing left_index and right_index, one per left item.',
                 'fill_blank' => 'Write one clear sentence with exactly one meaningful blank represented by ______. The surrounding wording must not make the answer obvious. Return correct_answer as the accepted answer text.',
                 'open_ended' => 'Write an open-ended question that requires explanation, reasoning, analysis, evaluation, or creation at the requested Bloom level. Return correct_answer as a concise model answer or marking guidance.',
                 default => '',
@@ -2980,6 +2980,12 @@ PROMPT;
                             );
                     }
 
+                    if (isset($item['marks']) && is_numeric($item['marks']) && (float) $item['marks'] > 100) {
+                        throw \Illuminate\Validation\ValidationException::withMessages([
+                            'marks' => ['Marks cannot be more than 100.'],
+                        ]);
+                    }
+
                     $subRequest = new Request($item);
                     $validated = $this->validateQuestionData($subRequest);
                     $validated['question'] = trim($validated['question']);
@@ -3034,8 +3040,9 @@ PROMPT;
                     }
 
                     /*
-                     * CRITICAL:
-                     * AI questions are drafts.
+                     * The teacher reviewed and approved these in the generator
+                     * ("Approve & Save"), so they are saved as approved and
+                     * usable in assessments straight away.
                      */
                     $validated['created_by'] = auth()->id();
                     $validated['source'] = 'ai';
