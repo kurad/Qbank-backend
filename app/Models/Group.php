@@ -38,7 +38,7 @@ class Group extends Model
             'assessment_groups',
             'group_id',
             'assessment_id'
-        )->withPivot('audience');
+        )->withPivot('audience', 'locked_at');
     }
     public function learningPeriods()
     {

@@ -5,6 +5,7 @@ namespace App\Models;
 use App\Models\School;
 use App\Models\StudentAnswer;
 use App\Models\TutorResponseEvaluation;
+use App\Notifications\ResetPasswordForSpa;
 use App\Notifications\VerifyEmailForSpa;
 use Illuminate\Auth\MustVerifyEmail as MustVerifyEmailTrait;
 use Illuminate\Contracts\Auth\MustVerifyEmail;
@@ -26,6 +27,7 @@ class User extends Authenticatable implements MustVerifyEmail
     protected $fillable = [
         'name',
         'email',
+        'phone',
         'password',
         'role',
         'admin_scope',
@@ -57,6 +59,11 @@ class User extends Authenticatable implements MustVerifyEmail
     public function sendEmailVerificationNotification(): void
     {
         $this->notify(new VerifyEmailForSpa);
+    }
+
+    public function sendPasswordResetNotification($token): void
+    {
+        $this->notify(new ResetPasswordForSpa($token));
     }
 
     public function isSystemAdmin(): bool

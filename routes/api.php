@@ -7,6 +7,8 @@ use App\Http\Controllers\AssessmentBuilderController;
 use App\Http\Controllers\AssessmentController;
 use App\Http\Controllers\AssessmentSectionController;
 use App\Http\Controllers\AuthController;
+use App\Http\Controllers\ProfileController;
+use App\Http\Controllers\PasswordResetController;
 use App\Http\Controllers\TeacherAccessController;
 use App\Http\Controllers\ClassInvitationController;
 use App\Http\Controllers\CourseMaterialController;
@@ -104,6 +106,9 @@ Route::post('/register', [AuthController::class, 'register']);
 Route::get('/teacher-invitations/{token}', [TeacherAccessController::class, 'preview']);
 Route::post('/teacher-invitations/{token}/register', [TeacherAccessController::class, 'registerFromInvitation']);
 
+Route::post('/forgot-password', [PasswordResetController::class, 'sendLink'])->middleware('throttle:5,1');
+Route::post('/reset-password', [PasswordResetController::class, 'reset'])->middleware('throttle:10,1');
+
 Route::post('/refresh-token', [AuthController::class, 'refreshToken']);
 
 // Public class invitation preview
@@ -133,8 +138,14 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     });
 
     Route::post('/logout', [AuthController::class, 'logout']);
+
+    // Own profile (all roles)
+    Route::get('/profile', [ProfileController::class, 'show']);
+    Route::put('/profile', [ProfileController::class, 'update']);
+    Route::put('/profile/password', [ProfileController::class, 'updatePassword'])->middleware('throttle:6,1');
     Route::get('/session-info', [AuthController::class, 'sessionInfo']);
     Route::get('/admin/dashboard-summary', [AdminDashboardController::class, 'summary']);
+    Route::get('/admin/school-insights', [AdminDashboardController::class, 'insights']);
     Route::get('/admin/ai-usage', [AIUsageController::class, 'index']);
     Route::get('/admin/ai-gateway', [AIGatewaySettingsController::class, 'show']);
     Route::put('/admin/ai-gateway', [AIGatewaySettingsController::class, 'save'])->middleware('throttle:20,1');
@@ -423,6 +434,7 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     Route::post('/assessments/{id}/questions', [AssessmentController::class, 'addQuestions']);
     Route::post('/assessments/{assessment}/assign', [AssessmentController::class, 'assign']);
     Route::post('/assessments/{id}/assign-group', [AssessmentController::class, 'assignGroup']);
+    Route::post('/assessments/{id}/lock-group', [AssessmentController::class, 'setGroupLock']);
     Route::delete('/assessments/{id}', [AssessmentController::class, 'destroy']);
     Route::delete('/assessments/{assessment}/questions/{question}', [AssessmentController::class, 'removeQuestion']);
 

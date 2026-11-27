@@ -298,6 +298,18 @@ class AssessmentController extends Controller
             $assessment
         );
 
+        // A closed assessment must not reveal its questions to students who
+        // have not started it.
+        $lockStudent = Auth::user();
+        if ($lockStudent && $lockStudent->role === 'student'
+            && !($assessment->type === 'practice' && (int) $assessment->creator_id === (int) $lockStudent->id)
+            && $assessment->isLockedForStudent((int) $lockStudent->id)) {
+            return response()->json([
+                'message' => 'This assessment is closed. Please speak to your teacher if you missed it.',
+                'locked' => true,
+            ], 423);
+        }
+
         // Create the immutable presentation snapshot before returning any
         // questions. This prevents the initial GET from exposing an unshuffled
         // version before the normal POST /start call.
@@ -879,8 +891,9 @@ class AssessmentController extends Controller
 
         $existing = $assessment->groups()->where('groups.id', $group->id)->first();
         $currentAudience = $existing?->pivot?->audience;
+        $isLocked = $existing?->pivot?->locked_at !== null;
 
-        DB::transaction(function () use ($assessment, $group, $studentIds, $existing, $currentAudience) {
+        DB::transaction(function () use ($assessment, $group, $studentIds, $existing, $currentAudience, $isLocked) {
             if ($studentIds->isEmpty()) {
                 // Whole class.
                 if ($existing) {
@@ -896,13 +909,13 @@ class AssessmentController extends Controller
                 $assessment->groups()->attach($group->id, ['audience' => 'selected']);
             }
 
-            // Already open to the whole class: nothing to add or narrow.
-            if ($currentAudience === 'all') {
+            // Already open to the whole class and not locked: nothing to add.
+            if ($currentAudience === 'all' && !$isLocked) {
                 return;
             }
 
             foreach ($studentIds as $studentId) {
-                StudentAssessment::firstOrCreate(
+                $attempt = StudentAssessment::firstOrCreate(
                     ['student_id' => $studentId, 'assessment_id' => $assessment->id],
                     [
                         'assigned_by' => Auth::id(),
@@ -910,8 +923,19 @@ class AssessmentController extends Controller
                         'status' => 'pending',
                     ]
                 );
+
+                // The assessment is locked: this is an individual exception.
+                if ($isLocked && !$attempt->access_override) {
+                    $attempt->update(['access_override' => true]);
+                }
             }
         });
+
+        if ($studentIds->isNotEmpty() && $isLocked) {
+            return response()->json([
+                'message' => 'Access granted to ' . $studentIds->count() . ' student(s), although the assessment is locked for the rest of the class.',
+            ]);
+        }
 
         if ($studentIds->isNotEmpty() && $currentAudience === 'all') {
             return response()->json([
@@ -926,6 +950,52 @@ class AssessmentController extends Controller
         ]);
     }
 
+
+    /**
+     * Lock or unlock an assessment for one class.
+     *
+     * Locked: students of that class who have not started can no longer open
+     * it. Students already in progress may finish; the teacher can still give
+     * individual students access again (assign-group with student_ids).
+     */
+    public function setGroupLock(Request $request, $assessmentId)
+    {
+        $validated = $request->validate([
+            'group_id' => 'required|exists:groups,id',
+            'locked' => 'required|boolean',
+        ]);
+
+        $assessment = Assessment::findOrFail($assessmentId);
+        abort_unless((int) $assessment->creator_id === (int) Auth::id(), 403,
+            'Only the assessment creator can lock this assessment.');
+        $group = \App\Models\Group::findOrFail($validated['group_id']);
+        abort_unless((int) $group->created_by === (int) Auth::id(), 403,
+            'You can only lock an assessment for a class you manage.');
+        abort_unless($assessment->groups()->where('groups.id', $group->id)->exists(), 404,
+            'This assessment is not assigned to that class.');
+
+        $locked = (bool) $validated['locked'];
+
+        $assessment->groups()->updateExistingPivot($group->id, [
+            'locked_at' => $locked ? now() : null,
+            'locked_by' => $locked ? Auth::id() : null,
+        ]);
+
+        // Unlocking removes the need for individual exceptions.
+        if (!$locked) {
+            StudentAssessment::where('assessment_id', $assessment->id)
+                ->whereIn('student_id', $group->students()->pluck('users.id'))
+                ->where('access_override', true)
+                ->update(['access_override' => false]);
+        }
+
+        return response()->json([
+            'message' => $locked
+                ? 'Assessment locked. Students who have not started can no longer open it.'
+                : 'Assessment unlocked.',
+            'locked' => $locked,
+        ]);
+    }
 
     // Start a practice assessment for the authenticated student
     public function startPractice(Request $request)

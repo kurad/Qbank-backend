@@ -245,6 +245,11 @@ class StudentAnswerController extends Controller
             if (!$assessment->isAvailableToStudent((int) $studentId)) {
                 return response()->json(['error' => 'Unauthorized'], 403);
             }
+            if ($assessment->isLockedForStudent((int) $studentId)) {
+                return response()->json([
+                    'message' => 'This assessment is closed. Please speak to your teacher if you missed it.',
+                ], 423);
+            }
         }
 
         // 3) Create or fetch StudentAssessment

@@ -117,7 +117,7 @@ class Assessment extends Model
             'assessment_groups',
             'assessment_id',
             'group_id'
-        )->withPivot('audience');
+        )->withPivot('audience', 'locked_at');
     }
 
     /**
@@ -167,6 +167,38 @@ class Assessment extends Model
             ->whereHas('students', fn ($q) => $q->where('users.id', $studentId))
             ->exists();
     }
+    /**
+     * Has the teacher closed this assessment to the student?
+     *
+     * Closed means: every class that gives the student access to it is
+     * locked, they have not been given an individual exception, and they have
+     * not already started. A student who has started (or finished) is never
+     * locked out by this: finishing an attempt in progress stays possible, and
+     * submitted attempts are handled by the "already submitted" rules.
+     */
+    public function isLockedForStudent(int $studentId): bool
+    {
+        $attempt = $this->studentAssessments()->where('student_id', $studentId)->first();
+
+        if ($attempt && (
+            $attempt->access_override
+            || in_array($attempt->status, ['in_progress', 'completed', 'graded', 'under_review'], true)
+        )) {
+            return false;
+        }
+
+        $granting = $this->groups()
+            ->whereHas('students', fn ($q) => $q->where('users.id', $studentId))
+            ->get()
+            ->filter(fn ($group) => $group->pivot->audience === 'all' || $attempt !== null);
+
+        if ($granting->isEmpty()) {
+            return false;
+        }
+
+        return $granting->every(fn ($group) => $group->pivot->locked_at !== null);
+    }
+
     public function students()
     {
         return $this->belongsToMany(User::class, 'group_students', 'group_id', 'student_id');

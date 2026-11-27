@@ -30,6 +30,23 @@ class AdminDashboardController extends Controller
         return $this->schoolSummary((int) $admin->school_id);
     }
 
+    /**
+     * Weekly monitoring picture for a school administrator.
+     */
+    public function insights(Request $request, \App\Services\SchoolInsightsService $insights)
+    {
+        $admin = $request->user();
+
+        abort_unless($admin && $admin->role === 'admin', 403, 'Administrator access is required.');
+        abort_unless(
+            ($admin->admin_scope ?? null) === 'school' && $admin->school_id,
+            403,
+            'School insights are available to school administrators.'
+        );
+
+        return response()->json($insights->forSchool((int) $admin->school_id));
+    }
+
     private function systemSummary()
     {
         $schools = School::query();

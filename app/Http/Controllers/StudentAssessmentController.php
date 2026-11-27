@@ -39,6 +39,8 @@ class StudentAssessmentController extends Controller
         $isGroupAssignment = $assessment->isAvailableToStudent((int) $studentId);
         abort_unless($existing || $isOwnPractice || $isGroupAssignment, 403,
             'This assessment is not assigned to you.');
+        abort_if(!$isOwnPractice && $assessment->isLockedForStudent((int) $studentId), 423,
+            'This assessment is closed. Please speak to your teacher if you missed it.');
         if ($existing && in_array($existing->status, ['completed', 'graded', 'under_review'], true)) {
             return response()->json([
                 'message' => 'Assessment already submitted.',
@@ -274,7 +276,7 @@ class StudentAssessmentController extends Controller
             ->unique('student_assessment_id')
             ->keyBy('student_assessment_id');
 
-        $format = function ($assessment, $item = null) use ($attempts) {
+        $format = function ($assessment, $item = null) use ($attempts, $student) {
             $attempt = $item ? $attempts->get($item->id) : null;
             $gradeSubject = $assessment->learningPeriod?->gradeSubject
                 ?: $assessment->units->first()?->gradeSubject
@@ -301,6 +303,8 @@ class StudentAssessmentController extends Controller
                 'completed_at' => $item?->completed_at?->toIso8601String(),
                 'due_date' => $assessment->lateAfter() ? $assessment->due_date : null,
                 'is_late' => (bool) $item?->is_late,
+                'is_locked' => $assessment->type !== 'practice'
+                    && $assessment->isLockedForStudent((int) $student->id),
                 'is_overdue' => $assessment->lateAfter() !== null
                     && now()->greaterThan($assessment->lateAfter())
                     && !in_array($item?->status, ['completed', 'graded', 'under_review'], true),

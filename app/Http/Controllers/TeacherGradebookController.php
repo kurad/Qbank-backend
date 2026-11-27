@@ -218,6 +218,7 @@ class TeacherGradebookController extends Controller
     protected function filters(Request $request): array
     {
         return $request->validate([
+            'classes_only' => ['nullable', 'boolean'],
             'group_id' => ['nullable', 'integer'],
             'grade_subject_id' => ['nullable', 'integer'],
             'assessment_type' => ['nullable', 'string', 'max:50'],

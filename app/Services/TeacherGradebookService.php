@@ -26,6 +26,10 @@ class TeacherGradebookService
     {
         $this->ensureTeacherOrAdmin($teacher);
 
+        if (!empty($filters['classes_only'])) {
+            return $this->classList($teacher, $filters);
+        }
+
         $groups = $this->accessibleGroups($teacher, $filters);
         $groupIds = $groups->pluck('id')->all();
         $periods = $this->learningPeriods($groupIds);
@@ -66,6 +70,7 @@ class TeacherGradebookService
                     'grade_subject_id' => $group->grade_subject_id,
                     'subject' => $group->gradeSubject?->subject?->name,
                     'grade' => $group->gradeSubject?->gradeLevel?->grade_name,
+                    'student_count' => $group->students->count(),
                 ])->values(),
 
                 'teaching_areas' => $groups
@@ -125,6 +130,45 @@ class TeacherGradebookService
         ];
     }
 
+    /**
+     * Lightweight list of the teacher's classes for the Gradebook class
+     * picker. It does not build any student, assessment or check data, so it
+     * stays fast however many classes the teacher has.
+     */
+    protected function classList(User $teacher, array $filters): array
+    {
+        $groups = $this->accessibleGroups($teacher, [], false)->loadCount('students');
+
+        return [
+            'filters' => [
+                'group_id' => null,
+                'grade_subject_id' => $filters['grade_subject_id'] ?? null,
+            ],
+            'available_filters' => [
+                'groups' => $groups->map(fn (Group $group) => [
+                    'id' => $group->id,
+                    'name' => $group->group_name,
+                    'academic_year' => $group->academic_year,
+                    'grade_subject_id' => $group->grade_subject_id,
+                    'subject' => $group->gradeSubject?->subject?->name,
+                    'grade' => $group->gradeSubject?->gradeLevel?->grade_name,
+                    'student_count' => (int) $group->students_count,
+                ])->values(),
+                'teaching_areas' => $groups
+                    ->filter(fn (Group $group) => $group->gradeSubject)
+                    ->map(fn (Group $group) => [
+                        'id' => $group->gradeSubject->id,
+                        'label' => trim(implode(' - ', array_filter([
+                            $group->gradeSubject?->subject?->name,
+                            $group->gradeSubject?->gradeLevel?->grade_name,
+                        ]))),
+                    ])
+                    ->unique('id')
+                    ->values(),
+            ],
+        ];
+    }
+
     public function exportRows(User $teacher, array $filters = []): array
     {
         $data = $this->overview($teacher, $filters);
@@ -178,16 +222,19 @@ class TeacherGradebookService
         ];
     }
 
-    protected function accessibleGroups(User $teacher, array $filters = []): Collection
+    protected function accessibleGroups(User $teacher, array $filters = [], bool $withStudents = true): Collection
     {
         $query = Group::query()
             ->with([
-                'students:id,name,email',
                 'gradeSubject:id,subject_id,grade_level_id',
                 'gradeSubject.subject:id,name',
                 'gradeSubject.gradeLevel:id,grade_name',
                 'creator:id,school_id',
             ]);
+
+        if ($withStudents) {
+            $query->with('students:id,name,email');
+        }
 
         if ($teacher->role === 'admin') {
             $query->where(function ($q) use ($teacher) {

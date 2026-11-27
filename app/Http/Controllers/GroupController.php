@@ -332,6 +332,12 @@ class GroupController extends Controller
                 $done = ['under_review', 'graded', 'completed'];
 
                 $assessment->setAttribute('audience', $assessment->pivot?->audience ?? 'all');
+                $assessment->setAttribute('locked', $assessment->pivot?->locked_at !== null);
+                $assessment->setAttribute('locked_at', $assessment->pivot?->locked_at);
+                $assessment->setAttribute('missed_student_ids', $memberIds
+                    ->reject(fn ($id) => $attempts->whereIn('status', $done)->contains(fn ($a) => (int) $a->student_id === $id)
+                        || $attempts->contains(fn ($a) => (int) $a->student_id === $id && $a->status === 'in_progress'))
+                    ->values()->all());
                 $assessment->setAttribute('stats', [
                     'recipients' => $recipients,
                     'not_submitted' => max(0, $recipients - $attempts->whereIn('status', $done)->count()),
@@ -344,9 +350,10 @@ class GroupController extends Controller
         }
 
         if ($user->role === 'student') {
-            $assessments->each(function ($assessment) {
+            $assessments->each(function ($assessment) use ($user) {
                 $attempt = $assessment->studentAssessments->first();
                 $assessment->setAttribute('student_assessment', $attempt);
+                $assessment->setAttribute('is_locked', $assessment->isLockedForStudent((int) $user->id));
                 $assessment->unsetRelation('studentAssessments');
             });
         }
@@ -490,9 +497,10 @@ class GroupController extends Controller
             ])
             ->orderByDesc('created_at')
             ->get()
-            ->map(function ($assessment) {
+            ->map(function ($assessment) use ($user) {
                 $assessment->student_assessment =
                     $assessment->studentAssessments->first();
+                $assessment->is_locked = $assessment->isLockedForStudent((int) $user->id);
 
                 unset($assessment->studentAssessments);
 
