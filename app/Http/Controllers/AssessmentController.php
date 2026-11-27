@@ -238,7 +238,12 @@ class AssessmentController extends Controller
             return response()->json(['message' => 'Assessment not found'], 404);
         }
 
-        $assessment->title = $data['title'];
+        // Only the owner may rename (this route previously had no check).
+        if ((int) $assessment->creator_id !== (int) Auth::id()) {
+            return response()->json(['message' => 'You are not authorized to rename this assessment.'], 403);
+        }
+
+        $assessment->title = trim($data['title']);
         $assessment->save();
 
         return response()->json(['assessment' => $assessment], 200);
@@ -952,6 +957,45 @@ class AssessmentController extends Controller
 
 
     /**
+     * Classes this assessment is given to, with their lock state. Used by the
+     * assessment settings so a teacher can lock or unlock without leaving it.
+     */
+    public function classAccess($assessmentId)
+    {
+        $assessment = Assessment::findOrFail($assessmentId);
+        abort_unless((int) $assessment->creator_id === (int) Auth::id(), 403,
+            'Only the assessment creator can view this.');
+
+        $done = ['under_review', 'graded', 'completed'];
+        $attempts = $assessment->studentAssessments()->get(['student_id', 'status']);
+
+        $classes = $assessment->groups()
+            ->withCount('students')
+            ->with('students:id')
+            ->get()
+            ->map(function ($group) use ($attempts, $done) {
+                $memberIds = $group->students->pluck('id')->map(fn ($id) => (int) $id);
+                $mine = $attempts->filter(fn ($a) => $memberIds->contains((int) $a->student_id));
+                $selected = $group->pivot->audience === 'selected';
+                $recipients = $selected ? $mine->count() : $memberIds->count();
+
+                return [
+                    'group_id' => $group->id,
+                    'name' => $group->group_name,
+                    'audience' => $group->pivot->audience ?? 'all',
+                    'recipients' => $recipients,
+                    'not_submitted' => max(0, $recipients - $mine->whereIn('status', $done)->count()),
+                    'locked' => $group->pivot->locked_at !== null,
+                    'locked_at' => $group->pivot->locked_at,
+                ];
+            })
+            ->sortBy('name', SORT_NATURAL | SORT_FLAG_CASE)
+            ->values();
+
+        return response()->json(['classes' => $classes]);
+    }
+
+    /**
      * Lock or unlock an assessment for one class.
      *
      * Locked: students of that class who have not started can no longer open
@@ -1465,6 +1509,8 @@ class AssessmentController extends Controller
         }
 
         $data = $request->validate([
+            // Renaming is always allowed, even after students have started.
+            'title' => ['sometimes', 'required', 'string', 'min:2', 'max:255'],
             'type' => [
                 'required',
                 'in:quiz,exam,homework,test,assignment',
@@ -1515,6 +1561,9 @@ class AssessmentController extends Controller
 
         if (array_key_exists('shuffle_questions', $data)) $assessment->shuffle_questions = (bool) $data['shuffle_questions'];
         if (array_key_exists('shuffle_options', $data)) $assessment->shuffle_options = (bool) $data['shuffle_options'];
+        if (array_key_exists('title', $data)) {
+            $assessment->title = trim($data['title']);
+        }
         $assessment->type = $data['type'];
         $assessment->delivery_mode = $data['delivery_mode'];
         $assessment->is_timed = (bool) $data['is_timed'];

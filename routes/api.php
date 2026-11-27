@@ -435,6 +435,7 @@ Route::middleware(['auth:sanctum', 'token.not_expired'])->group(function () {
     Route::post('/assessments/{assessment}/assign', [AssessmentController::class, 'assign']);
     Route::post('/assessments/{id}/assign-group', [AssessmentController::class, 'assignGroup']);
     Route::post('/assessments/{id}/lock-group', [AssessmentController::class, 'setGroupLock']);
+    Route::get('/assessments/{id}/class-access', [AssessmentController::class, 'classAccess']);
     Route::delete('/assessments/{id}', [AssessmentController::class, 'destroy']);
     Route::delete('/assessments/{assessment}/questions/{question}', [AssessmentController::class, 'removeQuestion']);
 
