@@ -332,8 +332,11 @@ class GroupController extends Controller
                 $done = ['under_review', 'graded', 'completed'];
 
                 $assessment->setAttribute('audience', $assessment->pivot?->audience ?? 'all');
-                $assessment->setAttribute('locked', $assessment->pivot?->locked_at !== null);
-                $assessment->setAttribute('locked_at', $assessment->pivot?->locked_at);
+                $lockedAt = $assessment->groupLockedAt($assessment->pivot);
+                $assessment->setAttribute('locked', $lockedAt !== null);
+                $assessment->setAttribute('locked_at', $lockedAt);
+                $assessment->setAttribute('auto_locked', $lockedAt !== null && empty($assessment->pivot?->locked_at));
+                $assessment->setAttribute('auto_lock_at', $assessment->autoLockAt());
                 $assessment->setAttribute('missed_student_ids', $memberIds
                     ->reject(fn ($id) => $attempts->whereIn('status', $done)->contains(fn ($a) => (int) $a->student_id === $id)
                         || $attempts->contains(fn ($a) => (int) $a->student_id === $id && $a->status === 'in_progress'))

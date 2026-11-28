@@ -22,6 +22,8 @@ class Assessment extends Model
         'question_count',
         'delivery_mode',
         'due_date',
+        'auto_lock',
+        'auto_lock_grace_hours',
         'shuffle_questions',
         'shuffle_options',
         'is_timed',
@@ -37,6 +39,7 @@ class Assessment extends Model
         'is_timed' => 'boolean',
         'is_system_generated' => 'boolean',
         'is_mandatory' => 'boolean',
+        'auto_lock' => 'boolean',
         'question_blueprint' => 'array',
     ];
 
@@ -117,7 +120,7 @@ class Assessment extends Model
             'assessment_groups',
             'assessment_id',
             'group_id'
-        )->withPivot('audience', 'locked_at');
+        )->withPivot('audience', 'locked_at', 'unlocked_at');
     }
 
     /**
@@ -142,6 +145,41 @@ class Assessment extends Model
         $due = \Illuminate\Support\Carbon::parse($this->due_date);
 
         return $due->format('H:i:s') === '00:00:00' ? $due->endOfDay() : $due;
+    }
+
+    /**
+     * When the assessment closes by itself, or null when it never does.
+     * That is the late cut-off plus the teacher's grace period.
+     */
+    public function autoLockAt(): ?\Illuminate\Support\Carbon
+    {
+        if (!$this->auto_lock) {
+            return null;
+        }
+
+        $after = $this->lateAfter();
+
+        return $after?->copy()->addHours((int) ($this->auto_lock_grace_hours ?? 0));
+    }
+
+    /**
+     * When this class was closed, or null when it is open. A teacher's lock
+     * wins; otherwise the class closes at the automatic time unless the
+     * teacher reopened it. Evaluated on demand, so no scheduler is needed.
+     */
+    public function groupLockedAt($pivot): ?\Illuminate\Support\Carbon
+    {
+        if (!empty($pivot?->locked_at)) {
+            return \Illuminate\Support\Carbon::parse($pivot->locked_at);
+        }
+
+        if (!empty($pivot?->unlocked_at)) {
+            return null;
+        }
+
+        $auto = $this->autoLockAt();
+
+        return $auto && now()->greaterThanOrEqualTo($auto) ? $auto : null;
     }
 
     public function isLateAt(\DateTimeInterface $when): bool
@@ -196,7 +234,7 @@ class Assessment extends Model
             return false;
         }
 
-        return $granting->every(fn ($group) => $group->pivot->locked_at !== null);
+        return $granting->every(fn ($group) => $this->groupLockedAt($group->pivot) !== null);
     }
 
     public function students()

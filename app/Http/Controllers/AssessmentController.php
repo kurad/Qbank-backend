@@ -612,6 +612,8 @@ class AssessmentController extends Controller
             'use_default_sections' => 'sometimes|boolean',
             'shuffle_questions' => 'sometimes|boolean',
             'shuffle_options' => 'sometimes|boolean',
+            'auto_lock' => 'sometimes|boolean',
+            'auto_lock_grace_hours' => 'nullable|integer|min:0|max:168',
 
         ]);
         // Adjust field based on delivery mode
@@ -640,6 +642,8 @@ class AssessmentController extends Controller
             'delivery_mode' => $validated['delivery_mode'],
             'shuffle_questions' => (bool) ($validated['shuffle_questions'] ?? false),
             'shuffle_options' => (bool) ($validated['shuffle_options'] ?? false),
+            'auto_lock' => $validated['delivery_mode'] === 'online' && (bool) ($validated['auto_lock'] ?? false),
+            'auto_lock_grace_hours' => $validated['delivery_mode'] === 'online' ? (int) ($validated['auto_lock_grace_hours'] ?? 0) : 0,
         ]);
         // Attach the provided topic via pivot
         $assessment->topics()->attach($validated['topic_id']);
@@ -896,7 +900,7 @@ class AssessmentController extends Controller
 
         $existing = $assessment->groups()->where('groups.id', $group->id)->first();
         $currentAudience = $existing?->pivot?->audience;
-        $isLocked = $existing?->pivot?->locked_at !== null;
+        $isLocked = $existing ? $assessment->groupLockedAt($existing->pivot) !== null : false;
 
         DB::transaction(function () use ($assessment, $group, $studentIds, $existing, $currentAudience, $isLocked) {
             if ($studentIds->isEmpty()) {
@@ -904,14 +908,14 @@ class AssessmentController extends Controller
                 if ($existing) {
                     $assessment->groups()->updateExistingPivot($group->id, ['audience' => 'all']);
                 } else {
-                    $assessment->groups()->attach($group->id, ['audience' => 'all']);
+                    $assessment->groups()->attach($group->id, $this->newClassPivot($assessment, 'all'));
                 }
 
                 return;
             }
 
             if (!$existing) {
-                $assessment->groups()->attach($group->id, ['audience' => 'selected']);
+                $assessment->groups()->attach($group->id, $this->newClassPivot($assessment, 'selected'));
             }
 
             // Already open to the whole class and not locked: nothing to add.
@@ -957,6 +961,20 @@ class AssessmentController extends Controller
 
 
     /**
+     * Pivot data for a class being given the assessment now. If the automatic
+     * closing time has already passed, the teacher is deliberately assigning
+     * it, so it starts open instead of closing immediately.
+     */
+    private function newClassPivot(Assessment $assessment, string $audience): array
+    {
+        $auto = $assessment->autoLockAt();
+
+        return $auto && now()->greaterThanOrEqualTo($auto)
+            ? ['audience' => $audience, 'unlocked_at' => now()]
+            : ['audience' => $audience];
+    }
+
+    /**
      * Classes this assessment is given to, with their lock state. Used by the
      * assessment settings so a teacher can lock or unlock without leaving it.
      */
@@ -973,7 +991,8 @@ class AssessmentController extends Controller
             ->withCount('students')
             ->with('students:id')
             ->get()
-            ->map(function ($group) use ($attempts, $done) {
+            ->map(function ($group) use ($attempts, $done, $assessment) {
+                $lockedAt = $assessment->groupLockedAt($group->pivot);
                 $memberIds = $group->students->pluck('id')->map(fn ($id) => (int) $id);
                 $mine = $attempts->filter(fn ($a) => $memberIds->contains((int) $a->student_id));
                 $selected = $group->pivot->audience === 'selected';
@@ -985,14 +1004,18 @@ class AssessmentController extends Controller
                     'audience' => $group->pivot->audience ?? 'all',
                     'recipients' => $recipients,
                     'not_submitted' => max(0, $recipients - $mine->whereIn('status', $done)->count()),
-                    'locked' => $group->pivot->locked_at !== null,
-                    'locked_at' => $group->pivot->locked_at,
+                    'locked' => $lockedAt !== null,
+                    'locked_at' => $lockedAt,
+                    'auto_locked' => $lockedAt !== null && empty($group->pivot->locked_at),
                 ];
             })
             ->sortBy('name', SORT_NATURAL | SORT_FLAG_CASE)
             ->values();
 
-        return response()->json(['classes' => $classes]);
+        return response()->json([
+            'classes' => $classes,
+            'auto_lock_at' => $assessment->autoLockAt(),
+        ]);
     }
 
     /**
@@ -1023,6 +1046,8 @@ class AssessmentController extends Controller
         $assessment->groups()->updateExistingPivot($group->id, [
             'locked_at' => $locked ? now() : null,
             'locked_by' => $locked ? Auth::id() : null,
+            // Reopening after an automatic lock must stick.
+            'unlocked_at' => $locked ? null : now(),
         ]);
 
         // Unlocking removes the need for individual exceptions.
@@ -1536,7 +1561,17 @@ class AssessmentController extends Controller
             ],
             'shuffle_questions' => ['sometimes', 'boolean'],
             'shuffle_options' => ['sometimes', 'boolean'],
+            'auto_lock' => ['sometimes', 'boolean'],
+            'auto_lock_grace_hours' => ['nullable', 'integer', 'min:0', 'max:168'],
         ]);
+
+        if (!empty($data['auto_lock'])) {
+            if (empty($data['due_date']) || $data['delivery_mode'] !== 'online') {
+                return response()->json([
+                    'message' => 'Automatic closing needs an online assessment with a due date.',
+                ], 422);
+            }
+        }
 
         $started = (int) ($assessment->started_attempts_count ?? 0);
 
@@ -1570,8 +1605,24 @@ class AssessmentController extends Controller
         $assessment->time_limit = $assessment->is_timed
             ? (int) $data['time_limit']
             : null;
+        $oldDue = $assessment->due_date ? \Illuminate\Support\Carbon::parse($assessment->due_date)->timestamp : null;
+        $newDue = !empty($data['due_date']) ? \Illuminate\Support\Carbon::parse($data['due_date'])->timestamp : null;
         $assessment->due_date = $data['due_date'] ?? null;
+        $autoOn = !empty($data['auto_lock']) && $assessment->due_date && $assessment->delivery_mode === 'online';
+        $autoGrace = $autoOn ? (int) ($data['auto_lock_grace_hours'] ?? 0) : 0;
+        $closingChanged = $oldDue !== $newDue
+            || (bool) $assessment->auto_lock !== $autoOn
+            || (int) $assessment->auto_lock_grace_hours !== $autoGrace;
+        $assessment->auto_lock = $autoOn;
+        $assessment->auto_lock_grace_hours = $autoGrace;
         $assessment->save();
+
+        // A new deadline or grace period starts the automatic lock afresh.
+        if ($closingChanged) {
+            DB::table('assessment_groups')
+                ->where('assessment_id', $assessment->id)
+                ->update(['unlocked_at' => null]);
+        }
 
         return response()->json([
             'message' => 'Assessment settings updated successfully.',
